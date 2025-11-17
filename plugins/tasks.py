@@ -4,9 +4,13 @@ from semantic_kernel.functions import kernel_function
 
 
 class TaskPlugin:
-    """Plugin for task-related actions."""
+    """Plugin for task-related actions.
     
-    def __init__(self, game_state):
+    Provides functions for completing tasks (crewmates only),
+    faking tasks (imposters), and checking task status.
+    """
+    
+    def __init__(self, game_state) -> None:
         self.game_state = game_state
         self.player_name = None  # Set before each use
     

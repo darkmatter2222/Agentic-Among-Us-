@@ -1,7 +1,7 @@
 """Pygame UI renderer for Among Us game."""
 import pygame
-import math
 from typing import Dict, Optional
+
 from game.state import GameState, PlayerState, Position
 
 
@@ -33,9 +33,13 @@ PLAYER_COLORS = {
 
 
 class GameRenderer:
-    """Renders the game using pygame."""
+    """Renders the game using pygame.
     
-    def __init__(self, width: int = 1400, height: int = 800):
+    Displays the game map, players, tasks, dead bodies, and information panel.
+    Handles window events and provides visual feedback for game actions.
+    """
+    
+    def __init__(self, width: int = 1400, height: int = 800) -> None:
         pygame.init()
         pygame.font.init()
         

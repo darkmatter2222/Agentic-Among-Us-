@@ -1,6 +1,7 @@
 """Agent manager for Among Us game."""
 import random
 from typing import List
+
 from semantic_kernel import Kernel
 from semantic_kernel.agents import ChatCompletionAgent
 from semantic_kernel.connectors.ai import FunctionChoiceBehavior
@@ -14,9 +15,13 @@ from plugins.social import SocialPlugin, ImposterPlugin
 
 
 class AgentManager:
-    """Manages the 8 agents in the game."""
+    """Manages the 8 agents in the Among Us game.
     
-    def __init__(self, game_state):
+    Handles agent creation, personality assignment, and action execution
+    for both crewmates and imposters.
+    """
+    
+    def __init__(self, game_state) -> None:
         self.game_state = game_state
         self.agents: dict[str, ChatCompletionAgent] = {}
         self.imposters: List[str] = []

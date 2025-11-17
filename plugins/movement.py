@@ -4,9 +4,13 @@ from semantic_kernel.functions import kernel_function
 
 
 class MovementPlugin:
-    """Plugin for player movement actions."""
+    """Plugin for player movement actions.
     
-    def __init__(self, game_state):
+    Provides movement functions for agents including moving to coordinates,
+    moving to specific rooms, and staying in place to observe.
+    """
+    
+    def __init__(self, game_state) -> None:
         self.game_state = game_state
         self.player_name = None  # Set before each use
     

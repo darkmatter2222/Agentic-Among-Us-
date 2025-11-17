@@ -1,6 +1,7 @@
 """Custom llama.cpp chat completion client for Semantic Kernel."""
 import httpx
 from typing import AsyncIterable
+
 from semantic_kernel.connectors.ai.chat_completion_client_base import ChatCompletionClientBase
 from semantic_kernel.connectors.ai.prompt_execution_settings import PromptExecutionSettings
 from semantic_kernel.contents import ChatHistory, ChatMessageContent, AuthorRole
@@ -8,9 +9,13 @@ from semantic_kernel.contents.streaming_chat_message_content import StreamingCha
 
 
 class LlamaCppChatCompletion(ChatCompletionClientBase):
-    """Custom chat completion client for llama.cpp server"""
+    """Custom chat completion client for llama.cpp server.
     
-    def __init__(self, base_url: str = "http://192.168.86.48:8080", service_id: str = "llama_cpp", ai_model_id: str = "llama.cpp"):
+    This client connects to a llama.cpp server to provide chat completions
+    for Semantic Kernel agents.
+    """
+    
+    def __init__(self, base_url: str = "http://192.168.86.48:8080", service_id: str = "llama_cpp", ai_model_id: str = "llama.cpp") -> None:
         # Initialize the parent class first
         super().__init__(service_id=service_id, ai_model_id=ai_model_id)
         

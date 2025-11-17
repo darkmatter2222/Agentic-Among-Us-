@@ -4,9 +4,13 @@ from semantic_kernel.functions import kernel_function
 
 
 class SocialPlugin:
-    """Plugin for social actions like meetings and voting."""
+    """Plugin for social actions like meetings and voting.
     
-    def __init__(self, game_state):
+    Provides functions for calling emergency meetings, reporting bodies,
+    and casting votes during voting phases.
+    """
+    
+    def __init__(self, game_state) -> None:
         self.game_state = game_state
         self.player_name = None
     
@@ -72,9 +76,13 @@ class SocialPlugin:
 
 
 class ImposterPlugin:
-    """Plugin for imposter-only actions."""
+    """Plugin for imposter-only actions.
     
-    def __init__(self, game_state):
+    Provides kill functionality and kill status checking for imposters.
+    Enforces cooldowns and line-of-sight requirements.
+    """
+    
+    def __init__(self, game_state) -> None:
         self.game_state = game_state
         self.player_name = None
     

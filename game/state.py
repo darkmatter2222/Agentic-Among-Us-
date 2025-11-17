@@ -1,8 +1,8 @@
 """Game state management for Among Us."""
-from dataclasses import dataclass, field
-from typing import List, Dict, Set, Optional, Tuple
-from enum import Enum
 import math
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Dict, List, Optional, Set, Tuple
 
 
 class GamePhase(Enum):
@@ -66,9 +66,14 @@ class Room:
 
 
 class GameState:
-    """Manages the entire game state."""
+    """Manages the entire game state.
     
-    def __init__(self):
+    Tracks players, tasks, rooms, dead bodies, and game phase.
+    Provides methods for game actions like movement, task completion,
+    and kill mechanics.
+    """
+    
+    def __init__(self) -> None:
         self.phase = GamePhase.PLAYING
         self.players: Dict[str, PlayerState] = {}
         self.tasks: Dict[str, Task] = {}

@@ -1,9 +1,13 @@
 """
-Among Us - AI Agent Game
-8 agents play Among Us with 2 imposters, using Semantic Kernel and llama.cpp
+"""Among Us - AI Agent Game.
+
+A simulation where 8 AI agents play Among Us with 2 imposters.
+Uses Semantic Kernel and llama.cpp for agent decision-making.
 """
 import asyncio
 import random
+from typing import Optional
+
 from game.state import GameState, Position, GamePhase
 from agents.agent_manager import AgentManager
 from ui.renderer import GameRenderer
