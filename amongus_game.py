@@ -2,12 +2,57 @@ import asyncio
 import pygame
 import random
 import math
+import logging
+import sys
 from game.state import GameState, Position
+from game.pathfinding import Pathfinder
+from agents.threaded_agent import ThreadedAgent
 from ui.renderer import GameRenderer
+from llama_client import LlamaCppChatCompletion
 
-async def main():
+# Configure Logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[
+        logging.FileHandler("game_debug.log"),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+
+async def test_llm_connection(llm_client):
+    from semantic_kernel.contents import ChatHistory
+    from semantic_kernel.connectors.ai.prompt_execution_settings import PromptExecutionSettings
+    
+    test_chat = ChatHistory()
+    test_chat.add_user_message("Hello, are you ready to play Among Us?")
+    response = await llm_client.get_chat_message_contents(
+        chat_history=test_chat,
+        settings=PromptExecutionSettings()
+    )
+    return response
+
+def main():
+    logging.info("Starting Among Us Agent Runner...")
     # Initialize Game State
     game_state = GameState()
+    
+    # Initialize LLM Client
+    # Note: Ensure your local llama.cpp server is running!
+    llm_client = LlamaCppChatCompletion()
+    
+    # Test LLM Connection
+    print("Testing LLM connection...")
+    try:
+        response = asyncio.run(test_llm_connection(llm_client))
+        print(f"LLM Connection Successful! Response: {response[0].content}")
+    except Exception as e:
+        print(f"CRITICAL ERROR: LLM Connection Failed: {e}")
+        print("Please ensure llama.cpp server is running at http://192.168.86.48:8080")
+        return
+
+    # Initialize Pathfinder
+    pathfinder = Pathfinder(game_state.map)
     
     # Add Players
     colors = [
@@ -15,9 +60,17 @@ async def main():
         (255, 0, 255), (0, 255, 255), (255, 255, 255), (100, 100, 100)
     ]
     
+    agents = []
+    
     for i in range(8):
         is_imposter = (i == 0) # First player is imposter
-        game_state.add_player(f"Player_{i}", is_imposter, colors[i])
+        name = f"Player_{i}"
+        game_state.add_player(name, is_imposter, colors[i])
+        
+        # Create and start agent thread
+        agent = ThreadedAgent(name, game_state, pathfinder, llm_client)
+        agent.start()
+        agents.append(agent)
 
     # Initialize Renderer
     # Map is 100x80 (5:4 aspect ratio). 
@@ -29,49 +82,37 @@ async def main():
     clock = pygame.time.Clock()
     running = True
     
-    while running:
-        delta_time = clock.tick(60) / 1000.0
-        
-        # Handle Events
-        running = renderer.handle_events()
-        
-        # Update Logic (Simulation)
-        # For now, just move players randomly to test map
-        for player in game_state.players.values():
-            if not player.render_target:
-                # Pick a random nearby walkable point
-                current_x = int(player.position.x)
-                current_y = int(player.position.y)
-                
-                # Try random moves
-                moves = [(0, 1), (0, -1), (1, 0), (-1, 0)]
-                random.shuffle(moves)
-                
-                for dx, dy in moves:
-                    nx, ny = current_x + dx, current_y + dy
-                    if game_state.map.is_walkable(nx, ny):
-                        # Move there
-                        player.position = Position(nx, ny)
-                        player.render_start = player.render_position
-                        player.render_target = Position(nx, ny)
-                        player.animation_timer = 0
-                        player.animation_duration = 0.5 # 0.5 seconds per tile
-                        
-                        # Update facing angle
-                        player.facing_angle = math.atan2(dy, dx)
-                        
-                        # Update status message (debug)
-                        actions = ["Patrolling", "Fixing Wiring", "Scanning", "Idle", "Sus"]
-                        player.status_message = actions[random.randint(0, len(actions)-1)]
-                        break
-        
-        # Update Animations
-        game_state.update_animations(delta_time)
-        
-        # Render
-        renderer.render(game_state)
-        
-        await asyncio.sleep(0)
+    try:
+        while running:
+            delta_time = clock.tick(60) / 1000.0
+            
+            # Handle Events
+            running = renderer.handle_events()
+            
+            # Update Physics (Movement along paths)
+            game_state.update_physics(delta_time)
+            
+            # Update Timers (Cooldowns)
+            game_state.update_timers(delta_time)
+            
+            # Update Animations (Smoothing for render)
+            game_state.update_animations(delta_time)
+            
+            # Render
+            renderer.render(game_state)
+            
+            # No await asyncio.sleep(0) needed in sync loop
+    except BaseException as e:
+        import traceback
+        traceback.print_exc()
+        logging.critical(f"CRITICAL ERROR IN MAIN LOOP: {e}")
+        print(f"CRITICAL ERROR IN MAIN LOOP: {e}")
+    finally:
+        # Cleanup threads
+        for agent in agents:
+            agent.stop()
+        for agent in agents:
+            agent.join(timeout=1.0)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

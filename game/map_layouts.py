@@ -181,7 +181,8 @@ class SpaceshipMap:
         
         # Cafeteria (Top Center) - Shifted Right
         cafeteria = self._add_room("cafeteria", "Cafeteria", 40, 5, 28, 18, FLOOR_CAFETERIA)
-        self.spawn_points.append(cafeteria.bounds.center)
+        # Spawn point shifted to be walkable (not on the center table)
+        self.spawn_points.append(Point(cafeteria.bounds.center.x, cafeteria.bounds.center.y + 5))
         self._add_prop("cafeteria", "circle", 54, 14, 6, 6, TABLE_COLOR) # Center
         self._add_prop("cafeteria", "circle", 46, 10, 4, 4, TABLE_COLOR)
         self._add_prop("cafeteria", "circle", 62, 10, 4, 4, TABLE_COLOR)
