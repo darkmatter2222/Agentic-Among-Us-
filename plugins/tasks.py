@@ -94,3 +94,21 @@ class TaskPlugin:
             result += "No tasks nearby. Move to find tasks."
         
         return result
+    
+    @kernel_function(description="Fix an active sabotage (reactor, O2, lights, communications)")
+    def fix_sabotage(self) -> Annotated[str, "Result of fixing sabotage"]:
+        """Attempt to fix active sabotage."""
+        if not self.player_name:
+            return "Error: No player set for this action"
+        
+        if not self.game_state.active_sabotage:
+            return "No sabotage currently active"
+        
+        success = self.game_state.fix_sabotage(self.player_name)
+        
+        if success:
+            return "Fixed sabotage!"
+        
+        sabotage_type = self.game_state.active_sabotage.sabotage_type.value
+        return f"Cannot fix {sabotage_type} from here. Go to the {sabotage_type} room to fix it."
+

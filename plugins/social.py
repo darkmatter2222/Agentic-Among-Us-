@@ -160,3 +160,103 @@ class ImposterPlugin:
             return f"Kill ready! Nearby players: {', '.join(nearby)}"
         
         return "Kill ready! No players nearby."
+    
+    @kernel_function(description="IMPOSTER ONLY: Enter a nearby vent to hide and travel")
+    def enter_vent(self) -> Annotated[str, "Result of entering vent"]:
+        """Enter a vent to hide."""
+        if not self.player_name:
+            return "Error: No player set for this action"
+        
+        player = self.game_state.players[self.player_name]
+        
+        if not player.is_imposter:
+            return "You are not an imposter!"
+        
+        if player.is_in_vent:
+            return "Already in a vent!"
+        
+        success = self.game_state.enter_vent(self.player_name)
+        
+        if success:
+            # Show connected vents
+            if self.game_state.map_layout and player.current_vent:
+                connected = self.game_state.map_layout.vents.get(player.current_vent, [])
+                if connected:
+                    return f"Entered vent in {player.current_vent}. Can travel to: {', '.join(connected)}"
+            return f"Entered vent in {player.current_vent}"
+        
+        return "No vent nearby to enter"
+    
+    @kernel_function(description="IMPOSTER ONLY: Exit vent, optionally travel to connected vent first")
+    def exit_vent(
+        self,
+        target_room: Annotated[str, "Optional: room name to travel to before exiting"] = ""
+    ) -> Annotated[str, "Result of exiting vent"]:
+        """Exit vent, optionally after traveling."""
+        if not self.player_name:
+            return "Error: No player set for this action"
+        
+        player = self.game_state.players[self.player_name]
+        
+        if not player.is_imposter:
+            return "You are not an imposter!"
+        
+        if not player.is_in_vent:
+            return "Not in a vent!"
+        
+        target = target_room.lower() if target_room else None
+        success = self.game_state.exit_vent(self.player_name, target)
+        
+        if success:
+            return f"Exited vent"
+        
+        return "Failed to exit vent"
+    
+    @kernel_function(description="IMPOSTER ONLY: Trigger a sabotage (reactor, o2, lights, communications)")
+    def sabotage(
+        self,
+        sabotage_type: Annotated[str, "Type of sabotage: reactor, o2, lights, or communications"]
+    ) -> Annotated[str, "Result of sabotage"]:
+        """Trigger a sabotage."""
+        if not self.player_name:
+            return "Error: No player set for this action"
+        
+        player = self.game_state.players[self.player_name]
+        
+        if not player.is_imposter:
+            return "You are not an imposter!"
+        
+        from game.state import SabotageType
+        
+        sabotage_map = {
+            "reactor": SabotageType.REACTOR,
+            "o2": SabotageType.O2,
+            "lights": SabotageType.LIGHTS,
+            "communications": SabotageType.COMMUNICATIONS,
+            "comms": SabotageType.COMMUNICATIONS,
+        }
+        
+        sab_type = sabotage_map.get(sabotage_type.lower())
+        
+        if not sab_type:
+            return f"Unknown sabotage type: {sabotage_type}. Use: reactor, o2, lights, or communications"
+        
+        if self.game_state.active_sabotage:
+            return f"Sabotage already active: {self.game_state.active_sabotage.sabotage_type.value}"
+        
+        if self.game_state.sabotage_cooldown > 0:
+            return f"Sabotage on cooldown for {self.game_state.sabotage_cooldown} turns"
+        
+        success = self.game_state.trigger_sabotage(sab_type, self.player_name)
+        
+        if success:
+            effects = {
+                SabotageType.REACTOR: "Reactor meltdown! Crewmates must fix in reactor room or lose!",
+                SabotageType.O2: "Oxygen depleting! Crewmates must fix in O2 room or lose!",
+                SabotageType.LIGHTS: "Lights out! Crewmate vision severely reduced.",
+                SabotageType.COMMUNICATIONS: "Communications down! Crewmates can't see task list.",
+            }
+            return f"Triggered {sabotage_type} sabotage! {effects.get(sab_type, '')}"
+        
+        return "Failed to trigger sabotage"
+

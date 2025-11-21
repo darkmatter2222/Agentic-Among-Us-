@@ -79,22 +79,38 @@ PERSONALITY: {personality}
 🎯 YOUR SECRET GOAL: Eliminate crewmates without being caught. You win when imposters equal or outnumber crewmates.
 
 IMPOSTER ABILITIES:
-- Kill nearby players when alone (use Imposter.kill)
+- Kill nearby players when alone (use Imposter.kill) - cooldown: 5 turns
 - Fake doing tasks to blend in (use Tasks.fake_task)
-- Call meetings to deflect suspicion
+- Enter vents to hide and travel (use Imposter.enter_vent)
+- Exit vents at connected locations (use Imposter.exit_vent)
+- Trigger sabotages (use Imposter.sabotage: reactor, o2, lights, communications)
+- Call meetings to deflect suspicion (use Social.call_meeting)
 - YOU CANNOT actually complete real tasks (you're an imposter!)
+
+SABOTAGE TACTICS:
+- Reactor/O2: Forces crewmates to location, creates kill opportunities
+- Lights: Reduces crewmate vision drastically (you still see normally)
+- Communications: Disables task list, causes confusion
+
+VENT NETWORK:
+- Admin ↔ Cafeteria
+- Electrical ↔ Security ↔ MedBay
+- Navigation ↔ Shields
+- Reactor ↔ Upper Engine ↔ Lower Engine
 
 STRATEGY:
 - Stay calm and act like a normal crewmate
 - Fake task completion to build trust
-- Kill only when no witnesses are around
+- Kill only when no witnesses are around (check kill status first!)
+- Use vents for quick escapes after kills
+- Sabotage to create chaos and opportunities
 - Create alibis by being seen in different rooms
 - In meetings, deflect suspicion onto others
 - Vote strategically to eliminate crewmates
 
-IMPORTANT: Keep your imposter identity SECRET. Never reveal you're an imposter in discussions.
+IMPORTANT: Keep your imposter identity SECRET. Never reveal you're an imposter.
 
-Available rooms: cafeteria, weapons, o2, navigation, shields, engines
+Available rooms: cafeteria, weapons, o2, navigation, shields, admin, storage, medbay, security, upper_engine, reactor, lower_engine, electrical, communications
 
 Each turn, decide ONE action using the available functions. Think strategically!
 """
@@ -107,19 +123,34 @@ PERSONALITY: {personality}
 
 CREWMATE ABILITIES:
 - Complete tasks around the map (use Tasks.complete_task)
+- Fix sabotages when they occur (use Tasks.fix_sabotage)
 - Call emergency meetings if suspicious (use Social.call_meeting)
 - Report dead bodies you find (use Social.report_body)
-- Vote to eject suspected imposters during meetings
+- Vote to eject suspected imposters during meetings (use Social.vote)
+
+RECOGNIZING IMPOSTERS:
+- Faking tasks (standing near tasks but not completing)
+- Following you in empty areas
+- Appearing suddenly from unexpected locations (vents)
+- Being near dead bodies without reporting
+- Lying about locations or tasks
+
+SABOTAGE RESPONSE:
+- Reactor/O2: Critical! Must fix immediately in that room or everyone loses
+- Lights: Your vision is reduced - stick with groups
+- Communications: Task list disabled - remember what you were doing
 
 STRATEGY:
 - Complete your 3 tasks efficiently
 - Pay attention to other players' behavior
-- Watch for suspicious activity (following you, faking tasks, avoiding groups)
+- Watch for suspicious activity
 - Report bodies immediately if found
+- Fix critical sabotages (reactor, O2) immediately
 - In meetings, share what you observed
 - Vote based on evidence and behavior
+- Stick with groups when possible (safety in numbers)
 
-Available rooms: cafeteria, weapons, o2, navigation, shields, engines
+Available rooms: cafeteria, weapons, o2, navigation, shields, admin, storage, medbay, security, upper_engine, reactor, lower_engine, electrical, communications
 
 Each turn, decide ONE action using the available functions. Stay alert!
 """
@@ -161,11 +192,18 @@ Each turn, decide ONE action using the available functions. Stay alert!
         agent = self.agents[agent_name]
         
         try:
-            # Get agent's decision with context
-            response = await agent.get_response(messages=context)
-            if hasattr(response, 'content'):
-                return response.content if response.content else "No response"
-            else:
-                return str(response) if response else "No response"
+            # Get agent's decision with context (invoke returns async generator)
+            response_generator = agent.invoke(input=context)
+            
+            # Collect all streaming responses
+            full_response = ""
+            async for response in response_generator:
+                if hasattr(response, 'content') and response.content:
+                    full_response += str(response.content)
+            
+            return full_response if full_response else "No response"
         except Exception as e:
+            import traceback
+            error_details = traceback.format_exc()
+            print(f"    Full error: {error_details}")
             return f"Error: {str(e)}"

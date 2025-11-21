@@ -1,185 +1,77 @@
-"""
-"""Among Us - AI Agent Game.
-
-A simulation where 8 AI agents play Among Us with 2 imposters.
-Uses Semantic Kernel and llama.cpp for agent decision-making.
-"""
 import asyncio
+import pygame
 import random
-from typing import Optional
-
-from game.state import GameState, Position, GamePhase
-from agents.agent_manager import AgentManager
+import math
+from game.state import GameState, Position
 from ui.renderer import GameRenderer
 
-
 async def main():
-    print("=" * 80)
-    print("AMONG US - AI AGENT GAME")
-    print("=" * 80)
-    print()
-    
-    # Initialize game state
+    # Initialize Game State
     game_state = GameState()
-    game_state.initialize_map()
-    game_state.initialize_tasks()
     
-    # Create spawn positions in cafeteria
-    spawn_positions = [
-        Position(180, 180), Position(220, 180),
-        Position(180, 220), Position(220, 220),
-        Position(160, 200), Position(240, 200),
-        Position(200, 160), Position(200, 240),
+    # Add Players
+    colors = [
+        (255, 0, 0), (0, 0, 255), (0, 255, 0), (255, 255, 0),
+        (255, 0, 255), (0, 255, 255), (255, 255, 255), (100, 100, 100)
     ]
     
-    # Initialize agents
-    agent_manager = AgentManager(game_state)
-    agent_manager.create_agents()
+    for i in range(8):
+        is_imposter = (i == 0) # First player is imposter
+        game_state.add_player(f"Player_{i}", is_imposter, colors[i])
+
+    # Initialize Renderer
+    # Map is 100x80 (5:4 aspect ratio). 
+    # 1200x960 preserves this ratio perfectly for the map area.
+    # We add 300px for the sidebar -> 1500x960
+    renderer = GameRenderer(1500, 960) 
     
-    # Add players to game state
-    for i, (agent_name, agent) in enumerate(agent_manager.agents.items()):
-        is_imposter = agent_name in agent_manager.imposters
-        game_state.add_player(agent_name, is_imposter, spawn_positions[i])
-    
-    print("\n🎮 Game initialized!")
-    print("📍 All players spawned in Cafeteria")
-    print("\n" + "=" * 80)
-    
-    # Initialize UI
-    renderer = GameRenderer()
-    
-    # Game loop
+    # Game Loop
+    clock = pygame.time.Clock()
     running = True
-    player_order = list(agent_manager.agents.keys())
-    current_player_idx = 0
     
     while running:
-        # Handle pygame events
-        if not renderer.handle_events():
-            running = False
-            break
+        delta_time = clock.tick(60) / 1000.0
         
-        # Check win condition
-        winner = game_state.check_win_condition()
-        if winner:
-            message = f"🎉 {winner.upper()} WIN!"
-            if winner == "imposters":
-                message += f" Imposters: {', '.join(agent_manager.imposters)}"
-            renderer.show_message(message, duration_ms=5000)
-            running = False
-            break
+        # Handle Events
+        running = renderer.handle_events()
         
-        # Get current player
-        current_agent = player_order[current_player_idx]
-        player = game_state.players[current_agent]
+        # Update Logic (Simulation)
+        # For now, just move players randomly to test map
+        for player in game_state.players.values():
+            if not player.render_target:
+                # Pick a random nearby walkable point
+                current_x = int(player.position.x)
+                current_y = int(player.position.y)
+                
+                # Try random moves
+                moves = [(0, 1), (0, -1), (1, 0), (-1, 0)]
+                random.shuffle(moves)
+                
+                for dx, dy in moves:
+                    nx, ny = current_x + dx, current_y + dy
+                    if game_state.map.is_walkable(nx, ny):
+                        # Move there
+                        player.position = Position(nx, ny)
+                        player.render_start = player.render_position
+                        player.render_target = Position(nx, ny)
+                        player.animation_timer = 0
+                        player.animation_duration = 0.5 # 0.5 seconds per tile
+                        
+                        # Update facing angle
+                        player.facing_angle = math.atan2(dy, dx)
+                        
+                        # Update status message (debug)
+                        actions = ["Patrolling", "Fixing Wiring", "Scanning", "Idle", "Sus"]
+                        player.status_message = actions[random.randint(0, len(actions)-1)]
+                        break
         
-        # Skip if player is dead
-        if not player.is_alive:
-            current_player_idx = (current_player_idx + 1) % len(player_order)
-            continue
+        # Update Animations
+        game_state.update_animations(delta_time)
         
-        # Build context for agent
-        context = build_agent_context(game_state, current_agent)
+        # Render
+        renderer.render(game_state)
         
-        # Render before action
-        renderer.render(game_state, current_agent, None)
-        
-        # Get agent decision
-        print(f"\n[Turn {game_state.current_turn}] {current_agent}'s turn...")
-        
-        try:
-            response = await agent_manager.get_agent_action(current_agent, context)
-            print(f"  → {current_agent}: {response[:100]}...")
-            
-            # Render after action
-            renderer.render(game_state, current_agent, player.last_action)
-            
-            # Small delay to show action
-            await asyncio.sleep(0.5)
-            
-        except Exception as e:
-            print(f"  ❌ Error: {e}")
-        
-        # Update cooldowns
-        game_state.update_cooldowns()
-        
-        # Move to next player
-        current_player_idx = (current_player_idx + 1) % len(player_order)
-        
-        # Increment turn after all players have gone
-        if current_player_idx == 0:
-            game_state.current_turn += 1
-        
-        # Optional: Limit total turns for testing
-        if game_state.current_turn >= 100:
-            renderer.show_message("Game ended - Turn limit reached!", duration_ms=3000)
-            running = False
-            break
-    
-    # Game over
-    print("\n" + "=" * 80)
-    print("GAME OVER")
-    print("=" * 80)
-    
-    if winner:
-        print(f"\n🏆 {winner.upper()} WIN!")
-        if winner == "imposters":
-            print(f"   Imposters were: {', '.join(agent_manager.imposters)}")
-    
-    # Show final stats
-    print("\nFinal Statistics:")
-    print(f"  Turns played: {game_state.current_turn}")
-    print(f"  Players alive: {sum(1 for p in game_state.players.values() if p.is_alive)}")
-    print(f"  Tasks completed: {sum(1 for t in game_state.tasks.values() if t.completed)}/{len(game_state.tasks)}")
-    
-    # Keep window open until user closes
-    print("\nClose the game window to exit...")
-    while renderer.handle_events():
-        renderer.render(game_state, None, "Game Over")
-        await asyncio.sleep(0.1)
-    
-    renderer.quit()
-
-
-def build_agent_context(game_state: GameState, agent_name: str) -> str:
-    """Build context string for an agent's decision."""
-    player = game_state.players[agent_name]
-    
-    # Get what player can see
-    visible_players = game_state.get_visible_players(agent_name)
-    nearby_tasks = game_state.get_nearby_tasks(agent_name, max_distance=100.0)
-    
-    # Find current room
-    current_room = "hallway"
-    for room in game_state.rooms.values():
-        if room.contains(player.position):
-            current_room = room.name
-            break
-    
-    context = f"""You are at position ({player.position.x:.0f}, {player.position.y:.0f}) in {current_room}.
-
-VISIBLE PLAYERS: {', '.join(visible_players) if visible_players else 'None (you are alone)'}
-
-NEARBY TASKS: {', '.join([f"{t.name} in {t.room}" for t in nearby_tasks[:3]]) if nearby_tasks else 'None nearby'}
-
-YOUR STATUS: {'ALIVE' if player.is_alive else 'DEAD'}
-"""
-    
-    if not player.is_imposter:
-        tasks_done = len(player.tasks_completed)
-        context += f"TASKS COMPLETED: {tasks_done}/{player.total_tasks}\n"
-    else:
-        cooldown = game_state.kill_cooldown.get(agent_name, 0)
-        context += f"KILL COOLDOWN: {'Ready!' if cooldown == 0 else f'{cooldown} turns'}\n"
-    
-    # Add recent events
-    if game_state.dead_bodies:
-        context += f"\nDEAD BODIES DISCOVERED: {len(game_state.dead_bodies)}\n"
-    
-    context += "\nWhat do you do? Choose ONE action using the available functions."
-    
-    return context
-
+        await asyncio.sleep(0)
 
 if __name__ == "__main__":
     asyncio.run(main())
