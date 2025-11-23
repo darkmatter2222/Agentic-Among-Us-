@@ -40,7 +40,8 @@ export class Poly3MapRenderer {
     // Add layers in order
     this.renderBackground();
     this.renderWalkableZones();
-    this.renderLabeledZones();
+    this.renderLabeledZoneColors(); // Render zone colors first
+    this.renderLabeledZoneText(); // Then render text labels
     this.renderVents();
     this.renderTasks();
   }
@@ -77,42 +78,57 @@ export class Poly3MapRenderer {
   }
 
   /**
-   * Render labeled zones - show only the room names at the center
-   * Render the zone area in teal, but only where it's walkable
+   * Render labeled zone colors - only in walkable areas
    */
-  private renderLabeledZones(): void {
+  private renderLabeledZoneColors(): void {
     POLY3_MAP_DATA.labeledZones.forEach((zone: LabeledZone) => {
-      // Render the zone area with teal color only in walkable areas
-      // We'll use clipping/masking by checking against walkable zones
       const zoneGraphics = new PIXI.Graphics();
       
-      // For each walkable zone, find the intersection with this labeled zone
+      // Create a mask from the walkable zones
+      const walkableMask = new PIXI.Graphics();
       POLY3_MAP_DATA.walkableZones.forEach((walkableZone) => {
-        // Simple approach: if the labeled zone vertices are inside walkable zone
-        // render the labeled zone polygon, then mask out the holes
-        
-        // Draw the labeled zone
-        zoneGraphics.moveTo(zone.vertices[0].x * this.scale, zone.vertices[0].y * this.scale);
-        for (let i = 1; i < zone.vertices.length; i++) {
-          zoneGraphics.lineTo(zone.vertices[i].x * this.scale, zone.vertices[i].y * this.scale);
+        // Draw walkable zone
+        walkableMask.moveTo(walkableZone.vertices[0].x * this.scale, walkableZone.vertices[0].y * this.scale);
+        for (let i = 1; i < walkableZone.vertices.length; i++) {
+          walkableMask.lineTo(walkableZone.vertices[i].x * this.scale, walkableZone.vertices[i].y * this.scale);
         }
-        zoneGraphics.closePath();
-        zoneGraphics.fill({ color: 0x1A3A3A, alpha: 1.0 });
+        walkableMask.closePath();
+        walkableMask.fill({ color: 0xFFFFFF });
         
-        // Cut out the holes from the labeled zone
+        // Cut out holes
         walkableZone.holes.forEach((hole: Point[]) => {
-          zoneGraphics.moveTo(hole[0].x * this.scale, hole[0].y * this.scale);
+          walkableMask.moveTo(hole[0].x * this.scale, hole[0].y * this.scale);
           for (let i = 1; i < hole.length; i++) {
-            zoneGraphics.lineTo(hole[i].x * this.scale, hole[i].y * this.scale);
+            walkableMask.lineTo(hole[i].x * this.scale, hole[i].y * this.scale);
           }
-          zoneGraphics.closePath();
-          zoneGraphics.fill({ color: 0x2A2A2A, alpha: 1.0 }); // Fill holes with dark color
+          walkableMask.closePath();
+          walkableMask.fill({ color: 0x000000 });
+          walkableMask.cut();
         });
       });
       
-      zoneGraphics.zIndex = -5; // Render above walkable zones but below everything else
-      this.container.addChild(zoneGraphics);
+      // Draw the labeled zone with teal color
+      zoneGraphics.moveTo(zone.vertices[0].x * this.scale, zone.vertices[0].y * this.scale);
+      for (let i = 1; i < zone.vertices.length; i++) {
+        zoneGraphics.lineTo(zone.vertices[i].x * this.scale, zone.vertices[i].y * this.scale);
+      }
+      zoneGraphics.closePath();
+      zoneGraphics.fill({ color: 0x1A3A3A, alpha: 1.0 });
       
+      // Apply the walkable mask
+      zoneGraphics.mask = walkableMask;
+      this.container.addChild(walkableMask);
+      
+      zoneGraphics.zIndex = -5;
+      this.container.addChild(zoneGraphics);
+    });
+  }
+
+  /**
+   * Render labeled zone text labels at their centers
+   */
+  private renderLabeledZoneText(): void {
+    POLY3_MAP_DATA.labeledZones.forEach((zone: LabeledZone) => {
       // Calculate center point of the zone
       const center = calculateCentroid(zone.vertices);
       
