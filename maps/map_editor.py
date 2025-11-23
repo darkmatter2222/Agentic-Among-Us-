@@ -376,8 +376,21 @@ class MapEditor:
             self.update_status(f"Added point {len(self.current_polygon)} at ({map_x:.1f}, {map_y:.1f})")
             
         elif self.draw_mode == DrawMode.SELECT_ZONE:
-            # Select zone and mark as room
-            self.select_zone_as_room(map_x, map_y)
+            # Draw labeled zone polygon (same as WALL mode)
+            # Priority 1: Snap to existing vertices
+            vertex_snap = self.find_snap_point(x, y)
+            if vertex_snap:
+                map_x, map_y = vertex_snap.x, vertex_snap.y
+            # Priority 2: Angle snap if we have a previous point
+            elif self.current_polygon and len(self.current_polygon) > 0:
+                angle_snap = self.find_angle_snap_point(x, y, self.current_polygon[-1])
+                if angle_snap:
+                    map_x, map_y = angle_snap.x, angle_snap.y
+            
+            # Add point to current polygon
+            self.current_polygon.append(Point(map_x, map_y))
+            self.redraw_all()
+            self.update_status(f"Added point {len(self.current_polygon)} at ({map_x:.1f}, {map_y:.1f})")
         
         elif self.draw_mode == DrawMode.DETECT_ZONE:
             # Detect and create zone at click point
@@ -406,7 +419,7 @@ class MapEditor:
             
     def on_canvas_right_click(self, event):
         """Handle right-click to finish polygon or delete element"""
-        if self.draw_mode == DrawMode.WALL:
+        if self.draw_mode == DrawMode.WALL or self.draw_mode == DrawMode.SELECT_ZONE:
             self.finish_polygon()
         elif self.draw_mode == DrawMode.NONE:
             # Delete mode - find and delete element at click position
@@ -427,8 +440,8 @@ class MapEditor:
         self.canvas.delete("snap_indicator")
         self.canvas.delete("angle_guide")
         
-        # Show snap indicators if in wall drawing mode
-        if self.draw_mode == DrawMode.WALL:
+        # Show snap indicators if in wall drawing mode or labeled zone mode
+        if self.draw_mode == DrawMode.WALL or self.draw_mode == DrawMode.SELECT_ZONE:
             # First check for vertex snap
             snap_point = self.find_snap_point(x, y)
             if snap_point:
