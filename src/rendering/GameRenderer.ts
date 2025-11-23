@@ -218,8 +218,8 @@ class Camera {
 
   update(_deltaTime: number): void {
     if (this.following && this.followTarget) {
-      this.targetX = -this.followTarget.x * 20 * this.zoom + 960;
-      this.targetY = -this.followTarget.y * 20 * this.zoom + 540;
+      this.targetX = -this.followTarget.x * this.zoom + 960;
+      this.targetY = -this.followTarget.y * this.zoom + 540;
     }
 
     // Smooth interpolation
@@ -247,8 +247,11 @@ class Camera {
   }
 
   focusOn(x: number, y: number, smooth: boolean = true): void {
-    const screenX = -x * 20 * this.zoom + 960;
-    const screenY = -y * 20 * this.zoom + 540;
+    // x and y are now in pixel coordinates (not game units)
+    // Use targetZoom since setZoom sets targetZoom, not immediate zoom
+    const zoomToUse = this.targetZoom;
+    const screenX = -x * zoomToUse + 960;
+    const screenY = -y * zoomToUse + 540;
     
     if (smooth) {
       this.targetX = screenX;
@@ -258,6 +261,7 @@ class Camera {
       this.y = screenY;
       this.targetX = screenX;
       this.targetY = screenY;
+      this.zoom = zoomToUse; // Also set immediate zoom when not smooth
     }
   }
 
