@@ -1,0 +1,480 @@
+# Among Us Game Mechanics - Complete Reference for AI Agents
+
+## Core Game Structure
+
+### Player Roles
+- **Crewmates**: Majority of players (6 out of 8 in our simulation)
+- **Impostors**: Minority of players (2 out of 8 in our simulation)
+
+### Win Conditions
+
+#### Crewmate Victory
+- **Task Completion**: Complete 100% of all assigned tasks
+  - Task bar fills incrementally as each subtask completes
+  - Dead crewmates can continue completing tasks as ghosts
+  - Task win is disabled during active sabotage crises
+- **Impostor Elimination**: Vote out all impostors through meetings
+  - Requires majority vote (>50% of living players)
+  - Tied votes result in no ejection
+
+#### Impostor Victory
+- **Numerical Parity**: Living impostors ≥ living crewmates
+- **Sabotage Victory**: Crewmates fail to fix critical sabotage in time
+  - Reactor meltdown: 30-45 second timer
+  - O2 depletion: 30-45 second timer
+
+---
+
+## Movement & Physics System
+
+### Movement Mechanics
+- **Base Movement Speed**: 1.0x (adjustable 0.5x-3.0x)
+  - Normal walk speed: ~5.5 units/second at 1.0x
+  - Diagonal movement: Same speed (normalized vector)
+  - No acceleration/deceleration (instant start/stop)
+  - Collision box: ~0.8 units diameter circle
+
+### Collision System
+- **Wall Clipping Prevention**: Ray-based collision detection
+- **Player Stacking**: Up to 10 players can occupy same tile
+- **Door Interactions**: Closed doors block all movement
+- **Vent Entry**: Requires exact positioning (±0.3 units)
+- **Cannot Phase Through**: Players cannot walk through walls or each other
+- **Corpses Don't Block**: Dead bodies don't block movement
+
+---
+
+## Vision & Perception System
+
+### Field of View Mathematics
+- **Vision Formula**: Visible Distance = Base_Vision × Vision_Multiplier × Environmental_Modifier
+- **Light Radius During Sabotage**: Normal_Vision × 0.25
+- **Impostor Vision Bonus**: Typically +0.5x to +1.5x during lights out
+
+### Line of Sight Details
+- **Raycast System**: 360° ray emission from player center
+- **Wall Occlusion**: Complete blockage by walls/doors
+- **Player Transparency**: Other players don't block vision
+- **Fog of War Gradient**:
+  - 100% visibility: 0-70% of vision radius
+  - Gradual fade: 70-100% of vision radius
+  - Complete darkness: Beyond vision radius
+
+### Vision During Different States
+1. **Normal Gameplay**: Full configured vision
+2. **Lights Sabotage**: Crewmate vision × 0.25, Impostor unchanged
+3. **Communications Sabotage**: No vision impact
+4. **In Vents**: Zero external vision, only see vent network
+5. **As Ghost**: Unlimited vision, see everything
+
+---
+
+## Task System
+
+### Task Assignment Algorithm
+- **Common Tasks**: 0-2 (all players get same ones or none)
+- **Long Tasks**: 0-3 per player
+- **Short Tasks**: 0-5 per player
+- **Visual Tasks**: Maximum 1-2 per player
+- **Total Tasks**: Usually 4-8 per crewmate
+
+### Task Types
+
+#### Short Tasks (1-5 seconds)
+| Task | Duration | Locations | Mechanics |
+|------|----------|-----------|-----------|
+| Swipe Card | 2-3s | Admin | Must swipe at correct speed |
+| Prime Shields | 3s | Shields | Click hexagons in sequence |
+| Empty Garbage | 2s | Cafeteria/O2 | Hold lever down |
+| Chart Course | 3s | Navigation | Drag ship through 4 waypoints |
+| Stabilize Steering | 2s | Navigation | Click crosshair when centered |
+| Unlock Manifolds | 4s | Reactor | Click numbers 1-10 in order |
+| Clean O2 Filter | 4s | O2 | Drag leaves away |
+| Divert Power (Stage 1) | 2s | Electrical | Slide lever up |
+| Accept Power (Stage 2) | 1s | Various | Click fuse |
+
+#### Long Tasks (10-60 seconds)
+| Task | Duration | Locations | Mechanics |
+|------|----------|-----------|-----------|
+| Start Reactor | 10s | Reactor | Simon Says memory game |
+| Submit Scan | 10s | MedBay | Stand still (VISUAL) |
+| Inspect Sample | 60s | MedBay | Wait, then select anomaly |
+| Fuel Engines | 20s total | Storage→Engines | Fill gas can, then deposit (multiple trips) |
+| Upload Data | 9s | Admin | Wait for upload bar |
+| Download Data | 9s | Various | Wait for download bar |
+| Clear Asteroids | 20s | Weapons | Destroy 20 asteroids (VISUAL) |
+| Fix Wiring | 3s×3 | Various | Connect matching colored wires (3 panels) |
+| Calibrate Distributor | 3s | Electrical | Time 3 rotating nodes |
+| Align Engine Output | 3s×2 | Upper/Lower Engine | Align engine thrust |
+
+### Task Validation System
+- **Positional Requirement**: Within 1.5 units of task location
+- **Facing Direction**: Not required in original game
+- **Task Progress Bar**: Updates only when subtask fully completes
+- **Multi-Stage Tasks**: Must complete in sequence
+- **Task Interruption**: Closing task resets current progress
+- **Ghost Tasks**: Count toward victory but no animation
+
+---
+
+## Impostor Abilities
+
+### Kill Mechanics
+- **Range**: Short (1.0 units), Medium (1.8 units), Long (2.5 units)
+- **Animation Duration**: 0.5 seconds (killer frozen)
+- **Cooldown**: 10-60 seconds (typically 25-45s)
+- **Kill Button Visibility**: Shows when target in range
+- **Multi-Kill Prevention**: Can't kill during kill animation
+- **Report Distance**: 2.5 units from body center
+
+### Sabotage System Details
+
+#### Reactor Meltdown
+- **Timer**: 30-45 seconds countdown
+- **Fix Requirements**: 2 players hold hand scanners simultaneously
+- **Location**: Reactor room, opposite sides
+- **Audio**: Klaxon alarm, increasing tempo
+- **Visual**: Red warning lights flash
+- **Strategy**: Forces crewmates to specific location
+
+#### Oxygen Depletion
+- **Timer**: 30-45 seconds countdown
+- **Fix Requirements**: Enter codes at 2 locations
+- **Locations**: O2 and Admin
+- **Code**: 5-digit number, same at both terminals
+- **Visual**: O2 percentage decreases on displays
+- **Strategy**: Splits up crewmates
+
+#### Lights Sabotage
+- **Duration**: Until fixed
+- **Effect**: Crewmate vision reduced to 0.25x
+- **Fix**: Toggle 5 switches to match pattern
+- **Location**: Electrical panel
+- **Impostor Advantage**: Maintain full vision
+- **Strategy**: Create kill opportunities with limited visibility
+
+#### Communications Sabotage
+- **Duration**: Until fixed
+- **Effects**:
+  - Task list hidden
+  - Task arrows disabled
+  - Admin table disabled
+  - Security cameras disabled
+- **Fix**: Rotate dial to match frequency
+- **Location**: Communications room
+- **Strategy**: Disable crewmate information gathering
+
+#### Door Sabotage
+- **Duration**: 10 seconds per door
+- **Cooldown**: 10-30 seconds ship-wide
+- **Simultaneously**: Can close multiple doors at once
+- **Opening**: Automatic after timer or crisis fix
+- **Strategic Doors**:
+  - Cafeteria: 5 doors (maximum isolation)
+  - Storage: 2 doors (trap potential)
+  - MedBay/Security: 1 door each (isolation rooms)
+
+### Vent Network Mechanics
+- **Entry Time**: 0.3 seconds
+- **Exit Time**: 0.3 seconds
+- **Travel Time**: Instant between connected vents
+- **Vision in Vents**: Only see vent UI, no external vision
+- **Movement in Vents**: Click arrows or connected vent icons
+- **Detection**: Vent animation visible for 0.3s on entry/exit
+- **Cooldown**: ~2 seconds between vent uses
+
+#### Vent Networks (4 Separate Systems)
+1. **West Network**: Upper Engine ↔ Lower Engine ↔ Reactor
+2. **Central Network**: MedBay ↔ Electrical ↔ Security
+3. **East Network**: Navigation ↔ Weapons ↔ Shields
+4. **Cafeteria Network**: Cafeteria ↔ Admin
+
+---
+
+## Meeting & Voting Mechanics
+
+### Meeting Initiation
+
+#### Emergency Button
+- **Location**: Center of Cafeteria table
+- **Personal Cooldown**: 15-60s after meeting ends
+- **Personal Limit**: 1-9 meetings per player per game
+- **Global Cooldown**: First 15-60s of game
+- **Animation**: Hand slam animation (0.5s)
+
+#### Body Reporting
+- **Detection Range**: 2.5 units
+- **Report Priority**: Overrides all other actions
+- **Information Provided**: Body location, reporter identity
+- **Body State**: Shows kill age via color fade
+
+### Discussion Phase Mechanics
+- **Discussion Timer**: 15-120 seconds
+- **No Voting Allowed**: Players can only chat
+- **Free Text Chat**: Or voice communication
+- **Player Icons**: Show alive/dead status
+- **Anonymous Voting Preparation**: Players consider their vote
+
+### Voting Phase Mechanics
+- **Voting Timer**: 15-300 seconds
+- **Each Player**: 1 vote or skip
+- **Vote Changing**: Allowed until timer ends
+- **Vote Locking**: Final 5 seconds no changes
+- **Anonymous Voting**: Optional, hides who voted for whom
+- **Vote Reveal**: Shows all votes simultaneously
+
+### Ejection Mechanics
+- **Ejection Animation**: 5 seconds
+- **Confirm Ejects Setting**: Shows if ejected player was impostor
+- **Ejection Text Variables**:
+  - "[Name] was An Impostor. X Impostors remain"
+  - "[Name] was not An Impostor. X Impostors remain"
+- **Tie Resolution**: No ejection on tied votes
+- **Skip Majority**: Treated as vote option
+
+---
+
+## Ghost Mechanics
+
+### Ghost Abilities
+- **Movement**: Same speed as alive, pass through walls
+- **Vision**: Unlimited range, see everything
+- **Tasks**: Can complete remaining tasks
+- **Sabotage**: Cannot trigger or fix
+- **Communication**: Can only chat with other ghosts
+- **Visibility**: Partially transparent to other ghosts only
+
+---
+
+## The Skeld Map - Strategic Analysis
+
+### Map Layout & Dimensions
+- **Total Size**: Approximately 60×40 units
+- **14 Named Rooms** + corridors
+- **3 Vertical Levels**: Upper deck, main deck, lower deck
+
+### Room Breakdown
+
+#### Left Wing (West)
+1. **Upper Engine**
+   - Tasks: Align Engine Output, Accept Diverted Power
+   - Vent: Connected to Lower Engine and Reactor
+   - Single entrance from corridor
+   - **Dead End**: High risk area
+
+2. **Lower Engine**
+   - Tasks: Align Engine Output, Accept Diverted Power
+   - Vent: Connected to Upper Engine and Reactor
+   - Single entrance from corridor
+   - **Dead End**: High risk area
+
+3. **Reactor**
+   - Tasks: Start Reactor, Unlock Manifolds
+   - Sabotage: Reactor Meltdown (critical)
+   - Vent: Connected to Upper/Lower Engine
+   - Two-hand authentication required for meltdown fix
+   - Decontamination corridor to Upper Engine
+   - **Dead End**: High risk area
+
+#### Central Section
+4. **Security**
+   - Tasks: Accept Diverted Power, Fix Wiring
+   - Special: Camera monitoring station (4 cameras)
+   - Vent: Connected to Electrical and MedBay
+   - Single entrance from upper corridor
+   - **Dead End**: Medium risk
+
+5. **MedBay**
+   - Tasks: Submit Scan (visual), Inspect Sample
+   - Vent: Connected to Electrical and Security
+   - Single entrance from upper corridor
+   - **Dead End**: High risk area
+
+6. **Electrical**
+   - Tasks: Fix Wiring, Divert Power, Calibrate Distributor
+   - Vent: Connected to MedBay and Security
+   - **High-Risk Area**: Single entrance, poor visibility
+   - Sabotage: Lights control
+   - **Most Dangerous Room**: Dead end with single entrance
+
+7. **Cafeteria**
+   - Central hub area
+   - Tasks: Fix Wiring, Empty Garbage, Download Data
+   - Emergency Button location
+   - Vent: Connected to Admin
+   - Multiple entrances (5 total)
+   - **Safest Area**: High traffic, multiple exits
+
+8. **Storage**
+   - Tasks: Fix Wiring, Fuel Engines (fuel pickup)
+   - No vents
+   - Large open area
+   - Two entrances
+   - **Moderately Safe**: Multiple exits
+
+9. **Admin**
+   - Tasks: Swipe Card, Fix Wiring, Upload Data
+   - Vent: Connected to Cafeteria
+   - Special: Admin Table (shows player locations)
+   - Two entrances
+   - **Strategic Location**: Crossroads
+
+#### Right Wing (East)
+10. **Communications**
+    - Tasks: Download Data, Accept Diverted Power
+    - Sabotage: Communications (hides tasks)
+    - No vents
+    - Single entrance
+    - **Dead End**: High risk area
+
+11. **O2 (Life Support)**
+    - Tasks: Clean O2 Filter, Empty Garbage
+    - Sabotage: Oxygen Depletion
+    - No vents
+    - Narrow entrance from Navigation
+    - **Dead End**: High risk area
+
+12. **Navigation**
+    - Tasks: Chart Course, Stabilize Steering, Download Data
+    - Vent: Connected to Weapons and Shields
+    - Two entrances (O2 and corridor)
+    - **Medium Risk**: Corner location
+
+13. **Weapons**
+    - Tasks: Clear Asteroids (visual), Download Data
+    - Vent: Connected to Navigation and Shields
+    - Single entrance from corridor
+    - **Dead End**: High risk area
+
+14. **Shields**
+    - Tasks: Prime Shields (visual), Accept Diverted Power
+    - Vent: Connected to Navigation and Weapons
+    - Single entrance from corridor
+    - **Dead End**: High risk area
+
+### Critical Map Features
+
+#### Camera Locations
+1. **Navigation corridor** - Monitors Nav/Shields area
+2. **Admin corridor** - Monitors Admin/Cafeteria area
+3. **Security entrance** - Monitors Security hallway
+4. **MedBay entrance** - Monitors MedBay hallway
+
+#### Choke Points
+- **Electrical**: Dead end, single entrance (MOST DANGEROUS)
+- **Storage-to-Electrical corridor**: Narrow passage
+- **O2-to-Navigation passage**: Isolated connection
+- **Decontamination areas**: 3-second forced walk zones
+
+#### High-Risk Areas (Dead Ends)
+1. Electrical (highest risk - single entrance)
+2. Upper Engine
+3. Lower Engine
+4. Reactor
+5. MedBay
+6. Security
+7. Weapons
+8. Shields
+9. Communications
+10. O2
+
+#### High-Traffic Areas (Safer)
+1. Cafeteria (central hub, 5 entrances)
+2. Storage (connection between sections)
+3. Admin (crossroads location)
+4. Upper Corridor (main east-west route)
+
+#### Decontamination Zones
+- **Upper Engine ↔ Reactor**: 3 second forced walk
+- **Laboratory ↔ Reactor** (MedBay side): 3 second forced walk
+- **Door Lock Override**: Cannot close during decontamination
+
+---
+
+## Audio & Visual Cues
+
+### Sound Effects
+- **Kill Sound**: Sharp stab/slash
+- **Vent Sound**: Metallic clang (proximity-based)
+- **Task Completion**: Soft chime
+- **Sabotage Alarm**: Different for each type
+- **Meeting Horn**: Loud emergency sound
+- **Footsteps**: Subtle, only when moving
+
+### Visual Indicators
+- **Task Animations**: Scanner green light, weapons firing, shields activating
+- **Kill Animation**: Brief struggle, body drops
+- **Vent Animation**: Grid opens/closes
+- **Sabotage Indicators**: Red flashing lights, warning symbols
+- **Report Button**: Megaphone icon appears
+- **Kill Button**: Red with knife icon
+
+---
+
+## Game Settings Reference
+
+### Host Configuration Options
+```
+Map Settings:
+- Player Speed: 0.5x - 3.0x
+- Crewmate Vision: 0.25x - 5.0x
+- Impostor Vision: 0.25x - 5.0x
+- Kill Cooldown: 10s - 60s
+- Kill Distance: Short/Medium/Long
+- Visual Tasks: On/Off
+- Common Tasks: 0-2
+- Long Tasks: 0-3
+- Short Tasks: 0-5
+- Emergency Meetings: 1-9 per player
+- Emergency Cooldown: 0-60s
+- Discussion Time: 0-120s
+- Voting Time: 0-300s
+- Anonymous Votes: On/Off
+- Confirm Ejects: On/Off
+- Task Bar Updates: Always/Meetings/Never
+```
+
+---
+
+## AI Agent Strategy Considerations
+
+### Crewmate Strategy
+1. **Task Efficiency**: Prioritize nearby tasks, avoid backtracking
+2. **Safety Assessment**: Avoid dead ends when alone
+3. **Buddy System**: Stay near trusted players
+4. **Visual Task Verification**: Watch others do visual tasks
+5. **Meeting Reasoning**: Share observations, build trust network
+6. **Alibi Tracking**: Remember where players were seen
+7. **Suspicion Management**: Track suspicious behaviors
+8. **Emergency Usage**: Call meetings when evidence is strong
+
+### Impostor Strategy
+1. **Kill Opportunity Assessment**: Isolated targets, no witnesses
+2. **Target Selection**: Prioritize threats (good players, visual task holders)
+3. **Alibi Creation**: Fake tasks convincingly
+4. **Sabotage Timing**: Create chaos before kills
+5. **Venting Tactics**: Use for escape routes, not travel
+6. **Blame Deflection**: Redirect suspicion to others
+7. **Meeting Deception**: Create plausible stories
+8. **Vote Manipulation**: Lead votes against innocents
+9. **Double Kill Coordination**: When two impostors work together
+10. **Self-Report Strategy**: Report own kills to appear innocent
+
+### Danger Assessment Factors
+1. **Room Type**: Dead end vs multiple exits
+2. **Player Count**: Alone vs with others
+3. **Visibility**: Lights on vs sabotaged
+4. **Camera Coverage**: In view of cameras or not
+5. **Recent Kills**: Bodies found nearby
+6. **Impostor Cooldown**: Time since last kill
+7. **Trust Level**: With trusted vs suspicious players
+
+### Suspicion Indicators
+1. **Fake Tasking**: Standing near task without doing it
+2. **Following Behavior**: Trailing other players
+3. **Vent Sighting**: Saw player enter/exit vent
+4. **Contradictory Statements**: Lies about location/alibi
+5. **Avoiding Cameras**: Deliberately avoiding monitored areas
+6. **Kill Zone Presence**: Near body discovery location
+7. **Sabotage Timing**: Benefits from sabotage timing
+8. **Vote Patterns**: Consistently voting with impostors
