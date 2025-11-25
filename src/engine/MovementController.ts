@@ -124,7 +124,21 @@ export class MovementController {
       this.scaleVector(this.state.velocity, deltaTime)
     );
 
-    const resolvedPosition = this.resolveCollision(this.state.currentPosition, proposedPosition);
+    let resolvedPosition = this.resolveCollision(this.state.currentPosition, proposedPosition);
+
+    let clampedToGoal = false;
+    if (this.isOnFinalSegment()) {
+      const finalPoint = this.state.path[this.state.path.length - 1];
+      const toFinalBefore = this.subtractVectors(finalPoint, this.state.currentPosition);
+      const toFinalAfter = this.subtractVectors(finalPoint, resolvedPosition);
+      if (this.dotProduct(toFinalBefore, toFinalAfter) <= 0) {
+        // Clamp directly to the goal when we would overshoot to avoid popping back next frame
+        resolvedPosition = { ...finalPoint };
+        this.state.velocity = { x: 0, y: 0 };
+        clampedToGoal = true;
+      }
+    }
+
     this.state.distanceTraveled += this.calculateDistance(this.state.currentPosition, resolvedPosition);
     this.state.currentPosition = resolvedPosition;
 
@@ -134,9 +148,13 @@ export class MovementController {
       this.state.facing = Math.atan2(this.state.velocity.y, this.state.velocity.x);
     }
 
-    if (this.reachedDestination()) {
+    if (clampedToGoal || this.reachedDestination()) {
       this.finishMovement();
     }
+  }
+
+  private isOnFinalSegment(): boolean {
+    return this.state.path.length > 0 && this.state.pathIndex >= this.state.path.length - 1;
   }
 
   /**
@@ -473,6 +491,10 @@ export class MovementController {
       x: v.x * cos - v.y * sin,
       y: v.x * sin + v.y * cos
     };
+  }
+
+  private dotProduct(a: Point, b: Point): number {
+    return a.x * b.x + a.y * b.y;
   }
 
   private resetStuckTracking(): void {
