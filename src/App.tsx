@@ -1,18 +1,21 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import './App.css';
 import { GameRenderer } from './rendering/GameRenderer';
 import { Poly3MapRenderer } from './rendering/Poly3MapRenderer';
 import { AIAgentVisualRenderer } from './rendering/AIAgentVisualRenderer';
 import { AIAgentManager } from './engine/AIAgentManager';
 import { WALKABLE_ZONES, LABELED_ZONES, TASKS } from './data/poly3-map';
+import { AgentInfoPanel, type AgentSummary } from './components/AgentInfoPanel';
 
 function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [agentSummaries, setAgentSummaries] = useState<AgentSummary[]>([]);
 
   useEffect(() => {
     let cleanup = false;
     let gameRenderer: GameRenderer | null = null;
     let agentManager: AIAgentManager | null = null;
+    let lastStatusUpdate = 0;
     
     const initGame = async () => {
       try {
@@ -95,6 +98,22 @@ function App() {
           if (agentManager) {
             agentVisualRenderer.updateAgents(agentManager.getAgents());
           }
+
+          if (agentManager && now - lastStatusUpdate > 200) {
+            const summaries = agentManager.getAgents().map(agent => {
+              const stateMachine = agent.getStateMachine();
+              return {
+                id: agent.getId(),
+                activityState: stateMachine.getActivityState(),
+                currentZone: stateMachine.getCurrentZone(),
+                locationState: stateMachine.getLocationState(),
+                goal: agent.getCurrentGoal()
+              } satisfies AgentSummary;
+            });
+
+            setAgentSummaries(summaries);
+            lastStatusUpdate = now;
+          }
           
           // Update map animations
           mapRenderer.update(deltaTime);
@@ -123,17 +142,13 @@ function App() {
   }, []);
 
   return (
-    <div style={{ 
-      width: '100vw', 
-      height: '100vh', 
-      margin: 0, 
-      padding: 0,
-      background: '#000',
-      display: 'flex',
-      justifyContent: 'center',
-      alignItems: 'center'
-    }}>
-      <canvas ref={canvasRef} />
+    <div className="app-shell">
+      <div className="map-wrapper">
+        <div className="map-canvas">
+          <canvas ref={canvasRef} />
+        </div>
+      </div>
+      <AgentInfoPanel agents={agentSummaries} />
     </div>
   );
 }
