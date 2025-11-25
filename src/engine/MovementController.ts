@@ -259,9 +259,16 @@ export class MovementController {
       const hit = this.castWhisker(dir, whisker.length);
 
       if (hit) {
-        const strength = (whisker.length - hit.distance) / whisker.length;
-        const side: 1 | -1 = whisker.angle >= 0 ? -1 : 1;
-        const pushDir = this.perpendicular(dir, side);
+        const proximity = Math.max(0, (whisker.length - hit.distance) / whisker.length);
+        const strength = proximity * proximity; // quadratic falloff for stronger push near walls
+        const pushDir = this.normalize(
+          this.subtractVectors(this.state.currentPosition, hit.hitPoint)
+        );
+
+        if (!pushDir) {
+          continue;
+        }
+
         avoidance = this.addVectors(
           avoidance,
           this.scaleVector(pushDir, strength * this.state.speed)
@@ -272,12 +279,13 @@ export class MovementController {
     return avoidance;
   }
 
-  private castWhisker(direction: Point, length: number): { distance: number } | null {
+  private castWhisker(direction: Point, length: number): { distance: number; hitPoint: Point } | null {
     const start = this.state.currentPosition;
     const normalizedDir = this.normalize(direction);
     if (!normalizedDir) return null;
 
     const steps = Math.max(1, Math.floor(length / this.whiskerStep));
+    let lastWalkable: Point = { ...start };
     for (let i = 1; i <= steps; i++) {
       const dist = i * this.whiskerStep;
       if (dist > length) break;
@@ -286,8 +294,10 @@ export class MovementController {
         y: start.y + normalizedDir.y * dist
       };
 
-      if (!this.isWalkable(probe)) {
-        return { distance: dist };
+      if (this.isWalkable(probe)) {
+        lastWalkable = probe;
+      } else {
+        return { distance: dist, hitPoint: lastWalkable };
       }
     }
 
@@ -441,12 +451,5 @@ export class MovementController {
       x: v.x * cos - v.y * sin,
       y: v.x * sin + v.y * cos
     };
-  }
-
-  private perpendicular(v: Point, direction: 1 | -1): Point {
-    // Rotate 90 degrees left (direction = 1) or right (direction = -1)
-    return direction === 1
-      ? { x: -v.y, y: v.x }
-      : { x: v.y, y: -v.x };
   }
 }

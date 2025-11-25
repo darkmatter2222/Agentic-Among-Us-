@@ -14,7 +14,7 @@ export class VisionRenderer {
   
   // Vision configuration
   private readonly VISION_RAYS: number = 360; // Ray density for smooth circles
-  private readonly GRADIENT_START: number = 0.7; // Start fading at 70% of vision radius
+  private readonly GRADIENT_START: number = 0.82; // Start fading near the edge
 
   constructor(container: PIXI.Container, walls: Wall[]) {
     this.container = container;
@@ -83,20 +83,19 @@ export class VisionRenderer {
    * Cast a single ray and return hit point or max distance
    */
   private castRay(origin: Position, dirX: number, dirY: number, maxDistance: number): Position {
-    let closestT = 1.0; // Normalized distance (0-1)
-    
-    // Check intersection with all walls
+    const maxDistanceWorld = maxDistance / this.scale;
+    let closestDistance = maxDistanceWorld;
+
     for (const wall of this.walls) {
-      const t = this.rayWallIntersection(origin, dirX, dirY, wall);
-      if (t !== null && t < closestT) {
-        closestT = t;
+      const distance = this.rayWallIntersection(origin, dirX, dirY, wall);
+      if (distance !== null && distance >= 0 && distance < closestDistance && distance <= maxDistanceWorld) {
+        closestDistance = distance;
       }
     }
-    
-    // Return hit point
+
     return {
-      x: origin.x + dirX * maxDistance / this.scale * closestT,
-      y: origin.y + dirY * maxDistance / this.scale * closestT
+      x: origin.x + dirX * closestDistance,
+      y: origin.y + dirY * closestDistance
     };
   }
 
@@ -155,11 +154,12 @@ export class VisionRenderer {
     this.visionGraphics.fill({ color: 0xFFFFFF, alpha: 0.1 });
     
     // Draw gradient rings (approximation of radial gradient)
-    const numRings = 5;
+    const numRings = 6;
     for (let ring = 0; ring < numRings; ring++) {
       const ringRadius = gradientStartRadius + (gradientRadius - gradientStartRadius) * (ring / numRings);
       const nextRingRadius = gradientStartRadius + (gradientRadius - gradientStartRadius) * ((ring + 1) / numRings);
-      const alpha = 0.1 * (1 - ring / numRings);
+      const baseRingAlpha = 0.08;
+      const alpha = baseRingAlpha * (1 - ring / numRings);
       
       // Filter polygon points within this ring
       const ringPolygon = polygon.filter(p => {
@@ -173,7 +173,7 @@ export class VisionRenderer {
           this.visionGraphics.lineTo(ringPolygon[i].x * this.scale, ringPolygon[i].y * this.scale);
         }
         this.visionGraphics.closePath();
-        this.visionGraphics.fill({ color: 0x000000, alpha: alpha });
+        this.visionGraphics.fill({ color: 0xFFFFFF, alpha });
       }
     }
   }

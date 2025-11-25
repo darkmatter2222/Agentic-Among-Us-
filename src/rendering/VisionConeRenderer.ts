@@ -28,7 +28,7 @@ export class VisionConeRenderer {
       radius: 150,
       angle: Math.PI / 2, // 90 degrees
       color: 0xFFFFFF,
-      alpha: 0.3,
+      alpha: 0.01,
       gradientSteps: 20,
       ...config
     };
@@ -51,7 +51,7 @@ export class VisionConeRenderer {
     for (let i = 0; i < gradientSteps; i++) {
       const t = i / gradientSteps;
       const currentRadius = radius * (1 - t);
-      const currentAlpha = alpha * (1 - t * 0.7); // Fade from full to 30%
+      const currentAlpha = alpha * (1 - t);
       
       this.graphics.beginFill(color, currentAlpha);
       this.graphics.moveTo(position.x, position.y);

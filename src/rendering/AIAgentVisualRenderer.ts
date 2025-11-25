@@ -53,7 +53,7 @@ export class AIAgentVisualRenderer {
     const visionCone = new VisionConeRenderer({
       radius: agent.getVisionRadius(),
       color: agent.getColor(),
-      alpha: 0.2,
+      alpha: 0.01,
       angle: Math.PI / 2 // 90 degrees
     });
     
