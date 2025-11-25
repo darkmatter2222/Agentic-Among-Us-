@@ -79,6 +79,11 @@ export class AIAgent {
       // Arrived at destination
       this.onArriveAtDestination();
     }
+
+    // Detect and recover from stuck movement
+    if (this.stateMachine.isMoving() && this.movementController.isStuck()) {
+      this.handleMovementStuck();
+    }
     
     // Make decisions
     if (now >= this.behaviorState.nextDecisionTime && !this.behaviorState.isThinking) {
@@ -174,6 +179,19 @@ export class AIAgent {
     // Idle for a random time before next decision
     this.behaviorState.idleTimeRemaining = this.randomIdleTime();
     this.behaviorState.nextDecisionTime = Date.now() + this.behaviorState.idleTimeRemaining;
+  }
+
+  /**
+   * Recover from pathfinding or steering issues when agent stalls against geometry
+   */
+  private handleMovementStuck(): void {
+    console.warn(`[${this.config.id}] Movement stuck, replanning destination`);
+    this.movementController.stop();
+    this.movementController.clearStuck();
+    this.stateMachine.transitionTo(PlayerActivityState.IDLE, 'Movement stuck - replanning');
+    this.behaviorState.currentGoal = null;
+    this.behaviorState.idleTimeRemaining = 0;
+    this.behaviorState.nextDecisionTime = Date.now() + 250;
   }
   
   /**

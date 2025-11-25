@@ -33,6 +33,12 @@ export class MovementController {
   private readonly damping = 6; // velocity decay when stopped
   private readonly collisionIterations = 6;
   private readonly minFacingSpeed = 5;
+  private readonly stuckDistanceThreshold = 6; // min distance progress before clearing stuck timer
+  private readonly stuckTimeThreshold = 1.2; // seconds before declaring stuck
+
+  private lastProgressPosition: Point;
+  private timeSinceProgress: number = 0;
+  private stuck: boolean = false;
 
   constructor(startPosition: Point, speed?: number) {
     if (!isPointWalkable(startPosition.x, startPosition.y, WALKABLE_ZONES)) {
@@ -52,6 +58,8 @@ export class MovementController {
       facing: 0,
       velocity: { x: 0, y: 0 }
     };
+
+    this.lastProgressPosition = { ...startPosition };
   }
 
   /**
@@ -73,6 +81,7 @@ export class MovementController {
     this.state.distanceTraveled = 0;
     this.state.isMoving = true;
     this.state.targetPosition = smoothPath.points[smoothPath.points.length - 1];
+    this.resetStuckTracking();
   }
 
   /**
@@ -85,6 +94,7 @@ export class MovementController {
 
     if (!this.state.isMoving || this.state.path.length === 0) {
       this.applyVelocityDamping(deltaTime);
+      this.resetStuckTracking();
       return;
     }
 
@@ -118,6 +128,8 @@ export class MovementController {
     this.state.distanceTraveled += this.calculateDistance(this.state.currentPosition, resolvedPosition);
     this.state.currentPosition = resolvedPosition;
 
+    this.updateStuckTracking(deltaTime);
+
     if (this.vectorMagnitude(this.state.velocity) > this.minFacingSpeed) {
       this.state.facing = Math.atan2(this.state.velocity.y, this.state.velocity.x);
     }
@@ -135,6 +147,15 @@ export class MovementController {
     this.state.path = [];
     this.state.pathIndex = 0;
     this.state.velocity = { x: 0, y: 0 };
+    this.resetStuckTracking();
+  }
+
+  isStuck(): boolean {
+    return this.stuck;
+  }
+
+  clearStuck(): void {
+    this.resetStuckTracking();
   }
 
   getPosition(): Point {
@@ -368,6 +389,7 @@ export class MovementController {
     this.state.velocity = { x: 0, y: 0 };
     this.state.pathIndex = this.state.path.length - 1;
     this.state.isMoving = false;
+    this.resetStuckTracking();
   }
 
   private applyVelocityDamping(deltaTime: number): void {
@@ -451,5 +473,31 @@ export class MovementController {
       x: v.x * cos - v.y * sin,
       y: v.x * sin + v.y * cos
     };
+  }
+
+  private resetStuckTracking(): void {
+    this.timeSinceProgress = 0;
+    this.stuck = false;
+    this.lastProgressPosition = { ...this.state.currentPosition };
+  }
+
+  private updateStuckTracking(deltaTime: number): void {
+    if (!this.state.isMoving) {
+      this.resetStuckTracking();
+      return;
+    }
+
+    const progress = this.calculateDistance(this.state.currentPosition, this.lastProgressPosition);
+    if (progress >= this.stuckDistanceThreshold) {
+      this.lastProgressPosition = { ...this.state.currentPosition };
+      this.timeSinceProgress = 0;
+      this.stuck = false;
+      return;
+    }
+
+    this.timeSinceProgress += deltaTime;
+    if (this.timeSinceProgress >= this.stuckTimeThreshold) {
+      this.stuck = true;
+    }
   }
 }
