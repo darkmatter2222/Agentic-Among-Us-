@@ -33,7 +33,7 @@ export class AIAgentManager {
     console.log(`Navigation mesh built with ${navMesh.nodes.size} nodes`);
     
     // Initialize pathfinder
-    this.pathfinder = new Pathfinder(navMesh);
+    this.pathfinder = new Pathfinder(navMesh, config.walkableZones);
     
     // Initialize zone detector
     this.zoneDetector = new ZoneDetector(config.walkableZones, config.labeledZones);

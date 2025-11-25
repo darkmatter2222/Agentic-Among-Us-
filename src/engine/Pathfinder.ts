@@ -1,11 +1,12 @@
 /**
- * A* Pathfinding Algorithm
- * Finds optimal paths through the navigation mesh
+ * Visibility-Graph Pathfinding
+ * Builds a line-of-sight visibility graph from the navigation mesh nodes,
+ * then runs A* directly on that dense graph to generate smooth, wall-safe routes.
  */
 
-import type { Point } from '../data/poly3-map.ts';
+import type { Point, WalkableZone } from '../data/poly3-map.ts';
+import { isPointWalkable } from '../data/poly3-map.ts';
 import type { NavMesh } from './NavMesh.ts';
-import { findNearestNode } from './NavMesh.ts';
 
 export interface PathNode {
   position: Point;
@@ -18,52 +19,52 @@ export interface PathfindingResult {
   totalCost: number;
 }
 
+interface GraphNode {
+  id: string;
+  position: Point;
+}
+
+interface GraphEdge {
+  targetId: string;
+  cost: number;
+}
+
 interface AStarNode {
-  navNodeId: string;
-  gCost: number; // Cost from start
-  hCost: number; // Heuristic cost to end
-  fCost: number; // Total cost (g + h)
+  id: string;
+  gCost: number;
+  hCost: number;
+  fCost: number;
   parent: string | null;
 }
 
 export class Pathfinder {
   private navMesh: NavMesh;
-  
-  constructor(navMesh: NavMesh) {
+  private walkableZones: WalkableZone[];
+  private graphNodes: Map<string, GraphNode> = new Map();
+  private visibilityEdges: Map<string, GraphEdge[]> = new Map();
+
+  constructor(navMesh: NavMesh, walkableZones: WalkableZone[]) {
     this.navMesh = navMesh;
+    this.walkableZones = walkableZones;
+    this.rebuildVisibilityGraph();
   }
   
   /**
    * Find a path from start to end position using A* algorithm
    */
   findPath(start: Point, end: Point): PathfindingResult {
-    // Find nearest nav nodes to start and end positions
-    const startNode = findNearestNode(start, this.navMesh);
-    const endNode = findNearestNode(end, this.navMesh);
-    
-    if (!startNode || !endNode) {
+    const { nodes, edges, startId, endId, valid } = this.prepareGraphForQuery(start, end);
+
+    if (!valid) {
       return {
         success: false,
         path: [],
         totalCost: 0
       };
     }
-    
-    // If start and end are the same node, return direct path
-    if (startNode.id === endNode.id) {
-      return {
-        success: true,
-        path: [
-          { position: start, navNodeId: startNode.id },
-          { position: end, navNodeId: endNode.id }
-        ],
-        totalCost: this.calculateDistance(start, end)
-      };
-    }
-    
-    // Run A* algorithm
-    const nodePath = this.astar(startNode.id, endNode.id);
-    
+
+    const nodePath = this.astar(nodes, edges, startId, endId);
+
     if (nodePath.length === 0) {
       return {
         success: false,
@@ -71,31 +72,26 @@ export class Pathfinder {
         totalCost: 0
       };
     }
-    
-    // Convert node IDs to positions
-    const path: PathNode[] = [];
-    
-    // Add start position
-    path.push({ position: start, navNodeId: startNode.id });
-    
-    // Add intermediate nodes
-    for (let i = 1; i < nodePath.length - 1; i++) {
-      const node = this.navMesh.nodes.get(nodePath[i])!;
-      path.push({
+
+    const path: PathNode[] = nodePath.map(nodeId => {
+      if (nodeId === startId) {
+        return { position: start, navNodeId: startId };
+      }
+      if (nodeId === endId) {
+        return { position: end, navNodeId: endId };
+      }
+      const node = nodes.get(nodeId)!;
+      return {
         position: node.position,
         navNodeId: node.id
-      });
-    }
-    
-    // Add end position
-    path.push({ position: end, navNodeId: endNode.id });
-    
-    // Calculate total cost
+      };
+    });
+
     let totalCost = 0;
     for (let i = 0; i < path.length - 1; i++) {
       totalCost += this.calculateDistance(path[i].position, path[i + 1].position);
     }
-    
+
     return {
       success: true,
       path,
@@ -103,87 +99,151 @@ export class Pathfinder {
     };
   }
   
-  /**
-   * A* algorithm implementation
-   */
-  private astar(startId: string, endId: string): string[] {
+  private astar(
+    nodes: Map<string, GraphNode>,
+    edges: Map<string, GraphEdge[]>,
+    startId: string,
+    endId: string
+  ): string[] {
     const openSet = new Set<string>([startId]);
     const closedSet = new Set<string>();
-    const nodes = new Map<string, AStarNode>();
-    
-    const endNode = this.navMesh.nodes.get(endId)!;
-    
-    // Initialize start node
-    nodes.set(startId, {
-      navNodeId: startId,
+    const searchNodes = new Map<string, AStarNode>();
+
+    const endNode = nodes.get(endId)!;
+
+    searchNodes.set(startId, {
+      id: startId,
       gCost: 0,
-      hCost: this.heuristic(startId, endNode.position),
-      fCost: this.heuristic(startId, endNode.position),
+      hCost: this.calculateDistance(nodes.get(startId)!.position, endNode.position),
+      fCost: this.calculateDistance(nodes.get(startId)!.position, endNode.position),
       parent: null
     });
-    
+
     while (openSet.size > 0) {
-      // Find node with lowest fCost
-      let currentId = this.getLowestFCostNode(openSet, nodes);
-      
+      const currentId = this.getLowestFCostNode(openSet, searchNodes);
+
       if (currentId === endId) {
-        // Path found! Reconstruct it
-        return this.reconstructPath(nodes, currentId);
+        return this.reconstructPath(searchNodes, currentId);
       }
-      
+
       openSet.delete(currentId);
       closedSet.add(currentId);
-      
-      const current = nodes.get(currentId)!;
-      const currentNavNode = this.navMesh.nodes.get(currentId)!;
-      
-      // Check all neighbors
-      for (const edge of currentNavNode.neighbors) {
-        const neighborId = edge.targetNodeId;
-        
-        if (closedSet.has(neighborId) || !edge.walkable) {
+
+      const currentNode = searchNodes.get(currentId)!;
+      const neighborEdges = edges.get(currentId) ?? [];
+
+      for (const edge of neighborEdges) {
+        const neighborId = edge.targetId;
+
+        if (closedSet.has(neighborId)) {
           continue;
         }
-        
-        const tentativeGCost = current.gCost + edge.cost;
-        
+
+        const tentativeG = currentNode.gCost + edge.cost;
+
         if (!openSet.has(neighborId)) {
-          // Discover new node
           openSet.add(neighborId);
-          nodes.set(neighborId, {
-            navNodeId: neighborId,
-            gCost: tentativeGCost,
-            hCost: this.heuristic(neighborId, endNode.position),
-            fCost: tentativeGCost + this.heuristic(neighborId, endNode.position),
+          searchNodes.set(neighborId, {
+            id: neighborId,
+            gCost: tentativeG,
+            hCost: this.calculateDistance(nodes.get(neighborId)!.position, endNode.position),
+            fCost: tentativeG + this.calculateDistance(nodes.get(neighborId)!.position, endNode.position),
             parent: currentId
           });
         } else {
-          // Check if this path is better
-          const neighborNode = nodes.get(neighborId)!;
-          if (tentativeGCost < neighborNode.gCost) {
-            neighborNode.gCost = tentativeGCost;
-            neighborNode.fCost = tentativeGCost + neighborNode.hCost;
+          const neighborNode = searchNodes.get(neighborId)!;
+          if (tentativeG < neighborNode.gCost) {
+            neighborNode.gCost = tentativeG;
+            neighborNode.fCost = tentativeG + neighborNode.hCost;
             neighborNode.parent = currentId;
           }
         }
       }
     }
-    
-    // No path found
+
     return [];
   }
-  
-  /**
-   * Heuristic function (Euclidean distance)
-   */
-  private heuristic(nodeId: string, target: Point): number {
-    const node = this.navMesh.nodes.get(nodeId)!;
-    return this.calculateDistance(node.position, target);
+
+  private prepareGraphForQuery(start: Point, end: Point) {
+    const nodes = new Map<string, GraphNode>();
+    const edges = new Map<string, GraphEdge[]>();
+
+    // Copy static nodes and edge lists (deep copy of edges to avoid mutation)
+    for (const [id, node] of this.graphNodes.entries()) {
+      nodes.set(id, node);
+    }
+
+    for (const [id, list] of this.visibilityEdges.entries()) {
+      edges.set(id, list.map(edge => ({ ...edge })));
+    }
+
+    const startId = '__start__';
+    const endId = '__end__';
+
+    nodes.set(startId, { id: startId, position: start });
+    nodes.set(endId, { id: endId, position: end });
+    edges.set(startId, []);
+    edges.set(endId, []);
+
+    this.connectDynamicNode(startId, start, nodes, edges);
+    this.connectDynamicNode(endId, end, nodes, edges);
+
+    // Direct connection if possible
+    if (this.hasLineOfSight(start, end)) {
+      const cost = this.calculateDistance(start, end);
+      edges.get(startId)!.push({ targetId: endId, cost });
+      edges.get(endId)!.push({ targetId: startId, cost });
+    }
+
+    const startConnected = this.ensureNodeHasConnections(startId, edges);
+    const endConnected = this.ensureNodeHasConnections(endId, edges);
+
+    return {
+      nodes,
+      edges,
+      startId,
+      endId,
+      valid: startConnected && endConnected
+    };
   }
-  
-  /**
-   * Get the node with the lowest fCost from the open set
-   */
+
+  private connectDynamicNode(
+    nodeId: string,
+    position: Point,
+    nodes: Map<string, GraphNode>,
+    edges: Map<string, GraphEdge[]>
+  ): void {
+    for (const [otherId, otherNode] of this.graphNodes.entries()) {
+      if (otherId === nodeId) continue;
+      if (!nodes.has(otherId)) continue;
+
+      if (this.hasLineOfSight(position, otherNode.position)) {
+        const cost = this.calculateDistance(position, otherNode.position);
+        edges.get(nodeId)!.push({ targetId: otherId, cost });
+
+        const existing = edges.get(otherId);
+        if (existing) {
+          existing.push({ targetId: nodeId, cost });
+        } else {
+          edges.set(otherId, [{ targetId: nodeId, cost }]);
+        }
+      }
+    }
+  }
+
+  private ensureNodeHasConnections(
+    nodeId: string,
+    edges: Map<string, GraphEdge[]>
+  ): boolean {
+    const connections = edges.get(nodeId) ?? [];
+    if (connections.length > 0) {
+      return true;
+    }
+
+    // No viable connection found – fail early so we can report no path.
+    return false;
+  }
+
   private getLowestFCostNode(openSet: Set<string>, nodes: Map<string, AStarNode>): string {
     let lowest: string = '';
     let lowestFCost = Infinity;
@@ -214,6 +274,54 @@ export class Pathfinder {
     
     return path;
   }
+
+  private rebuildVisibilityGraph(): void {
+    this.graphNodes = new Map();
+    this.visibilityEdges = new Map();
+
+    for (const [id, node] of this.navMesh.nodes.entries()) {
+      this.graphNodes.set(id, { id, position: { ...node.position } });
+    }
+
+    const nodeEntries = Array.from(this.graphNodes.values());
+    const count = nodeEntries.length;
+
+    // Initialize edge map
+    for (const node of nodeEntries) {
+      this.visibilityEdges.set(node.id, []);
+    }
+
+    for (let i = 0; i < count; i++) {
+      const nodeA = nodeEntries[i];
+      for (let j = i + 1; j < count; j++) {
+        const nodeB = nodeEntries[j];
+        if (this.hasLineOfSight(nodeA.position, nodeB.position)) {
+          const cost = this.calculateDistance(nodeA.position, nodeB.position);
+          this.visibilityEdges.get(nodeA.id)!.push({ targetId: nodeB.id, cost });
+          this.visibilityEdges.get(nodeB.id)!.push({ targetId: nodeA.id, cost });
+        }
+      }
+    }
+  }
+
+  private hasLineOfSight(a: Point, b: Point): boolean {
+    const distance = this.calculateDistance(a, b);
+    const steps = Math.max(1, Math.ceil(distance / 8));
+
+    for (let i = 1; i < steps; i++) {
+      const t = i / steps;
+      const sample = {
+        x: a.x + (b.x - a.x) * t,
+        y: a.y + (b.y - a.y) * t
+      };
+
+      if (!isPointWalkable(sample.x, sample.y, this.walkableZones)) {
+        return false;
+      }
+    }
+
+    return true;
+  }
   
   /**
    * Calculate Euclidean distance between two points
@@ -229,5 +337,6 @@ export class Pathfinder {
    */
   updateNavMesh(navMesh: NavMesh): void {
     this.navMesh = navMesh;
+    this.rebuildVisibilityGraph();
   }
 }

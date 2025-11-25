@@ -5,7 +5,6 @@ import { Poly3MapRenderer } from './rendering/Poly3MapRenderer';
 import { AIAgentVisualRenderer } from './rendering/AIAgentVisualRenderer';
 import { AIAgentManager } from './engine/AIAgentManager';
 import { WALKABLE_ZONES, LABELED_ZONES, TASKS } from './data/poly3-map';
-import * as PIXI from 'pixi.js';
 
 function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);

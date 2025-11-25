@@ -14,22 +14,33 @@ export interface MovementState {
   pathIndex: number;
   distanceTraveled: number;
   isMoving: boolean;
-  speed: number; // units per second
-  facing: number; // angle in radians
+  speed: number; // preferred cruising speed (units/s)
+  facing: number; // heading in radians
+  velocity: Point; // current velocity (units/s)
 }
 
 export class MovementController {
   private state: MovementState;
-  private baseSpeed: number = 100; // Default speed
-  private rotationSpeed: number = 5; // Radians per second
-  private debugCounter: number = 0;
-  
+  private readonly defaultSpeed = 100;
+  private readonly mass = 1;
+  private readonly waypointRadius = 18; // radius for snapping to waypoints
+  private readonly arrivalRadius = 28; // radius for slowing near final goal
+  private readonly lookAheadSteps = 4;
+  private readonly whiskerBaseLength = 60;
+  private readonly whiskerAngle = Math.PI / 5; // ~36 degrees
+  private readonly whiskerStep = 6;
+  private readonly avoidanceWeight = 1.4;
+  private readonly damping = 6; // velocity decay when stopped
+  private readonly collisionIterations = 6;
+  private readonly minFacingSpeed = 5;
+
   constructor(startPosition: Point, speed?: number) {
-    // Validate starting position is walkable
     if (!isPointWalkable(startPosition.x, startPosition.y, WALKABLE_ZONES)) {
       console.error(`[MovementController] Starting position (${startPosition.x.toFixed(1)}, ${startPosition.y.toFixed(1)}) is NOT WALKABLE!`);
     }
-    
+
+    const resolvedSpeed = speed ?? this.defaultSpeed;
+
     this.state = {
       currentPosition: { ...startPosition },
       targetPosition: { ...startPosition },
@@ -37,249 +48,405 @@ export class MovementController {
       pathIndex: 0,
       distanceTraveled: 0,
       isMoving: false,
-      speed: speed || this.baseSpeed,
-      facing: 0
+      speed: resolvedSpeed,
+      facing: 0,
+      velocity: { x: 0, y: 0 }
     };
   }
-  
+
   /**
-   * Set a new path to follow
+   * Assign a new smooth trajectory for the agent to follow.
    */
   setPath(smoothPath: SmoothPath): void {
     if (smoothPath.points.length < 2) {
-      console.log('Path too short:', smoothPath.points.length);
-      this.state.isMoving = false;
+      this.stop();
       return;
     }
-    
-    console.log(`Setting path with ${smoothPath.points.length} points, speed: ${this.state.speed}`);
-    console.log('Current position:', this.state.currentPosition);
-    console.log('First path point:', smoothPath.points[0]);
-    console.log('Last path point:', smoothPath.points[smoothPath.points.length - 1]);
-    
-    this.state.path = smoothPath.points;
-    this.state.pathIndex = 0;
+
+    const pathPoints = smoothPath.points.map(p => ({ ...p }));
+    if (this.calculateDistance(pathPoints[0], this.state.currentPosition) > 1) {
+      pathPoints.unshift({ ...this.state.currentPosition });
+    }
+
+    this.state.path = pathPoints;
+    this.state.pathIndex = 1; // first target is the next point after the current position
     this.state.distanceTraveled = 0;
     this.state.isMoving = true;
     this.state.targetPosition = smoothPath.points[smoothPath.points.length - 1];
-    
-    // Don't modify current position - let the update loop handle movement from wherever we are
   }
-  
+
   /**
-   * Update movement (call every frame)
+   * Advance simulation by deltaTime seconds.
    */
   update(deltaTime: number): void {
-    if (!this.state.isMoving || this.state.path.length === 0) {
+    if (deltaTime <= 0) {
       return;
     }
-    
-    // Debug logging every 60 frames
-    this.debugCounter++;
-    if (this.debugCounter % 60 === 0) {
-      const expectedDistance = this.state.speed * deltaTime;
-      console.log(`[Movement] deltaTime: ${deltaTime.toFixed(4)}s, FPS: ${(1/deltaTime).toFixed(1)}, speed: ${this.state.speed.toFixed(1)}, expected: ${expectedDistance.toFixed(2)}px`);
-      console.log(`[Movement] pathIndex: ${this.state.pathIndex}/${this.state.path.length - 1}, pos: (${this.state.currentPosition.x.toFixed(1)}, ${this.state.currentPosition.y.toFixed(1)})`);
+
+    if (!this.state.isMoving || this.state.path.length === 0) {
+      this.applyVelocityDamping(deltaTime);
+      return;
     }
-    
-    const startPos = { ...this.state.currentPosition };
-    const distanceThisFrame = this.state.speed * deltaTime;
-    let remainingDistance = distanceThisFrame;
-    
-    // Move along the path
-    while (remainingDistance > 0.001 && this.state.pathIndex < this.state.path.length - 1) {
-      const segmentEnd = this.state.path[this.state.pathIndex + 1];
-      
-      // Calculate distance from current position to next waypoint
-      const distanceToEnd = this.calculateDistance(this.state.currentPosition, segmentEnd);
-      
-      if (distanceToEnd < 0.001) {
-        // Already at this waypoint, skip to next
-        this.state.pathIndex++;
-        continue;
-      }
-      
-      if (remainingDistance >= distanceToEnd) {
-        // WALL COLLISION: Validate segment endpoint is walkable before moving
-        if (!isPointWalkable(segmentEnd.x, segmentEnd.y, WALKABLE_ZONES)) {
-          console.warn(`[Movement] WALL COLLISION at waypoint! Position (${segmentEnd.x.toFixed(1)}, ${segmentEnd.y.toFixed(1)}) is not walkable. Stopping.`);
-          this.state.isMoving = false;
-          break;
-        }
-        
-        // Move to the end of this segment
-        this.state.currentPosition = { ...segmentEnd };
-        remainingDistance -= distanceToEnd;
-        this.state.distanceTraveled += distanceToEnd;
-        this.state.pathIndex++;
-        
-        // Update facing for next segment
-        if (this.state.pathIndex < this.state.path.length - 1) {
-          const nextPoint = this.state.path[this.state.pathIndex + 1];
-          const angle = Math.atan2(nextPoint.y - segmentEnd.y, nextPoint.x - segmentEnd.x);
-          this.updateFacing(angle, deltaTime);
-        }
-      } else {
-        // Move along this segment
-        const direction = {
-          x: (segmentEnd.x - this.state.currentPosition.x) / distanceToEnd,
-          y: (segmentEnd.y - this.state.currentPosition.y) / distanceToEnd
-        };
-        
-        // Calculate new position
-        const newPosition = {
-          x: this.state.currentPosition.x + direction.x * remainingDistance,
-          y: this.state.currentPosition.y + direction.y * remainingDistance
-        };
-        
-        // WALL COLLISION: Validate the new position is walkable
-        if (isPointWalkable(newPosition.x, newPosition.y, WALKABLE_ZONES)) {
-          this.state.currentPosition = newPosition;
-          this.state.distanceTraveled += remainingDistance;
-        } else {
-          // Hit a wall! Stop movement and cancel path
-          console.warn(`[Movement] WALL COLLISION! Position (${newPosition.x.toFixed(1)}, ${newPosition.y.toFixed(1)}) is not walkable. Stopping.`);
-          this.state.isMoving = false;
-          remainingDistance = 0;
-          break;
-        }
-        
-        // Update facing
-        const angle = Math.atan2(direction.y, direction.x);
-        this.updateFacing(angle, deltaTime);
-        
-        remainingDistance = 0;
-      }
+
+    this.advanceWaypoints();
+
+    const target = this.getCurrentTarget();
+    const desiredVelocity = this.computeDesiredVelocity(target);
+    const avoidanceForce = this.computeAvoidanceForce();
+    const steeringForce = this.subtractVectors(desiredVelocity, this.state.velocity);
+    const maxForce = this.state.speed * 12; // scale with configured speed
+
+    const totalForce = this.limitVector(
+      this.addVectors(steeringForce, this.scaleVector(avoidanceForce, this.avoidanceWeight)),
+      maxForce
+    );
+
+    const acceleration = this.scaleVector(totalForce, 1 / this.mass);
+    this.state.velocity = this.addVectors(
+      this.state.velocity,
+      this.scaleVector(acceleration, deltaTime)
+    );
+
+    this.state.velocity = this.limitVector(this.state.velocity, this.state.speed);
+
+    const proposedPosition = this.addVectors(
+      this.state.currentPosition,
+      this.scaleVector(this.state.velocity, deltaTime)
+    );
+
+    const resolvedPosition = this.resolveCollision(this.state.currentPosition, proposedPosition);
+    this.state.distanceTraveled += this.calculateDistance(this.state.currentPosition, resolvedPosition);
+    this.state.currentPosition = resolvedPosition;
+
+    if (this.vectorMagnitude(this.state.velocity) > this.minFacingSpeed) {
+      this.state.facing = Math.atan2(this.state.velocity.y, this.state.velocity.x);
     }
-    
-    const actualDistance = this.calculateDistance(startPos, this.state.currentPosition);
-    if (this.debugCounter % 60 === 0 || actualDistance > 1) {
-      console.log(`[Movement] Actually moved: ${actualDistance.toFixed(2)} pixels`);
-    }
-    
-    // Check if we've reached the end
-    if (this.state.pathIndex >= this.state.path.length - 1) {
-      const finalPoint = this.state.path[this.state.path.length - 1];
-      const distanceToFinal = this.calculateDistance(this.state.currentPosition, finalPoint);
-      
-      if (distanceToFinal < 1) {
-        this.state.currentPosition = { ...finalPoint };
-        this.state.isMoving = false;
-        console.log(`[Movement] Reached destination! Total distance: ${this.state.distanceTraveled.toFixed(1)}`);
-      }
+
+    if (this.reachedDestination()) {
+      this.finishMovement();
     }
   }
-  
+
   /**
-   * Smoothly rotate toward target angle
-   */
-  private updateFacing(targetAngle: number, deltaTime: number): void {
-    // Normalize angles to -PI to PI
-    const normalizeAngle = (angle: number) => {
-      while (angle > Math.PI) angle -= 2 * Math.PI;
-      while (angle < -Math.PI) angle += 2 * Math.PI;
-      return angle;
-    };
-    
-    const currentAngle = normalizeAngle(this.state.facing);
-    const normalizedTarget = normalizeAngle(targetAngle);
-    
-    // Calculate shortest rotation direction
-    let angleDiff = normalizedTarget - currentAngle;
-    if (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
-    if (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
-    
-    // Smoothly interpolate
-    const maxRotation = this.rotationSpeed * deltaTime;
-    if (Math.abs(angleDiff) <= maxRotation) {
-      this.state.facing = normalizedTarget;
-    } else {
-      this.state.facing = currentAngle + Math.sign(angleDiff) * maxRotation;
-    }
-  }
-  
-  /**
-   * Stop movement
+   * Stop movement and clear the current trajectory.
    */
   stop(): void {
     this.state.isMoving = false;
     this.state.path = [];
+    this.state.pathIndex = 0;
+    this.state.velocity = { x: 0, y: 0 };
   }
-  
-  /**
-   * Get current position
-   */
+
   getPosition(): Point {
     return { ...this.state.currentPosition };
   }
-  
-  /**
-   * Get facing angle (radians)
-   */
+
   getFacing(): number {
     return this.state.facing;
   }
-  
-  /**
-   * Get facing direction as a unit vector
-   */
+
   getFacingVector(): Point {
     return {
       x: Math.cos(this.state.facing),
       y: Math.sin(this.state.facing)
     };
   }
-  
-  /**
-   * Check if currently moving
-   */
+
   isMoving(): boolean {
     return this.state.isMoving;
   }
-  
-  /**
-   * Get movement state
-   */
+
   getState(): MovementState {
     return { ...this.state };
   }
-  
-  /**
-   * Set movement speed
-   */
+
   setSpeed(speed: number): void {
-    this.state.speed = speed;
+    this.state.speed = Math.max(1, speed);
+    this.state.velocity = this.limitVector(this.state.velocity, this.state.speed);
   }
-  
-  /**
-   * Get current speed
-   */
+
   getSpeed(): number {
     return this.state.speed;
   }
-  
+
+  getProgress(): number {
+    if (this.state.path.length === 0) return 1;
+    const idx = Math.min(this.state.pathIndex, this.state.path.length - 1);
+    return idx / (this.state.path.length - 1);
+  }
+
+  getRemainingPath(): Point[] {
+    if (!this.state.isMoving) return [];
+    const startIndex = Math.min(this.state.pathIndex, Math.max(this.state.path.length - 1, 0));
+    return this.state.path.slice(startIndex);
+  }
+
   /**
-   * Calculate distance between two points
+   * Update path index based on proximity and line of sight.
    */
+  private advanceWaypoints(): void {
+    if (this.state.path.length === 0) return;
+
+    const lastIndex = this.state.path.length - 1;
+    this.state.pathIndex = Math.min(this.state.pathIndex, lastIndex);
+
+    // Snap to waypoint when inside radius
+    while (this.state.pathIndex < lastIndex) {
+      const waypoint = this.state.path[this.state.pathIndex];
+      if (this.calculateDistance(this.state.currentPosition, waypoint) <= this.waypointRadius) {
+        this.state.pathIndex++;
+      } else {
+        break;
+      }
+    }
+
+    if (this.state.pathIndex >= lastIndex) {
+      return;
+    }
+
+    // Try to skip intermediate waypoints if we have clear line of sight
+    const maxLookAhead = Math.min(this.state.pathIndex + this.lookAheadSteps, lastIndex);
+    for (let i = maxLookAhead; i > this.state.pathIndex; i--) {
+      if (this.hasLineOfSight(this.state.currentPosition, this.state.path[i])) {
+        this.state.pathIndex = i;
+        break;
+      }
+    }
+  }
+
+  private getCurrentTarget(): Point {
+    const lastIndex = this.state.path.length - 1;
+    const idx = Math.min(this.state.pathIndex, lastIndex);
+    return this.state.path[idx] ?? this.state.targetPosition;
+  }
+
+  private computeDesiredVelocity(target: Point): Point {
+    const toTarget = this.subtractVectors(target, this.state.currentPosition);
+    const distance = this.vectorMagnitude(toTarget);
+
+    if (distance < 0.001) {
+      return { x: 0, y: 0 };
+    }
+
+    let desiredSpeed = this.state.speed;
+    const atFinalSegment = this.state.pathIndex >= this.state.path.length - 1;
+    if (atFinalSegment && distance < this.arrivalRadius) {
+      desiredSpeed = this.state.speed * (distance / this.arrivalRadius);
+    }
+
+    const desiredDir = this.scaleVector(toTarget, 1 / distance);
+    return this.scaleVector(desiredDir, desiredSpeed);
+  }
+
+  private computeAvoidanceForce(): Point {
+    const forward = this.getForwardDirection();
+    if (!forward) {
+      return { x: 0, y: 0 };
+    }
+
+    const whiskers = [
+      { angle: 0, length: this.whiskerBaseLength },
+      { angle: this.whiskerAngle, length: this.whiskerBaseLength * 0.75 },
+      { angle: -this.whiskerAngle, length: this.whiskerBaseLength * 0.75 },
+      { angle: this.whiskerAngle * 0.35, length: this.whiskerBaseLength * 0.5 },
+      { angle: -this.whiskerAngle * 0.35, length: this.whiskerBaseLength * 0.5 }
+    ];
+
+    let avoidance: Point = { x: 0, y: 0 };
+
+    for (const whisker of whiskers) {
+      const dir = this.rotateVector(forward, whisker.angle);
+      const hit = this.castWhisker(dir, whisker.length);
+
+      if (hit) {
+        const strength = (whisker.length - hit.distance) / whisker.length;
+        const side: 1 | -1 = whisker.angle >= 0 ? -1 : 1;
+        const pushDir = this.perpendicular(dir, side);
+        avoidance = this.addVectors(
+          avoidance,
+          this.scaleVector(pushDir, strength * this.state.speed)
+        );
+      }
+    }
+
+    return avoidance;
+  }
+
+  private castWhisker(direction: Point, length: number): { distance: number } | null {
+    const start = this.state.currentPosition;
+    const normalizedDir = this.normalize(direction);
+    if (!normalizedDir) return null;
+
+    const steps = Math.max(1, Math.floor(length / this.whiskerStep));
+    for (let i = 1; i <= steps; i++) {
+      const dist = i * this.whiskerStep;
+      if (dist > length) break;
+      const probe = {
+        x: start.x + normalizedDir.x * dist,
+        y: start.y + normalizedDir.y * dist
+      };
+
+      if (!this.isWalkable(probe)) {
+        return { distance: dist };
+      }
+    }
+
+    return null;
+  }
+
+  private getForwardDirection(): Point | null {
+    if (this.vectorMagnitude(this.state.velocity) > this.minFacingSpeed) {
+      return this.normalize(this.state.velocity);
+    }
+
+    const target = this.getCurrentTarget();
+    const toTarget = this.subtractVectors(target, this.state.currentPosition);
+    if (this.vectorMagnitude(toTarget) < 0.001) {
+      return null;
+    }
+    return this.normalize(toTarget);
+  }
+
+  private resolveCollision(start: Point, end: Point): Point {
+    if (this.isWalkable(end)) {
+      return end;
+    }
+
+    let low = 0;
+    let high = 1;
+    let best = { ...start };
+
+    for (let i = 0; i < this.collisionIterations; i++) {
+      const t = (low + high) / 2;
+      const candidate = {
+        x: start.x + (end.x - start.x) * t,
+        y: start.y + (end.y - start.y) * t
+      };
+
+      if (this.isWalkable(candidate)) {
+        best = candidate;
+        low = t;
+      } else {
+        high = t;
+      }
+    }
+
+    if (best.x === start.x && best.y === start.y) {
+      this.state.velocity = { x: 0, y: 0 };
+    }
+
+    return best;
+  }
+
+  private reachedDestination(): boolean {
+    if (this.state.path.length === 0) {
+      return true;
+    }
+
+    const finalPoint = this.state.path[this.state.path.length - 1];
+    const distanceToFinal = this.calculateDistance(this.state.currentPosition, finalPoint);
+    const isFinalIndex = this.state.pathIndex >= this.state.path.length - 1;
+    const slowVelocity = this.vectorMagnitude(this.state.velocity) < this.minFacingSpeed;
+
+    return isFinalIndex && distanceToFinal <= this.arrivalRadius && slowVelocity;
+  }
+
+  private finishMovement(): void {
+    const finalPoint = this.state.path[this.state.path.length - 1];
+    this.state.currentPosition = { ...finalPoint };
+    this.state.targetPosition = { ...finalPoint };
+    this.state.velocity = { x: 0, y: 0 };
+    this.state.pathIndex = this.state.path.length - 1;
+    this.state.isMoving = false;
+  }
+
+  private applyVelocityDamping(deltaTime: number): void {
+    if (this.vectorMagnitude(this.state.velocity) < 0.01) {
+      this.state.velocity = { x: 0, y: 0 };
+      return;
+    }
+
+    const decay = Math.max(0, 1 - this.damping * deltaTime);
+    this.state.velocity = this.scaleVector(this.state.velocity, decay);
+    if (this.vectorMagnitude(this.state.velocity) < 0.5) {
+      this.state.velocity = { x: 0, y: 0 };
+    }
+  }
+
+  private hasLineOfSight(start: Point, end: Point): boolean {
+    const distance = this.calculateDistance(start, end);
+    const steps = Math.max(1, Math.floor(distance / this.whiskerStep));
+    const dir = {
+      x: (end.x - start.x) / steps,
+      y: (end.y - start.y) / steps
+    };
+
+    for (let i = 1; i <= steps; i++) {
+      const probe = {
+        x: start.x + dir.x * i,
+        y: start.y + dir.y * i
+      };
+      if (!this.isWalkable(probe)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private isWalkable(point: Point): boolean {
+    return isPointWalkable(point.x, point.y, WALKABLE_ZONES);
+  }
+
   private calculateDistance(p1: Point, p2: Point): number {
     const dx = p2.x - p1.x;
     const dy = p2.y - p1.y;
     return Math.sqrt(dx * dx + dy * dy);
   }
-  
-  /**
-   * Get progress along path (0-1)
-   */
-  getProgress(): number {
-    if (this.state.path.length === 0) return 1;
-    return this.state.pathIndex / (this.state.path.length - 1);
+
+  private vectorMagnitude(v: Point): number {
+    return Math.sqrt(v.x * v.x + v.y * v.y);
   }
-  
-  /**
-   * Get remaining path points
-   */
-  getRemainingPath(): Point[] {
-    if (!this.state.isMoving) return [];
-    return this.state.path.slice(this.state.pathIndex);
+
+  private normalize(v: Point): Point | null {
+    const mag = this.vectorMagnitude(v);
+    if (mag < 0.001) return null;
+    return { x: v.x / mag, y: v.y / mag };
+  }
+
+  private addVectors(a: Point, b: Point): Point {
+    return { x: a.x + b.x, y: a.y + b.y };
+  }
+
+  private subtractVectors(a: Point, b: Point): Point {
+    return { x: a.x - b.x, y: a.y - b.y };
+  }
+
+  private scaleVector(v: Point, scalar: number): Point {
+    return { x: v.x * scalar, y: v.y * scalar };
+  }
+
+  private limitVector(v: Point, max: number): Point {
+    const mag = this.vectorMagnitude(v);
+    if (mag <= max) {
+      return v;
+    }
+    const scale = max / (mag || 1);
+    return { x: v.x * scale, y: v.y * scale };
+  }
+
+  private rotateVector(v: Point, angle: number): Point {
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    return {
+      x: v.x * cos - v.y * sin,
+      y: v.x * sin + v.y * cos
+    };
+  }
+
+  private perpendicular(v: Point, direction: 1 | -1): Point {
+    // Rotate 90 degrees left (direction = 1) or right (direction = -1)
+    return direction === 1
+      ? { x: -v.y, y: v.x }
+      : { x: v.y, y: -v.x };
   }
 }

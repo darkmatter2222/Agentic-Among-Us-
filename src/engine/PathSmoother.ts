@@ -20,7 +20,7 @@ export class PathSmoother {
   }
   
   /**
-   * Smooth a path using Catmull-Rom splines
+   * Smooth a path using String Pulling and Catmull-Rom splines
    */
   smoothPath(waypoints: PathNode[]): SmoothPath {
     if (waypoints.length < 2) {
@@ -29,22 +29,26 @@ export class PathSmoother {
         totalLength: 0
       };
     }
+
+    // Step 1: String Pulling (Line-of-Sight Optimization)
+    // This removes unnecessary zig-zags from the A* path
+    const simplifiedPoints = this.simplifyPath(waypoints.map(w => w.position));
     
-    if (waypoints.length === 2) {
+    if (simplifiedPoints.length === 2) {
       // Just two points, return linear interpolation
       const points = this.linearInterpolate(
-        waypoints[0].position,
-        waypoints[1].position,
+        simplifiedPoints[0],
+        simplifiedPoints[1],
         this.smoothness
       );
       return {
         points,
-        totalLength: this.calculateDistance(waypoints[0].position, waypoints[1].position)
+        totalLength: this.calculateDistance(simplifiedPoints[0], simplifiedPoints[1])
       };
     }
     
     // Extract positions
-    const positions = waypoints.map(w => w.position);
+    const positions = simplifiedPoints;
     
     // Apply Catmull-Rom spline with wall collision validation
     const smoothPoints: Point[] = [];
@@ -81,7 +85,7 @@ export class PathSmoother {
       
       // If curve hits a wall, fall back to linear interpolation
       if (hasInvalidPoint) {
-        console.log(`[PathSmoother] Curve segment ${i} hits wall, using linear path`);
+        // console.log(`[PathSmoother] Curve segment ${i} hits wall, using linear path`);
         const linearPoints = this.linearInterpolate(p1, p2, this.smoothness);
         smoothPoints.push(...linearPoints);
       } else {
@@ -102,6 +106,57 @@ export class PathSmoother {
       points: smoothPoints,
       totalLength
     };
+  }
+
+  /**
+   * Simplifies path by removing nodes that can be skipped (String Pulling)
+   */
+  private simplifyPath(points: Point[]): Point[] {
+    if (points.length <= 2) return points;
+
+    const simplified: Point[] = [points[0]];
+    let currentIdx = 0;
+
+    while (currentIdx < points.length - 1) {
+      // Try to connect to the furthest possible node
+      let nextIdx = currentIdx + 1;
+      
+      for (let i = points.length - 1; i > currentIdx + 1; i--) {
+        if (this.hasLineOfSight(points[currentIdx], points[i])) {
+          nextIdx = i;
+          break;
+        }
+      }
+
+      simplified.push(points[nextIdx]);
+      currentIdx = nextIdx;
+    }
+
+    return simplified;
+  }
+
+  /**
+   * Checks if there is a clear line of sight between two points
+   */
+  private hasLineOfSight(start: Point, end: Point): boolean {
+    const dist = this.calculateDistance(start, end);
+    const steps = Math.ceil(dist / 5); // Check every 5 units (approx player size)
+    
+    if (steps === 0) return true;
+
+    const dx = (end.x - start.x) / steps;
+    const dy = (end.y - start.y) / steps;
+
+    for (let i = 1; i < steps; i++) {
+      const checkX = start.x + dx * i;
+      const checkY = start.y + dy * i;
+      
+      if (!isPointWalkable(checkX, checkY, WALKABLE_ZONES)) {
+        return false;
+      }
+    }
+
+    return true;
   }
   
   /**
