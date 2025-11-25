@@ -51,7 +51,7 @@ export class AIAgentVisualRenderer {
     
     // Create vision cone
     const visionCone = new VisionConeRenderer({
-      radius: agent.getVisionRadius(),
+      radius: agent.getVisionRadius() * 1.4,
       color: agent.getColor(),
       alpha: 0.01,
       angle: Math.PI / 2 // 90 degrees
@@ -78,12 +78,12 @@ export class AIAgentVisualRenderer {
     // Create name text
     const nameText = new PIXI.Text(agentId, {
       fontFamily: 'Arial',
-      fontSize: 10,
+      fontSize: 24,
       fill: 0xFFFFFF,
       stroke: { color: 0x000000, width: 2 }
     });
     nameText.anchor.set(0.5, 0);
-    nameText.y = 20;
+    nameText.y = 32;
     
     // Add to container (order matters for layering)
     this.container.addChild(visionCone.getContainer());
@@ -131,7 +131,7 @@ export class AIAgentVisualRenderer {
     
     // Update name text position
     visuals.nameText.x = position.x;
-    visuals.nameText.y = position.y + 20;
+    visuals.nameText.y = position.y + 32;
     
     // Update vision cone
     if (this.showVisionCones) {
