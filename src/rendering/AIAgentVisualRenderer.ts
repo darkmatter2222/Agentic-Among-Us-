@@ -1,13 +1,14 @@
 /**
  * AI Agent Visual Renderer
- * Renders all AI agents with vision cones, action radii, and paths
+ * Renders all AI agents with vision cones, action radii, paths, and speech bubbles
  */
 
 import * as PIXI from 'pixi.js';
-import type { AgentSnapshot } from '@shared/types/simulation.types.ts';
+import type { AgentSnapshot, SpeechEvent } from '@shared/types/simulation.types.ts';
 import { VisionConeRenderer } from './VisionConeRenderer.ts';
 import { ActionRadiusRenderer } from './ActionRadiusRenderer.ts';
 import { PathLineRenderer } from './PathLineRenderer.ts';
+import { SpeechBubbleRenderer } from './SpeechBubbleRenderer.ts';
 
 export interface AgentVisuals {
   sprite: PIXI.Graphics;
@@ -23,6 +24,7 @@ interface AgentVisualState {
   targetFacing: number;
   targetPath: AgentSnapshot['movement']['path'];
   pathDirty: boolean;
+  lastSpeechTime: number; // Track when we last showed a speech bubble
 }
 
 export class AIAgentVisualRenderer {
@@ -30,6 +32,7 @@ export class AIAgentVisualRenderer {
 
   private container: PIXI.Container;
   private agentVisuals: Map<string, AgentVisualState>;
+  private speechBubbleRenderer: SpeechBubbleRenderer;
   private showVisionCones: boolean = true;
   private showActionRadius: boolean = true;
   private showPaths: boolean = true;
@@ -37,9 +40,18 @@ export class AIAgentVisualRenderer {
   constructor() {
     this.container = new PIXI.Container();
     this.agentVisuals = new Map();
+    this.speechBubbleRenderer = new SpeechBubbleRenderer({
+      maxWidth: 220,
+      fontSize: 13,
+      fadeInDuration: 250,
+      fadeOutDuration: 600,
+      displayDuration: 5000,
+      offsetY: -55,
+    });
+    this.container.addChild(this.speechBubbleRenderer.getContainer());
   }
 
-  syncAgents(snapshots: AgentSnapshot[]): void {
+  syncAgents(snapshots: AgentSnapshot[], recentSpeech?: SpeechEvent[]): void {
     const activeIds = new Set<string>();
 
     for (const snapshot of snapshots) {
@@ -58,6 +70,33 @@ export class AIAgentVisualRenderer {
       state.visuals.visionCone.updateConfig({ radius: snapshot.visionRadius * 1.4, color: snapshot.color });
       state.visuals.actionRadius.updateConfig({ radius: snapshot.actionRadius, color: snapshot.color });
       state.visuals.pathLine.updateConfig({ color: snapshot.color });
+      
+      // Check for new speech to display
+      const speechTime = snapshot.lastSpeechTime ?? 0;
+      if (speechTime > state.lastSpeechTime && snapshot.recentSpeech) {
+        // New speech detected - show bubble
+        this.speechBubbleRenderer.showSpeech(
+          snapshot.id,
+          snapshot.recentSpeech,
+          { x: state.visuals.sprite.x, y: state.visuals.sprite.y }
+        );
+        state.lastSpeechTime = speechTime;
+      }
+    }
+    
+    // Also check recentSpeech events from world snapshot
+    if (recentSpeech) {
+      for (const speech of recentSpeech) {
+        const state = this.agentVisuals.get(speech.speakerId);
+        if (state && speech.timestamp > state.lastSpeechTime) {
+          this.speechBubbleRenderer.showSpeech(
+            speech.speakerId,
+            speech.message,
+            { x: state.visuals.sprite.x, y: state.visuals.sprite.y }
+          );
+          state.lastSpeechTime = speech.timestamp;
+        }
+      }
     }
 
     for (const [agentId, state] of this.agentVisuals) {
@@ -67,6 +106,7 @@ export class AIAgentVisualRenderer {
         state.visuals.actionRadius.destroy();
         state.visuals.pathLine.destroy();
         state.visuals.nameText.destroy();
+        this.speechBubbleRenderer.removeBubble(agentId);
         this.agentVisuals.delete(agentId);
       }
     }
@@ -74,8 +114,9 @@ export class AIAgentVisualRenderer {
 
   update(deltaTime: number): void {
     const lerpFactor = Math.min(1, deltaTime * AIAgentVisualRenderer.SMOOTHING_SPEED);
+    const agentPositions = new Map<string, { x: number; y: number }>();
 
-    for (const state of this.agentVisuals.values()) {
+    for (const [agentId, state] of this.agentVisuals) {
       const { visuals, targetPosition, targetFacing } = state;
 
       // Calculate movement direction for flipping
@@ -92,6 +133,9 @@ export class AIAgentVisualRenderer {
 
       visuals.nameText.x = visuals.sprite.x;
       visuals.nameText.y = visuals.sprite.y + 32;
+      
+      // Track positions for speech bubbles
+      agentPositions.set(agentId, { x: visuals.sprite.x, y: visuals.sprite.y });
 
       if (this.showVisionCones) {
         visuals.visionCone.render({ x: visuals.sprite.x, y: visuals.sprite.y }, targetFacing);
@@ -117,6 +161,9 @@ export class AIAgentVisualRenderer {
         visuals.pathLine.setVisible(false);
       }
     }
+    
+    // Update speech bubbles with current agent positions
+    this.speechBubbleRenderer.update(deltaTime, agentPositions);
   }
 
   toggleVisionCones(show?: boolean): void {
@@ -144,11 +191,31 @@ export class AIAgentVisualRenderer {
       state.visuals.nameText.destroy();
     }
     this.agentVisuals.clear();
+    this.speechBubbleRenderer.destroy();
     this.container.removeChildren();
+    
+    // Recreate speech bubble renderer after clear
+    this.speechBubbleRenderer = new SpeechBubbleRenderer({
+      maxWidth: 220,
+      fontSize: 13,
+      fadeInDuration: 250,
+      fadeOutDuration: 600,
+      displayDuration: 5000,
+      offsetY: -55,
+    });
+    this.container.addChild(this.speechBubbleRenderer.getContainer());
   }
 
   destroy(): void {
-    this.clear();
+    for (const state of this.agentVisuals.values()) {
+      state.visuals.sprite.destroy();
+      state.visuals.visionCone.destroy();
+      state.visuals.actionRadius.destroy();
+      state.visuals.pathLine.destroy();
+      state.visuals.nameText.destroy();
+    }
+    this.agentVisuals.clear();
+    this.speechBubbleRenderer.destroy();
     this.container.destroy();
   }
 
@@ -248,7 +315,8 @@ export class AIAgentVisualRenderer {
       targetPosition: { ...snapshot.movement.position },
       targetFacing: snapshot.movement.facing,
       targetPath: snapshot.movement.path.map(point => ({ ...point })),
-      pathDirty: true
+      pathDirty: true,
+      lastSpeechTime: 0,
     };
 
     sprite.position.set(snapshot.movement.position.x, snapshot.movement.position.y);

@@ -4,16 +4,18 @@ import { GameRenderer } from './rendering/GameRenderer';
 import { Poly3MapRenderer } from './rendering/Poly3MapRenderer';
 import { AIAgentVisualRenderer } from './rendering/AIAgentVisualRenderer';
 import { SimulationClient } from './ai/SimulationClient';
-import type { WorldSnapshot } from '@shared/types/simulation.types.ts';
+import type { WorldSnapshot, SpeechEvent } from '@shared/types/simulation.types.ts';
 import { AgentInfoPanel, type AgentSummary } from './components/AgentInfoPanel';
 
 function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const latestSnapshotRef = useRef<WorldSnapshot | null>(null);
+  const recentSpeechRef = useRef<SpeechEvent[]>([]);
   const gameRendererRef = useRef<GameRenderer | null>(null);
   const mapRendererRef = useRef<Poly3MapRenderer | null>(null);
   const [agentSummaries, setAgentSummaries] = useState<AgentSummary[]>([]);
-  const [panelWidth, setPanelWidth] = useState(340);
+  const [taskProgress, setTaskProgress] = useState(0);
+  const [panelWidth, setPanelWidth] = useState(380);
   const [isDraggingPanel, setIsDraggingPanel] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
   const lastMousePos = useRef({ x: 0, y: 0 });
@@ -36,8 +38,10 @@ function App() {
       const snapshot = latestSnapshotRef.current;
       if (!snapshot) return;
       if (snapshot.tick === lastAppliedTick) return;
-      agentVisualRenderer.syncAgents(snapshot.agents);
+      agentVisualRenderer.syncAgents(snapshot.agents, recentSpeechRef.current);
       lastAppliedTick = snapshot.tick;
+      // Clear speech events after they've been processed
+      recentSpeechRef.current = [];
     };
 
     const animate = () => {
@@ -86,6 +90,11 @@ function App() {
 
     const unsubscribeWorld = simulationClient.onWorldUpdate((snapshot) => {
       latestSnapshotRef.current = snapshot;
+      
+      // Capture speech events
+      if (snapshot.recentSpeech && snapshot.recentSpeech.length > 0) {
+        recentSpeechRef.current = snapshot.recentSpeech;
+      }
 
       const now = performance.now();
       if (!disposed && (now - lastSummaryAt >= 200 || lastSummaryAt === 0)) {
@@ -96,9 +105,17 @@ function App() {
             activityState: agent.activityState,
             currentZone: agent.currentZone,
             locationState: agent.locationState,
-            goal: agent.currentGoal
+            goal: agent.currentGoal,
+            // Extended data
+            role: agent.role,
+            currentThought: agent.currentThought,
+            recentSpeech: agent.recentSpeech,
+            assignedTasks: agent.assignedTasks,
+            tasksCompleted: agent.tasksCompleted ?? 0,
+            visibleAgentIds: agent.visibleAgentIds,
           }))
         );
+        setTaskProgress(snapshot.taskProgress ?? 0);
         lastSummaryAt = now;
       }
     });
@@ -233,7 +250,7 @@ function App() {
         className="panel-resize-handle"
         onMouseDown={handleResizeMouseDown}
       />
-      <AgentInfoPanel agents={agentSummaries} width={panelWidth} />
+      <AgentInfoPanel agents={agentSummaries} width={panelWidth} taskProgress={taskProgress} />
     </div>
   );
 }

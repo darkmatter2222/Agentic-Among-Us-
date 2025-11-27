@@ -1,6 +1,6 @@
 .agent-panel {
   flex-shrink: 0;
-  min-width: 200px;
+  min-width: 280px;
   max-width: 600px;
   height: 100%;
   background: rgba(12, 17, 27, 0.95);
@@ -14,7 +14,7 @@
 }
 
 .agent-panel__header {
-  padding: 8px 12px;
+  padding: 12px 16px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   display: flex;
   align-items: center;
@@ -23,19 +23,67 @@
 }
 
 .agent-panel__header h2 {
-  font-size: 0.85rem;
+  font-size: 0.9rem;
   margin: 0;
   letter-spacing: 0.3px;
   text-transform: uppercase;
   opacity: 0.9;
 }
 
-.agent-panel__count {
-  font-size: 0.75rem;
-  background: rgba(255, 255, 255, 0.1);
+.agent-panel__counts {
+  display: flex;
+  gap: 6px;
+}
+
+.count-badge {
+  font-size: 0.7rem;
   padding: 2px 8px;
   border-radius: 10px;
+  font-weight: 500;
+}
+
+.count-badge.crew {
+  background: rgba(76, 175, 80, 0.2);
+  color: #81c784;
+}
+
+.count-badge.imp {
+  background: rgba(244, 67, 54, 0.2);
+  color: #ef5350;
+}
+
+/* Global Task Progress */
+.global-task-progress {
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.global-progress-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  margin-bottom: 6px;
   opacity: 0.8;
+}
+
+.progress-percent {
+  font-weight: 600;
+  color: #4caf50;
+}
+
+.global-progress-bar {
+  height: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.global-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #4caf50, #81c784);
+  border-radius: 4px;
+  transition: width 0.3s ease;
 }
 
 .agent-panel__content {
@@ -44,6 +92,7 @@
   overflow-x: hidden;
 }
 
+/* Table Styles */
 .agent-table {
   width: 100%;
   border-collapse: collapse;
@@ -54,10 +103,11 @@
   position: sticky;
   top: 0;
   background: rgba(12, 17, 27, 0.98);
+  z-index: 10;
 }
 
 .agent-table th {
-  padding: 6px 8px;
+  padding: 8px 10px;
   text-align: left;
   font-size: 0.65rem;
   text-transform: uppercase;
@@ -68,16 +118,24 @@
 }
 
 .agent-table td {
-  padding: 5px 8px;
+  padding: 6px 10px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 80px;
+  max-width: 100px;
+}
+
+.agent-row {
+  transition: background 0.15s ease;
+}
+
+.agent-row.clickable {
+  cursor: pointer;
 }
 
 .agent-row:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .agent-row__id {
@@ -89,6 +147,10 @@
   gap: 6px;
 }
 
+.agent-num {
+  min-width: 12px;
+}
+
 .agent-color-dot {
   width: 10px;
   height: 10px;
@@ -97,18 +159,45 @@
   box-shadow: 0 0 4px currentColor;
 }
 
+.agent-color-dot.large {
+  width: 16px;
+  height: 16px;
+}
+
 .agent-row__zone {
   opacity: 0.85;
 }
 
-.agent-row__goal {
-  opacity: 0.7;
-  font-style: italic;
+/* Role Badges */
+.role-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  font-weight: 600;
 }
 
+.role-badge.mini {
+  padding: 1px 4px;
+  font-size: 0.55rem;
+}
+
+.role-badge--crewmate {
+  background: rgba(76, 175, 80, 0.25);
+  color: #81c784;
+}
+
+.role-badge--impostor {
+  background: rgba(244, 67, 54, 0.25);
+  color: #ef5350;
+}
+
+/* Status Badges */
 .status-badge {
   display: inline-block;
-  padding: 1px 6px;
+  padding: 2px 6px;
   border-radius: 3px;
   font-size: 0.65rem;
   text-transform: uppercase;
@@ -121,11 +210,7 @@
   color: #aaa;
 }
 
-.status-badge--moving {
-  background: rgba(76, 175, 80, 0.2);
-  color: #81c784;
-}
-
+.status-badge--moving,
 .status-badge--walking {
   background: rgba(76, 175, 80, 0.2);
   color: #81c784;
@@ -139,4 +224,265 @@
 .status-badge--waiting {
   background: rgba(255, 193, 7, 0.2);
   color: #ffd54f;
+}
+
+/* Mini Progress Bar (in table) */
+.mini-progress {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mini-progress-bar {
+  width: 40px;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.mini-progress-fill {
+  height: 100%;
+  background: #4caf50;
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.mini-progress-text {
+  font-size: 0.65rem;
+  opacity: 0.7;
+  min-width: 24px;
+}
+
+/* Expanded Agent Card */
+.expanded-agent-card {
+  padding: 16px;
+  animation: slideIn 0.2s ease;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.expanded-card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.expanded-card__title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.expanded-card__name {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #8ab4f8;
+}
+
+.expanded-card__close {
+  background: rgba(255, 255, 255, 0.1);
+  border: none;
+  color: #fff;
+  font-size: 1.2rem;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease;
+}
+
+.expanded-card__close:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.expanded-card__section {
+  margin-bottom: 14px;
+}
+
+.section-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  opacity: 0.5;
+  margin-bottom: 6px;
+}
+
+.section-value {
+  font-size: 0.85rem;
+}
+
+.goal-text {
+  color: #ffd54f;
+  font-style: italic;
+}
+
+/* Task Progress in Expanded Card */
+.task-progress-container {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.task-progress-bar {
+  flex: 1;
+  height: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.task-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #4caf50, #81c784);
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.task-progress-text {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #81c784;
+  min-width: 36px;
+}
+
+/* Task List */
+.task-list {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 6px;
+  padding: 8px;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.task-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 0.75rem;
+  opacity: 0.9;
+}
+
+.task-item.completed {
+  opacity: 0.5;
+}
+
+.task-item.completed .task-name {
+  text-decoration: line-through;
+}
+
+.task-check {
+  font-size: 0.8rem;
+  width: 16px;
+}
+
+.task-item.completed .task-check {
+  color: #4caf50;
+}
+
+.task-name {
+  flex: 1;
+}
+
+.task-location {
+  font-size: 0.65rem;
+  opacity: 0.6;
+  background: rgba(255, 255, 255, 0.1);
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+
+/* Thought Bubble */
+.thought-bubble {
+  background: rgba(138, 180, 248, 0.1);
+  border-left: 3px solid #8ab4f8;
+  border-radius: 0 6px 6px 0;
+  padding: 10px 12px;
+}
+
+.thought-text {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: #c5d8f8;
+}
+
+.thought-text.empty {
+  opacity: 0.4;
+  font-style: italic;
+}
+
+/* Visible Agents */
+.visible-agents-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.visible-agent-tag {
+  background: rgba(255, 255, 255, 0.1);
+  padding: 3px 8px;
+  border-radius: 10px;
+  font-size: 0.7rem;
+  font-family: monospace;
+}
+
+.no-visible {
+  opacity: 0.4;
+  font-size: 0.75rem;
+  font-style: italic;
+}
+
+/* Speech Bubble Preview */
+.speech-bubble-preview {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.speech-bubble-preview p {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #fff;
+  line-height: 1.4;
+}
+
+/* Scrollbar Styling */
+.agent-panel__content::-webkit-scrollbar,
+.task-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.agent-panel__content::-webkit-scrollbar-track,
+.task-list::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.agent-panel__content::-webkit-scrollbar-thumb,
+.task-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
+}
+
+.agent-panel__content::-webkit-scrollbar-thumb:hover,
+.task-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
 }
