@@ -2,7 +2,7 @@ import type { ServerMessage, WorldDelta } from '@shared/types/protocol.types.ts'
 import type { AgentSnapshot, WorldSnapshot } from '@shared/types/simulation.types.ts';
 
 type WorldListener = (snapshot: WorldSnapshot) => void;
-type ConnectionState = 'connecting' | 'connected' | 'disconnected' | 'stale';
+type ConnectionState = 'connecting' | 'connected' | 'disconnected' | 'stale' | 'reconnecting';
 type ConnectionListener = (state: ConnectionState) => void;
 
 export class SimulationClient {
@@ -14,29 +14,45 @@ export class SimulationClient {
   private lastHeartbeatAt: number = 0;
   private heartbeatMonitorId: number | null = null;
   private readonly heartbeatTimeoutMs: number = 30000;
+  
+  // Auto-reconnection settings
+  private reconnectEnabled: boolean = true;
+  private reconnectAttempts: number = 0;
+  private readonly maxReconnectAttempts: number = 50;
+  private readonly baseReconnectDelayMs: number = 1000;
+  private readonly maxReconnectDelayMs: number = 10000;
+  private reconnectTimerId: number | null = null;
+  private lastUrl: string | null = null;
+  private intentionalDisconnect: boolean = false;
 
   connect(url?: string): void {
-    this.disconnect();
+    this.intentionalDisconnect = false;
+    this.clearReconnectTimer();
+    this.disconnectSocket();
 
     const targetUrl = url ?? this.resolveUrl();
+    this.lastUrl = targetUrl;
     console.info('[simulation] attempting websocket connection', targetUrl);
-    this.updateConnectionState('connecting');
+    this.updateConnectionState(this.reconnectAttempts > 0 ? 'reconnecting' : 'connecting');
 
     try {
       this.socket = new WebSocket(targetUrl);
       console.debug('[simulation] websocket constructed', {
         readyState: this.socket.readyState,
-        url: this.socket.url
+        url: this.socket.url,
+        attempt: this.reconnectAttempts
       });
     } catch (error) {
       console.error('Failed to open simulation socket:', error);
       this.updateConnectionState('disconnected');
+      this.scheduleReconnect();
       return;
     }
 
     this.socket.addEventListener('open', () => {
       console.info('[simulation] websocket open');
       this.lastHeartbeatAt = Date.now();
+      this.reconnectAttempts = 0; // Reset on successful connection
       this.updateConnectionState('connected');
       this.startHeartbeatMonitor();
     });
@@ -57,26 +73,99 @@ export class SimulationClient {
       console.warn('[simulation] websocket closed', {
         code: event.code,
         reason: event.reason,
-        wasClean: event.wasClean
+        wasClean: event.wasClean,
+        intentional: this.intentionalDisconnect
       });
       this.stopHeartbeatMonitor();
-      this.updateConnectionState('disconnected');
       this.socket = null;
+      
+      if (!this.intentionalDisconnect) {
+        this.updateConnectionState('disconnected');
+        this.scheduleReconnect();
+      } else {
+        this.updateConnectionState('disconnected');
+      }
     });
 
     this.socket.addEventListener('error', (error) => {
       console.error('[simulation] websocket error', error);
-      this.updateConnectionState('disconnected');
+      // Don't update state here - the close event will follow
     });
   }
 
   disconnect(): void {
+    this.intentionalDisconnect = true;
+    this.clearReconnectTimer();
+    this.disconnectSocket();
+    this.updateConnectionState('disconnected');
+  }
+  
+  /** Check if currently connected or connecting */
+  isConnected(): boolean {
+    return this.state === 'connected' || this.state === 'connecting' || this.state === 'reconnecting';
+  }
+  
+  /** Get current connection state */
+  getConnectionState(): ConnectionState {
+    return this.state;
+  }
+  
+  private disconnectSocket(): void {
     if (this.socket) {
       this.socket.close();
       this.socket = null;
     }
     this.stopHeartbeatMonitor();
-    this.updateConnectionState('disconnected');
+  }
+  
+  private scheduleReconnect(): void {
+    if (!this.reconnectEnabled || this.intentionalDisconnect) {
+      console.debug('[simulation] reconnect disabled or intentional disconnect');
+      return;
+    }
+    
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      console.warn('[simulation] max reconnect attempts reached', this.reconnectAttempts);
+      return;
+    }
+    
+    this.clearReconnectTimer();
+    
+    // Exponential backoff with jitter
+    const delay = Math.min(
+      this.baseReconnectDelayMs * Math.pow(1.5, this.reconnectAttempts) + Math.random() * 500,
+      this.maxReconnectDelayMs
+    );
+    
+    this.reconnectAttempts++;
+    console.info('[simulation] scheduling reconnect', {
+      attempt: this.reconnectAttempts,
+      delayMs: Math.round(delay)
+    });
+    
+    this.updateConnectionState('reconnecting');
+    
+    this.reconnectTimerId = window.setTimeout(() => {
+      this.reconnectTimerId = null;
+      if (this.lastUrl && !this.intentionalDisconnect) {
+        this.connect(this.lastUrl);
+      }
+    }, delay);
+  }
+  
+  private clearReconnectTimer(): void {
+    if (this.reconnectTimerId !== null) {
+      window.clearTimeout(this.reconnectTimerId);
+      this.reconnectTimerId = null;
+    }
+  }
+  
+  /** Enable or disable auto-reconnection */
+  setReconnectEnabled(enabled: boolean): void {
+    this.reconnectEnabled = enabled;
+    if (!enabled) {
+      this.clearReconnectTimer();
+    }
   }
 
   onWorldUpdate(listener: WorldListener): () => void {
@@ -283,8 +372,10 @@ export class SimulationClient {
     this.heartbeatMonitorId = window.setInterval(() => {
       const elapsed = Date.now() - this.lastHeartbeatAt;
       if (elapsed > this.heartbeatTimeoutMs) {
+        console.warn('[simulation] heartbeat timeout, triggering reconnect');
         this.updateConnectionState('stale');
-        this.disconnect();
+        this.disconnectSocket();
+        this.scheduleReconnect();
       }
     }, Math.max(5000, this.heartbeatTimeoutMs / 3));
   }
@@ -334,6 +425,16 @@ export class SimulationClient {
     console.debug('[simulation] inferred websocket URL', inferred);
     return inferred;
   }
+}
+
+// Store singleton in window to survive HMR full page reloads
+const win = window as unknown as { __simulationClient?: SimulationClient };
+
+export function getSimulationClient(): SimulationClient {
+  if (!win.__simulationClient) {
+    win.__simulationClient = new SimulationClient();
+  }
+  return win.__simulationClient;
 }
 
 export type { ConnectionState };

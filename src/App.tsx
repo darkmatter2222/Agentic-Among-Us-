@@ -3,7 +3,7 @@ import './App.css';
 import { GameRenderer } from './rendering/GameRenderer';
 import { Poly3MapRenderer } from './rendering/Poly3MapRenderer';
 import { AIAgentVisualRenderer } from './rendering/AIAgentVisualRenderer';
-import { SimulationClient } from './ai/SimulationClient';
+import { getSimulationClient } from './ai/SimulationClient';
 import type { WorldSnapshot, SpeechEvent } from '@shared/types/simulation.types.ts';
 import { AgentInfoPanel, type AgentSummary } from './components/AgentInfoPanel';
 
@@ -13,6 +13,10 @@ function App() {
   const recentSpeechRef = useRef<SpeechEvent[]>([]);
   const gameRendererRef = useRef<GameRenderer | null>(null);
   const mapRendererRef = useRef<Poly3MapRenderer | null>(null);
+  const agentVisualRendererRef = useRef<AIAgentVisualRenderer | null>(null);
+  const animationFrameIdRef = useRef<number>(0);
+  const disposedRef = useRef<boolean>(false);
+  const initializingRef = useRef<boolean>(false);
   const [agentSummaries, setAgentSummaries] = useState<AgentSummary[]>([]);
   const [taskProgress, setTaskProgress] = useState(0);
   const [panelWidth, setPanelWidth] = useState(380);
@@ -21,31 +25,34 @@ function App() {
   const lastMousePos = useRef({ x: 0, y: 0 });
 
   useEffect(() => {
-    let disposed = false;
+    // Prevent double initialization during React Strict Mode or HMR
+    if (initializingRef.current) {
+      console.warn('[App] Already initializing, skipping...');
+      return;
+    }
+    initializingRef.current = true;
+    disposedRef.current = false;
 
-    const gameRenderer = new GameRenderer();
-    let mapRenderer: Poly3MapRenderer | null = null;
-    let agentVisualRenderer: AIAgentVisualRenderer | null = null;
-    const simulationClient = new SimulationClient();
+    // Use singleton to preserve connection across HMR
+    const simulationClient = getSimulationClient();
 
-    let animationFrameId = 0;
     let lastFrameTime = performance.now();
     let lastAppliedTick = -1;
     let lastSummaryAt = 0;
 
     const applyLatestSnapshot = () => {
-      if (!agentVisualRenderer) return;
+      if (!agentVisualRendererRef.current) return;
       const snapshot = latestSnapshotRef.current;
       if (!snapshot) return;
       if (snapshot.tick === lastAppliedTick) return;
-      agentVisualRenderer.syncAgents(snapshot.agents, recentSpeechRef.current);
+      agentVisualRendererRef.current.syncAgents(snapshot.agents, recentSpeechRef.current);
       lastAppliedTick = snapshot.tick;
       // Clear speech events after they've been processed
       recentSpeechRef.current = [];
     };
 
     const animate = () => {
-      if (disposed) return;
+      if (disposedRef.current) return;
 
       const now = performance.now();
       const deltaTime = (now - lastFrameTime) / 1000;
@@ -53,37 +60,50 @@ function App() {
 
       applyLatestSnapshot();
 
-      agentVisualRenderer?.update(deltaTime);
-      mapRenderer?.update(deltaTime);
-      gameRenderer.update(deltaTime);
+      agentVisualRendererRef.current?.update(deltaTime);
+      mapRendererRef.current?.update(deltaTime);
+      gameRendererRef.current?.update(deltaTime);
 
-      animationFrameId = requestAnimationFrame(animate);
+      animationFrameIdRef.current = requestAnimationFrame(animate);
     };
 
     const initializeScene = async () => {
       if (!canvasRef.current) {
         console.error('Canvas ref is null');
+        initializingRef.current = false;
+        return;
+      }
+      
+      // Check if already initialized (HMR scenario)
+      if (gameRendererRef.current) {
+        console.info('[App] Renderer already exists, reusing...');
+        lastFrameTime = performance.now();
+        animationFrameIdRef.current = requestAnimationFrame(animate);
+        initializingRef.current = false;
         return;
       }
 
+      const gameRenderer = new GameRenderer();
       await gameRenderer.initialize(canvasRef.current);
       gameRendererRef.current = gameRenderer;
       const layers = gameRenderer.getLayers();
 
-      mapRenderer = new Poly3MapRenderer();
+      const mapRenderer = new Poly3MapRenderer();
       mapRenderer.renderMap();
       layers.map.addChild(mapRenderer.getContainer());
       mapRendererRef.current = mapRenderer;
 
-      agentVisualRenderer = new AIAgentVisualRenderer();
+      const agentVisualRenderer = new AIAgentVisualRenderer();
       layers.players.addChild(agentVisualRenderer.getContainer());
+      agentVisualRendererRef.current = agentVisualRenderer;
 
       const mapCenter = mapRenderer.getMapCenter();
       gameRenderer.getCamera().setZoom(0.5);
       gameRenderer.getCamera().focusOn(mapCenter.x, mapCenter.y, false);
 
       lastFrameTime = performance.now();
-      animationFrameId = requestAnimationFrame(animate);
+      animationFrameIdRef.current = requestAnimationFrame(animate);
+      initializingRef.current = false;
     };
 
     void initializeScene();
@@ -97,7 +117,7 @@ function App() {
       }
 
       const now = performance.now();
-      if (!disposed && (now - lastSummaryAt >= 200 || lastSummaryAt === 0)) {
+      if (!disposedRef.current && (now - lastSummaryAt >= 200 || lastSummaryAt === 0)) {
         setAgentSummaries(
           snapshot.agents.map(agent => ({
             id: agent.id,
@@ -129,26 +149,37 @@ function App() {
 
     const unsubscribeConnection = simulationClient.onConnectionStateChange((state) => {
       console.info('[simulation] connection state:', state);
-      if (state === 'stale' && !disposed) {
-        setAgentSummaries([]);
+      // Only clear agents on stale connection if we haven't reconnected within a reasonable time
+      // The reconnecting state will automatically attempt to reconnect
+      if (state === 'stale' && !disposedRef.current) {
+        // Keep the last known state visible while reconnecting
+        console.info('[simulation] connection stale, keeping UI state while reconnecting...');
       }
     });
 
-    simulationClient.connect();
+    // Only connect if not already connected (singleton may already be connected)
+    if (!simulationClient.isConnected()) {
+      simulationClient.connect();
+    }
 
     return () => {
-      disposed = true;
+      disposedRef.current = true;
       unsubscribeWorld();
       unsubscribeConnection();
-      simulationClient.disconnect();
+      // DON'T disconnect the singleton - it should persist across HMR
+      // simulationClient.disconnect();
 
-      if (animationFrameId) {
-        cancelAnimationFrame(animationFrameId);
+      if (animationFrameIdRef.current) {
+        cancelAnimationFrame(animationFrameIdRef.current);
+        animationFrameIdRef.current = 0;
       }
 
-      agentVisualRenderer?.destroy();
-      mapRenderer = null;
-      gameRenderer.destroy();
+      // DON'T destroy renderers during HMR - they will be reused
+      // Only clean up if this is a true unmount (page unload)
+      // agentVisualRendererRef.current?.destroy();
+      // gameRendererRef.current?.destroy();
+      
+      initializingRef.current = false;
     };
   }, []);
 

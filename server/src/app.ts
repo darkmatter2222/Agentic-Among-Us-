@@ -232,6 +232,16 @@ export async function buildServer(options: BuildOptions = {}) {
     simulationLoop.stop();
     stopHeartbeat();
     stopMetricsLogger();
+    
+    // Close all WebSocket connections gracefully with a proper close code
+    // 1001 = "Going Away" - server is shutting down
+    for (const socket of clients) {
+      try {
+        socket.close(1001, 'Server shutting down');
+      } catch {
+        // Ignore errors when closing
+      }
+    }
     clients.clear();
   });
 
