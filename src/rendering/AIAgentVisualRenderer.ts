@@ -12,7 +12,12 @@ import { SpeechBubbleRenderer } from './SpeechBubbleRenderer.ts';
 import { ThinkingBubbleRenderer } from './ThinkingBubbleRenderer.ts';
 
 export interface AgentVisuals {
-  sprite: PIXI.Graphics;
+  spriteContainer: PIXI.Container; // Container for body + legs
+  bodyGraphics: PIXI.Graphics;     // Body, backpack, visor (bounces)
+  leftLeg: PIXI.Graphics;          // Left leg (redrawn each frame for animation)
+  rightLeg: PIXI.Graphics;         // Right leg (redrawn each frame for animation)
+  shadow: PIXI.Graphics;           // Shadow under character
+  bodyColor: number;               // Store color for leg redrawing
   visionCone: VisionConeRenderer;
   actionRadius: ActionRadiusRenderer;
   pathLine: PathLineRenderer;
@@ -21,15 +26,30 @@ export interface AgentVisuals {
 interface AgentVisualState {
   visuals: AgentVisuals;
   targetPosition: { x: number; y: number };
+  previousPosition: { x: number; y: number }; // For detecting movement
   targetFacing: number;
   targetPath: AgentSnapshot['movement']['path'];
   pathDirty: boolean;
   lastSpeechTime: number; // Track when we last showed a speech bubble
   isThinking: boolean; // Track if agent is waiting for LLM response
+  // Animation state
+  walkTime: number;
+  isWalking: boolean;
 }
 
 export class AIAgentVisualRenderer {
   private static readonly SMOOTHING_SPEED = 12;
+  
+  // Animation constants - Among Us style walk
+  private static readonly SIZE_MULTIPLIER = 1.44; // 44% larger
+  private static readonly WALK_CYCLE_SPEED = 2;   // 2 steps per second
+  private static readonly BOUNCE_AMOUNT = 6;      // Pixels of vertical bounce
+  
+  // Leg dimensions (relative to sizeMultiplier)
+  private static readonly LEG_WIDTH = 7;          // Width of each leg
+  private static readonly LEG_HEIGHT = 12;        // Length of legs (longer now)
+  private static readonly LEG_GAP = 2;            // Gap between legs (closer together)
+  private static readonly LEG_Y_OFFSET = 4;       // Where legs attach to body (moved up 20% into body)
 
   private container: PIXI.Container;
   private agentVisuals: Map<string, AgentVisualState>;
@@ -82,7 +102,7 @@ export class AIAgentVisualRenderer {
         this.speechBubbleRenderer.showSpeech(
           snapshot.id,
           snapshot.recentSpeech,
-          { x: state.visuals.sprite.x, y: state.visuals.sprite.y }
+          { x: state.visuals.spriteContainer.x, y: state.visuals.spriteContainer.y }
         );
         state.lastSpeechTime = speechTime;
       }
@@ -96,7 +116,7 @@ export class AIAgentVisualRenderer {
           this.speechBubbleRenderer.showSpeech(
             speech.speakerId,
             speech.message,
-            { x: state.visuals.sprite.x, y: state.visuals.sprite.y }
+            { x: state.visuals.spriteContainer.x, y: state.visuals.spriteContainer.y }
           );
           state.lastSpeechTime = speech.timestamp;
         }
@@ -105,7 +125,7 @@ export class AIAgentVisualRenderer {
 
     for (const [agentId, state] of this.agentVisuals) {
       if (!activeIds.has(agentId)) {
-        state.visuals.sprite.destroy();
+        state.visuals.spriteContainer.destroy({ children: true });
         state.visuals.visionCone.destroy();
         state.visuals.actionRadius.destroy();
         state.visuals.pathLine.destroy();
@@ -123,20 +143,87 @@ export class AIAgentVisualRenderer {
     for (const [agentId, state] of this.agentVisuals) {
       const { visuals, targetPosition, targetFacing } = state;
 
-      // Calculate movement direction for flipping
-      const dx = targetPosition.x - visuals.sprite.x;
+      // Calculate movement for flipping and walking detection
+      const dx = targetPosition.x - visuals.spriteContainer.x;
+      const dy = targetPosition.y - visuals.spriteContainer.y;
+      const distanceToTarget = Math.sqrt(dx * dx + dy * dy);
       
-      visuals.sprite.x += (targetPosition.x - visuals.sprite.x) * lerpFactor;
-      visuals.sprite.y += (targetPosition.y - visuals.sprite.y) * lerpFactor;
+      // Also check if target position changed since last frame (more reliable)
+      const targetDx = targetPosition.x - state.previousPosition.x;
+      const targetDy = targetPosition.y - state.previousPosition.y;
+      const targetMoved = Math.sqrt(targetDx * targetDx + targetDy * targetDy) > 0.01;
+      
+      // Update previous position
+      state.previousPosition = { x: targetPosition.x, y: targetPosition.y };
+      
+      // Update position with lerp
+      visuals.spriteContainer.x += dx * lerpFactor;
+      visuals.spriteContainer.y += dy * lerpFactor;
+
+      // Detect if walking: either target moved OR still moving toward target
+      // Use very low threshold (0.1) to keep animating while approaching target
+      const isMoving = distanceToTarget > 0.1 || targetMoved;
+      state.isWalking = isMoving;
 
       // Flip sprite based on horizontal movement direction
-      // Negative scale = facing right, positive = facing left (visor is on left side of sprite)
-      if (Math.abs(dx) > 0.5) {
-        visuals.sprite.scale.x = dx > 0 ? -1 : 1;
+      if (Math.abs(dx) > 0.1) {
+        const flipDirection = dx > 0 ? 1 : -1;  // right = 1, left = -1
+        visuals.bodyGraphics.scale.x = -flipDirection;  // Body flipped opposite to match visor direction
+        // Flip legs to match movement direction
+        visuals.leftLeg.x = -AIAgentVisualRenderer.LEG_GAP * AIAgentVisualRenderer.SIZE_MULTIPLIER * flipDirection;
+        visuals.rightLeg.x = AIAgentVisualRenderer.LEG_GAP * AIAgentVisualRenderer.SIZE_MULTIPLIER * flipDirection;
+        visuals.leftLeg.scale.x = flipDirection;
+        visuals.rightLeg.scale.x = flipDirection;
       }
       
-      // Track positions for speech/thinking bubbles
-      agentPositions.set(agentId, { x: visuals.sprite.x, y: visuals.sprite.y });
+      // ===== WALKING ANIMATION =====
+      if (state.isWalking) {
+        // Increment walk cycle
+        state.walkTime += deltaTime * AIAgentVisualRenderer.WALK_CYCLE_SPEED;
+        const phase = state.walkTime * Math.PI * 2;
+        
+        // BOUNCE: Body moves up and down (use abs(sin) for always-up bounce)
+        const bounce = Math.abs(Math.sin(phase)) * AIAgentVisualRenderer.BOUNCE_AMOUNT;
+        visuals.bodyGraphics.y = -bounce;
+        
+        // LEG ANIMATION: Among Us style - legs move forward/backward with knee lift
+        // Left leg: sin(phase), Right leg: sin(phase + PI) - opposite
+        const leftPhase = Math.sin(phase);
+        const rightPhase = Math.sin(phase + Math.PI);
+        
+        // Z-ORDER: Front leg (positive phase = forward) goes ON TOP of body
+        // Back leg (negative phase = backward) goes UNDER body
+        // Body is at zIndex 10, front leg at 15, back leg at 5
+        const leftInFront = leftPhase > 0;
+        const rightInFront = rightPhase > 0;
+        
+        visuals.bodyGraphics.zIndex = 10;
+        visuals.leftLeg.zIndex = leftInFront ? 15 : 5;
+        visuals.rightLeg.zIndex = rightInFront ? 15 : 5;
+        
+        // Redraw legs with animation
+        // Front leg: no hip outline (blends into body)
+        // Back leg: full outline (visible behind body)
+        this.drawAnimatedLeg(visuals.leftLeg, visuals.bodyColor, leftPhase, leftInFront);
+        this.drawAnimatedLeg(visuals.rightLeg, visuals.bodyColor, rightPhase, rightInFront);
+      } else {
+        // NOT WALKING: Reset to neutral position - completely still
+        visuals.bodyGraphics.y = 0;
+        
+        // Draw legs in neutral standing position
+        // Left leg is in front (zIndex 15), right leg behind (zIndex 5)
+        this.drawAnimatedLeg(visuals.leftLeg, visuals.bodyColor, 0, true);   // front - no hip outline
+        this.drawAnimatedLeg(visuals.rightLeg, visuals.bodyColor, 0, false); // back - full outline
+        state.walkTime = 0;
+        
+        // When standing: one leg in front, one behind (consistent look)
+        visuals.bodyGraphics.zIndex = 10;
+        visuals.leftLeg.zIndex = 15;  // Left leg on top
+        visuals.rightLeg.zIndex = 5;   // Right leg behind
+      }
+      
+      // Track positions for speech/thinking bubbles (use container position, not animated body)
+      agentPositions.set(agentId, { x: visuals.spriteContainer.x, y: visuals.spriteContainer.y });
       
       // Track which agents are thinking
       if (state.isThinking) {
@@ -144,14 +231,16 @@ export class AIAgentVisualRenderer {
       }
 
       if (this.showVisionCones) {
-        visuals.visionCone.render({ x: visuals.sprite.x, y: visuals.sprite.y }, targetFacing);
+        // Vision cone follows container, NOT the bouncing body
+        visuals.visionCone.render({ x: visuals.spriteContainer.x, y: visuals.spriteContainer.y }, targetFacing);
         visuals.visionCone.setVisible(true);
       } else {
         visuals.visionCone.setVisible(false);
       }
 
       if (this.showActionRadius) {
-        visuals.actionRadius.render({ x: visuals.sprite.x, y: visuals.sprite.y });
+        // Action radius follows container, NOT the bouncing body
+        visuals.actionRadius.render({ x: visuals.spriteContainer.x, y: visuals.spriteContainer.y });
         visuals.actionRadius.setVisible(true);
       } else {
         visuals.actionRadius.setVisible(false);
@@ -193,7 +282,7 @@ export class AIAgentVisualRenderer {
 
   clear(): void {
     for (const state of this.agentVisuals.values()) {
-      state.visuals.sprite.destroy();
+      state.visuals.spriteContainer.destroy({ children: true });
       state.visuals.visionCone.destroy();
       state.visuals.actionRadius.destroy();
       state.visuals.pathLine.destroy();
@@ -219,9 +308,156 @@ export class AIAgentVisualRenderer {
     this.container.addChild(this.speechBubbleRenderer.getContainer());
   }
 
+  /**
+   * Draw an animated leg based on walk phase
+   * phase: -1 to 1, where:
+   *   -1 = leg extended back
+   *    0 = neutral standing
+   *    1 = knee lifted forward (front leg up)
+   * isInFront: true = leg is in front of body (no hip outline to blend in)
+   *            false = leg is behind body (full outline visible)
+   */
+  private drawAnimatedLeg(legGraphics: PIXI.Graphics, color: number, phase: number, isInFront: boolean): void {
+    legGraphics.clear();
+    
+    const s = AIAgentVisualRenderer.SIZE_MULTIPLIER;
+    const legWidth = AIAgentVisualRenderer.LEG_WIDTH * s;
+    const legHeight = AIAgentVisualRenderer.LEG_HEIGHT * s;
+    const yOffset = AIAgentVisualRenderer.LEG_Y_OFFSET * s;
+    const outlineColor = 0x000000;
+    const outlineWidth = 1.5 * s;
+    const cornerRadius = 3 * s;
+    
+    // Calculate leg shape based on phase
+    // phase > 0: knee coming up (front), phase < 0: leg going back
+    
+    if (phase > 0.3) {
+      // KNEE UP POSE: Leg bent with knee forward
+      const kneeX = phase * 6 * s;  // Knee moves forward
+      const kneeY = yOffset + legHeight * 0.4 - phase * 4 * s; // Knee lifts up
+      const footY = kneeY + legHeight * 0.5;
+      
+      if (isInFront) {
+        // FRONT LEG: No hip outline - blends into body
+        // Draw thigh fill first
+        legGraphics.beginFill(color);
+        legGraphics.moveTo(-legWidth/2, yOffset);
+        legGraphics.lineTo(legWidth/2, yOffset);
+        legGraphics.lineTo(kneeX + legWidth/2, kneeY);
+        legGraphics.lineTo(kneeX - legWidth/2, kneeY);
+        legGraphics.closePath();
+        legGraphics.endFill();
+        
+        // Draw thigh outline - only sides, not top
+        legGraphics.lineStyle(outlineWidth, outlineColor, 1);
+        legGraphics.moveTo(-legWidth/2, yOffset);
+        legGraphics.lineTo(kneeX - legWidth/2, kneeY);
+        legGraphics.moveTo(legWidth/2, yOffset);
+        legGraphics.lineTo(kneeX + legWidth/2, kneeY);
+        legGraphics.lineStyle(0);
+      } else {
+        // BACK LEG: Full outline
+        legGraphics.beginFill(outlineColor);
+        legGraphics.moveTo(-legWidth/2 - outlineWidth/2, yOffset - outlineWidth/2);
+        legGraphics.lineTo(legWidth/2 + outlineWidth/2, yOffset - outlineWidth/2);
+        legGraphics.lineTo(kneeX + legWidth/2 + outlineWidth/2, kneeY + outlineWidth/2);
+        legGraphics.lineTo(kneeX - legWidth/2 - outlineWidth/2, kneeY + outlineWidth/2);
+        legGraphics.closePath();
+        legGraphics.endFill();
+        
+        legGraphics.beginFill(color);
+        legGraphics.moveTo(-legWidth/2, yOffset);
+        legGraphics.lineTo(legWidth/2, yOffset);
+        legGraphics.lineTo(kneeX + legWidth/2, kneeY);
+        legGraphics.lineTo(kneeX - legWidth/2, kneeY);
+        legGraphics.closePath();
+        legGraphics.endFill();
+      }
+      
+      // Lower leg (shin) - full outline for both (separate from body)
+      legGraphics.beginFill(outlineColor);
+      legGraphics.drawRoundedRect(kneeX - legWidth/2 - outlineWidth/2, kneeY, legWidth + outlineWidth, footY - kneeY + outlineWidth/2, cornerRadius);
+      legGraphics.endFill();
+      
+      legGraphics.beginFill(color);
+      legGraphics.drawRoundedRect(kneeX - legWidth/2, kneeY, legWidth, footY - kneeY, cornerRadius - 1);
+      legGraphics.endFill();
+      
+    } else if (phase < -0.3) {
+      // LEG BACK POSE: Leg extended backward
+      const backAmount = -phase; // 0 to 1
+      const footX = -backAmount * 8 * s;  // Foot goes backward
+      const footY = yOffset + legHeight - backAmount * 2 * s; // Slightly shorter when back
+      
+      if (isInFront) {
+        // FRONT LEG (going back): No hip outline
+        legGraphics.beginFill(color);
+        legGraphics.moveTo(-legWidth/2, yOffset);
+        legGraphics.lineTo(legWidth/2, yOffset);
+        legGraphics.lineTo(footX + legWidth/2, footY);
+        legGraphics.lineTo(footX - legWidth/2, footY);
+        legGraphics.closePath();
+        legGraphics.endFill();
+        
+        // Draw outline - sides and bottom only, not top
+        legGraphics.lineStyle(outlineWidth, outlineColor, 1);
+        legGraphics.moveTo(-legWidth/2, yOffset);
+        legGraphics.lineTo(footX - legWidth/2, footY);
+        legGraphics.lineTo(footX + legWidth/2, footY);
+        legGraphics.lineTo(legWidth/2, yOffset);
+        legGraphics.lineStyle(0);
+      } else {
+        // BACK LEG: Full outline
+        legGraphics.beginFill(outlineColor);
+        legGraphics.moveTo(-legWidth/2 - outlineWidth/2, yOffset - outlineWidth/2);
+        legGraphics.lineTo(legWidth/2 + outlineWidth/2, yOffset - outlineWidth/2);
+        legGraphics.lineTo(footX + legWidth/2 + outlineWidth/2, footY + outlineWidth/2);
+        legGraphics.lineTo(footX - legWidth/2 - outlineWidth/2, footY + outlineWidth/2);
+        legGraphics.closePath();
+        legGraphics.endFill();
+        
+        legGraphics.beginFill(color);
+        legGraphics.moveTo(-legWidth/2, yOffset);
+        legGraphics.lineTo(legWidth/2, yOffset);
+        legGraphics.lineTo(footX + legWidth/2, footY);
+        legGraphics.lineTo(footX - legWidth/2, footY);
+        legGraphics.closePath();
+        legGraphics.endFill();
+      }
+      
+    } else {
+      // NEUTRAL POSE: Straight down
+      if (isInFront) {
+        // FRONT LEG: No outline at top (hip)
+        legGraphics.beginFill(color);
+        legGraphics.drawRoundedRect(-legWidth/2, yOffset, legWidth, legHeight, cornerRadius);
+        legGraphics.endFill();
+        
+        // Draw outline on sides and bottom only (not top)
+        legGraphics.lineStyle(outlineWidth, outlineColor, 1);
+        legGraphics.moveTo(-legWidth/2, yOffset);
+        legGraphics.lineTo(-legWidth/2, yOffset + legHeight - cornerRadius);
+        legGraphics.arc(-legWidth/2 + cornerRadius, yOffset + legHeight - cornerRadius, cornerRadius, Math.PI, Math.PI/2, true);
+        legGraphics.lineTo(legWidth/2 - cornerRadius, yOffset + legHeight);
+        legGraphics.arc(legWidth/2 - cornerRadius, yOffset + legHeight - cornerRadius, cornerRadius, Math.PI/2, 0, true);
+        legGraphics.lineTo(legWidth/2, yOffset);
+        legGraphics.lineStyle(0);
+      } else {
+        // BACK LEG: Full outline
+        legGraphics.beginFill(outlineColor);
+        legGraphics.drawRoundedRect(-legWidth/2 - outlineWidth/2, yOffset - outlineWidth/2, legWidth + outlineWidth, legHeight + outlineWidth, cornerRadius);
+        legGraphics.endFill();
+        
+        legGraphics.beginFill(color);
+        legGraphics.drawRoundedRect(-legWidth/2, yOffset, legWidth, legHeight, cornerRadius);
+        legGraphics.endFill();
+      }
+    }
+  }
+
   destroy(): void {
     for (const state of this.agentVisuals.values()) {
-      state.visuals.sprite.destroy();
+      state.visuals.spriteContainer.destroy({ children: true });
       state.visuals.visionCone.destroy();
       state.visuals.actionRadius.destroy();
       state.visuals.pathLine.destroy();
@@ -238,52 +474,110 @@ export class AIAgentVisualRenderer {
       return existing;
     }
 
-    const sprite = new PIXI.Graphics();
-    
-    // Among Us style crewmate (small scale)
+    const sizeMultiplier = AIAgentVisualRenderer.SIZE_MULTIPLIER;
     const bodyColor = snapshot.color;
     const visorColor = 0x84D2F6; // Light blue glass
-    const backpackColor = snapshot.color;
     const outlineColor = 0x000000;
     
-    // Draw black outline/shadow layer first (slightly larger)
-    sprite.beginFill(outlineColor);
-    sprite.drawRoundedRect(10 - 1, -6 - 1, 7 + 2, 18 + 2, 4); // Backpack outline
-    sprite.drawRoundedRect(-10 - 1, -14 - 1, 20 + 2, 28 + 2, 11); // Body outline
-    sprite.drawRoundedRect(-9 - 1, 10 - 1, 7 + 2, 6 + 2, 3); // Left leg outline
-    sprite.drawRoundedRect(2 - 1, 10 - 1, 7 + 2, 6 + 2, 3); // Right leg outline
-    sprite.endFill();
+    // Create container hierarchy:
+    // spriteContainer (moves with agent position)
+    //   ├── shadow (static, doesn't bounce)
+    //   ├── leftLeg (redrawn each frame for walking animation)
+    //   ├── rightLeg (redrawn each frame for walking animation)
+    //   └── bodyGraphics (bounces vertically) - contains body, backpack, visor
+    
+    const spriteContainer = new PIXI.Container();
+    spriteContainer.sortableChildren = true; // Enable z-ordering for legs in front/behind body
+    
+    // Shadow under character (doesn't animate) - always at bottom
+    const shadow = new PIXI.Graphics();
+    shadow.zIndex = 0;
+    shadow.beginFill(0x000000, 0.3);
+    shadow.drawEllipse(0, 16 * sizeMultiplier, 12 * sizeMultiplier, 5 * sizeMultiplier);
+    shadow.endFill();
+    spriteContainer.addChild(shadow);
+    
+    // LEFT LEG (will be redrawn each frame for animation)
+    const leftLeg = new PIXI.Graphics();
+    leftLeg.zIndex = 15; // Start on top
+    leftLeg.x = -AIAgentVisualRenderer.LEG_GAP * sizeMultiplier; // Position left of center
+    spriteContainer.addChild(leftLeg);
+    
+    // RIGHT LEG (will be redrawn each frame for animation)
+    const rightLeg = new PIXI.Graphics();
+    rightLeg.zIndex = 5; // Start behind body
+    rightLeg.x = AIAgentVisualRenderer.LEG_GAP * sizeMultiplier; // Position right of center
+    spriteContainer.addChild(rightLeg);
+    
+    // Draw initial leg state (neutral)
+    // Left leg starts in front (no hip outline), right leg behind (full outline)
+    this.drawAnimatedLeg(leftLeg, bodyColor, 0, true);
+    this.drawAnimatedLeg(rightLeg, bodyColor, 0, false);
+    
+    // BODY GRAPHICS (bounces as a unit)
+    const bodyGraphics = new PIXI.Graphics();
+    bodyGraphics.zIndex = 10; // Body in middle layer
+    
+    // Body dimensions - 20% thinner horizontally (was 40%, now 20%)
+    const bodyWidth = 16 * sizeMultiplier;  // Was 20, now 16 (20% thinner)
+    const bodyHeight = 24 * sizeMultiplier;
+    const bodyX = -8 * sizeMultiplier;      // Centered for new width
+    const bodyY = -14 * sizeMultiplier;
+    const bodyRadius = 8 * sizeMultiplier;  // Adjusted for body width
+    
+    // Backpack dimensions - closer to body and 20% shorter from bottom
+    const backpackWidth = 6 * sizeMultiplier;
+    const backpackHeight = 14 * sizeMultiplier;  // Was 18, now ~14 (20% shorter)
+    const backpackX = 7 * sizeMultiplier;   // Adjusted to stay close to thicker body
+    const backpackY = -6 * sizeMultiplier;
+    const backpackRadius = 3 * sizeMultiplier;
+    
+    // Body outline (black shadow layer)
+    bodyGraphics.beginFill(outlineColor);
+    bodyGraphics.drawRoundedRect(backpackX - 1 * sizeMultiplier, backpackY - 1 * sizeMultiplier, backpackWidth + 2 * sizeMultiplier, backpackHeight + 2 * sizeMultiplier, backpackRadius + 1); // Backpack outline
+    bodyGraphics.drawRoundedRect(bodyX - 1 * sizeMultiplier, bodyY - 1 * sizeMultiplier, bodyWidth + 2 * sizeMultiplier, bodyHeight + 2 * sizeMultiplier, bodyRadius + 1); // Body outline
+    bodyGraphics.endFill();
     
     // Backpack
-    sprite.beginFill(backpackColor);
-    sprite.drawRoundedRect(10, -6, 7, 18, 3);
-    sprite.endFill();
+    bodyGraphics.beginFill(bodyColor);
+    bodyGraphics.drawRoundedRect(backpackX, backpackY, backpackWidth, backpackHeight, backpackRadius);
+    bodyGraphics.endFill();
     
-    // Main body (pill/capsule shape)
-    sprite.beginFill(bodyColor);
-    sprite.drawRoundedRect(-10, -14, 20, 28, 10);
-    sprite.endFill();
+    // Main body (pill/capsule shape - thinner)
+    bodyGraphics.beginFill(bodyColor);
+    bodyGraphics.drawRoundedRect(bodyX, bodyY, bodyWidth, bodyHeight, bodyRadius);
+    bodyGraphics.endFill();
     
-    // Legs (small gap at bottom)
-    sprite.beginFill(bodyColor);
-    sprite.drawRoundedRect(-9, 10, 7, 6, 2);
-    sprite.drawRoundedRect(2, 10, 7, 6, 2);
-    sprite.endFill();
+    // Visor outline - draw black background first for clear border
+    const visorX = -8 * sizeMultiplier;     // Adjusted for 20% thinner body
+    const visorY = -10 * sizeMultiplier;
+    const visorWidth = 13 * sizeMultiplier; // Adjusted for body width
+    const visorHeight = 9 * sizeMultiplier;
+    const visorRadius = 4 * sizeMultiplier;
+    const visorOutline = 1 * sizeMultiplier; // 50% thinner (was 2)
     
-    // Visor (bubble glass dome)
-    sprite.beginFill(visorColor, 0.95);
-    sprite.drawEllipse(-2, -6, 8, 5);
-    sprite.endFill();
+    // Black outline (slightly larger rounded rect behind visor)
+    bodyGraphics.beginFill(outlineColor);
+    bodyGraphics.drawRoundedRect(
+      visorX - visorOutline, 
+      visorY - visorOutline, 
+      visorWidth + visorOutline * 2, 
+      visorHeight + visorOutline * 2, 
+      visorRadius + visorOutline
+    );
+    bodyGraphics.endFill();
     
-    // Visor outline
-    sprite.lineStyle(1.5, outlineColor, 0.7);
-    sprite.drawEllipse(-2, -6, 8, 5);
+    // Visor fill (rounded rectangle - squared with round edges)
+    bodyGraphics.beginFill(visorColor, 0.95);
+    bodyGraphics.drawRoundedRect(visorX, visorY, visorWidth, visorHeight, visorRadius);
+    bodyGraphics.endFill();
     
     // Visor shine highlight
-    sprite.lineStyle(0);
-    sprite.beginFill(0xFFFFFF, 0.6);
-    sprite.drawEllipse(-4, -8, 3, 2);
-    sprite.endFill();
+    bodyGraphics.beginFill(0xFFFFFF, 0.6);
+    bodyGraphics.drawEllipse(-4 * sizeMultiplier, -8 * sizeMultiplier, 2.5 * sizeMultiplier, 1.5 * sizeMultiplier);
+    bodyGraphics.endFill();
+    
+    spriteContainer.addChild(bodyGraphics);
 
     const visionCone = new VisionConeRenderer({
       radius: snapshot.visionRadius * 1.4,
@@ -311,19 +605,22 @@ export class AIAgentVisualRenderer {
     this.container.addChild(visionCone.getContainer());
     this.container.addChild(pathLine.getContainer());
     this.container.addChild(actionRadius.getContainer());
-    this.container.addChild(sprite);
+    this.container.addChild(spriteContainer);
 
     const state: AgentVisualState = {
-      visuals: { sprite, visionCone, actionRadius, pathLine },
+      visuals: { spriteContainer, bodyGraphics, leftLeg, rightLeg, shadow, bodyColor, visionCone, actionRadius, pathLine },
       targetPosition: { ...snapshot.movement.position },
+      previousPosition: { ...snapshot.movement.position },
       targetFacing: snapshot.movement.facing,
       targetPath: snapshot.movement.path.map(point => ({ ...point })),
       pathDirty: true,
       lastSpeechTime: 0,
       isThinking: snapshot.isThinking ?? false,
+      walkTime: 0,
+      isWalking: false,
     };
 
-    sprite.position.set(snapshot.movement.position.x, snapshot.movement.position.y);
+    spriteContainer.position.set(snapshot.movement.position.x, snapshot.movement.position.y);
 
     this.agentVisuals.set(snapshot.id, state);
     return state;
