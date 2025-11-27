@@ -78,8 +78,17 @@ export class AIAgentVisualRenderer {
     for (const state of this.agentVisuals.values()) {
       const { visuals, targetPosition, targetFacing } = state;
 
+      // Calculate movement direction for flipping
+      const dx = targetPosition.x - visuals.sprite.x;
+      
       visuals.sprite.x += (targetPosition.x - visuals.sprite.x) * lerpFactor;
       visuals.sprite.y += (targetPosition.y - visuals.sprite.y) * lerpFactor;
+
+      // Flip sprite based on horizontal movement direction
+      // Negative scale = facing right, positive = facing left (visor is on left side of sprite)
+      if (Math.abs(dx) > 0.5) {
+        visuals.sprite.scale.x = dx > 0 ? -1 : 1;
+      }
 
       visuals.nameText.x = visuals.sprite.x;
       visuals.nameText.y = visuals.sprite.y + 32;
@@ -150,11 +159,52 @@ export class AIAgentVisualRenderer {
     }
 
     const sprite = new PIXI.Graphics();
-    sprite.beginFill(snapshot.color);
-    sprite.drawCircle(0, 0, 15);
+    
+    // Among Us style crewmate (small scale)
+    const bodyColor = snapshot.color;
+    const visorColor = 0x84D2F6; // Light blue glass
+    const backpackColor = snapshot.color;
+    const outlineColor = 0x000000;
+    const outlineWidth = 2;
+    
+    // Draw black outline/shadow layer first (slightly larger)
+    sprite.beginFill(outlineColor);
+    sprite.drawRoundedRect(10 - 1, -6 - 1, 7 + 2, 18 + 2, 4); // Backpack outline
+    sprite.drawRoundedRect(-10 - 1, -14 - 1, 20 + 2, 28 + 2, 11); // Body outline
+    sprite.drawRoundedRect(-9 - 1, 10 - 1, 7 + 2, 6 + 2, 3); // Left leg outline
+    sprite.drawRoundedRect(2 - 1, 10 - 1, 7 + 2, 6 + 2, 3); // Right leg outline
     sprite.endFill();
-    sprite.lineStyle(2, 0xFFFFFF, 1);
-    sprite.drawCircle(0, 0, 15);
+    
+    // Backpack
+    sprite.beginFill(backpackColor);
+    sprite.drawRoundedRect(10, -6, 7, 18, 3);
+    sprite.endFill();
+    
+    // Main body (pill/capsule shape)
+    sprite.beginFill(bodyColor);
+    sprite.drawRoundedRect(-10, -14, 20, 28, 10);
+    sprite.endFill();
+    
+    // Legs (small gap at bottom)
+    sprite.beginFill(bodyColor);
+    sprite.drawRoundedRect(-9, 10, 7, 6, 2);
+    sprite.drawRoundedRect(2, 10, 7, 6, 2);
+    sprite.endFill();
+    
+    // Visor (bubble glass dome)
+    sprite.beginFill(visorColor, 0.95);
+    sprite.drawEllipse(-2, -6, 8, 5);
+    sprite.endFill();
+    
+    // Visor outline
+    sprite.lineStyle(1.5, outlineColor, 0.7);
+    sprite.drawEllipse(-2, -6, 8, 5);
+    
+    // Visor shine highlight
+    sprite.lineStyle(0);
+    sprite.beginFill(0xFFFFFF, 0.6);
+    sprite.drawEllipse(-4, -8, 3, 2);
+    sprite.endFill();
 
     const visionCone = new VisionConeRenderer({
       radius: snapshot.visionRadius * 1.4,

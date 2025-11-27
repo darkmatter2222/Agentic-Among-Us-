@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import './App.css';
 import { GameRenderer } from './rendering/GameRenderer';
 import { Poly3MapRenderer } from './rendering/Poly3MapRenderer';
@@ -10,7 +10,13 @@ import { AgentInfoPanel, type AgentSummary } from './components/AgentInfoPanel';
 function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const latestSnapshotRef = useRef<WorldSnapshot | null>(null);
+  const gameRendererRef = useRef<GameRenderer | null>(null);
+  const mapRendererRef = useRef<Poly3MapRenderer | null>(null);
   const [agentSummaries, setAgentSummaries] = useState<AgentSummary[]>([]);
+  const [panelWidth, setPanelWidth] = useState(340);
+  const [isDraggingPanel, setIsDraggingPanel] = useState(false);
+  const [isPanning, setIsPanning] = useState(false);
+  const lastMousePos = useRef({ x: 0, y: 0 });
 
   useEffect(() => {
     let disposed = false;
@@ -57,11 +63,13 @@ function App() {
       }
 
       await gameRenderer.initialize(canvasRef.current);
+      gameRendererRef.current = gameRenderer;
       const layers = gameRenderer.getLayers();
 
       mapRenderer = new Poly3MapRenderer();
       mapRenderer.renderMap();
       layers.map.addChild(mapRenderer.getContainer());
+      mapRendererRef.current = mapRenderer;
 
       agentVisualRenderer = new AIAgentVisualRenderer();
       layers.players.addChild(agentVisualRenderer.getContainer());
@@ -84,6 +92,7 @@ function App() {
         setAgentSummaries(
           snapshot.agents.map(agent => ({
             id: agent.id,
+            color: agent.color,
             activityState: agent.activityState,
             currentZone: agent.currentZone,
             locationState: agent.locationState,
@@ -119,14 +128,112 @@ function App() {
     };
   }, []);
 
+  const handleCanvasMouseDown = useCallback((e: React.MouseEvent) => {
+    if (e.button === 0) {
+      setIsPanning(true);
+      lastMousePos.current = { x: e.clientX, y: e.clientY };
+    }
+  }, []);
+
+  const handleCanvasMouseMove = useCallback((e: React.MouseEvent) => {
+    if (isPanning && gameRendererRef.current) {
+      const dx = e.clientX - lastMousePos.current.x;
+      const dy = e.clientY - lastMousePos.current.y;
+      gameRendererRef.current.panCamera(dx, dy);
+      lastMousePos.current = { x: e.clientX, y: e.clientY };
+    }
+  }, [isPanning]);
+
+  const handleCanvasMouseUp = useCallback(() => {
+    setIsPanning(false);
+  }, []);
+
+  const handleCanvasMouseLeave = useCallback(() => {
+    setIsPanning(false);
+  }, []);
+
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    if (gameRendererRef.current) {
+      const camera = gameRendererRef.current.getCamera();
+      const currentZoom = camera.zoom;
+      const zoomDelta = e.deltaY > 0 ? -0.1 : 0.1;
+      camera.setZoom(currentZoom + zoomDelta);
+    }
+  }, []);
+
+  const handleResizeMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsDraggingPanel(true);
+  }, []);
+
+  useEffect(() => {
+    if (!isDraggingPanel) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const newWidth = window.innerWidth - e.clientX;
+      setPanelWidth(Math.max(200, Math.min(600, newWidth)));
+    };
+
+    const handleMouseUp = () => {
+      setIsDraggingPanel(false);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDraggingPanel]);
+
+  const handleCenterMap = useCallback(() => {
+    const gameRenderer = gameRendererRef.current;
+    const mapRenderer = mapRendererRef.current;
+    if (!gameRenderer || !mapRenderer) return;
+
+    const bounds = mapRenderer.getMapBounds();
+    const mapWidth = bounds.maxX - bounds.minX;
+    const mapHeight = bounds.maxY - bounds.minY;
+    const mapCenter = mapRenderer.getMapCenter();
+
+    // Get canvas dimensions (Pixi uses 1920x1080 internal)
+    const canvasWidth = 1920;
+    const canvasHeight = 1080;
+
+    // Calculate zoom to fit with some padding
+    const padding = 0.9; // 90% of view
+    const zoomX = (canvasWidth * padding) / mapWidth;
+    const zoomY = (canvasHeight * padding) / mapHeight;
+    const zoom = Math.min(zoomX, zoomY, 1.5); // Cap at 1.5x
+
+    const camera = gameRenderer.getCamera();
+    camera.setZoom(zoom);
+    camera.focusOn(mapCenter.x, mapCenter.y, true);
+  }, []);
+
   return (
     <div className="app-shell">
       <div className="map-wrapper">
-        <div className="map-canvas">
+        <button className="center-map-btn" onClick={handleCenterMap} title="Center & fit map">
+          ⊙
+        </button>
+        <div
+          className={`map-canvas ${isPanning ? 'panning' : ''}`}
+          onMouseDown={handleCanvasMouseDown}
+          onMouseMove={handleCanvasMouseMove}
+          onMouseUp={handleCanvasMouseUp}
+          onMouseLeave={handleCanvasMouseLeave}
+          onWheel={handleWheel}
+        >
           <canvas ref={canvasRef} />
         </div>
       </div>
-      <AgentInfoPanel agents={agentSummaries} />
+      <div
+        className="panel-resize-handle"
+        onMouseDown={handleResizeMouseDown}
+      />
+      <AgentInfoPanel agents={agentSummaries} width={panelWidth} />
     </div>
   );
 }

@@ -141,21 +141,19 @@ export class ZoneDetector {
   updatePlayerPosition(playerId: string, position: Point): ZoneTransitionEvent | null {
     const currentZone = this.playerZones.get(playerId) || null;
     const newZone = this.getZoneAtPosition(position);
-    const newZoneName = newZone?.name || null;
+    const newZoneName = newZone?.name || 'Hallway';
     
     // Check if zone changed
     if (currentZone !== newZoneName) {
       this.playerZones.set(playerId, newZoneName);
       
-      if (newZoneName !== null && newZone) {
-        return {
-          playerId,
-          fromZone: currentZone,
-          toZone: newZoneName,
-          zoneType: newZone.type,
-          timestamp: Date.now()
-        };
-      }
+      return {
+        playerId,
+        fromZone: currentZone,
+        toZone: newZoneName,
+        zoneType: newZone?.type ?? ZoneType.HALLWAY,
+        timestamp: Date.now()
+      };
     }
     
     return null;

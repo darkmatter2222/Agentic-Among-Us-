@@ -114,7 +114,8 @@ export function getCurrentZone(x: number, y: number, labeledZones: LabeledZone[]
       return zone.name;
     }
   }
-  return null;
+  // Not in a declared zone - player is in a hallway
+  return 'Hallway';
 }
 
 // Export commonly used map elements

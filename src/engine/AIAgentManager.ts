@@ -94,6 +94,13 @@ export class AIAgentManager {
       );
       
       this.agents.push(agent);
+      
+      // Initialize zone detection for starting position
+      const zoneEvent = this.zoneDetector.updatePlayerPosition(agent.getId(), startPosition);
+      if (zoneEvent) {
+        agent.getStateMachine().updateLocation(zoneEvent.toZone, zoneEvent.zoneType);
+        console.log(`${agent.getId()} entered ${zoneEvent.toZone} (${zoneEvent.zoneType})`);
+      }
     }
   }
   
