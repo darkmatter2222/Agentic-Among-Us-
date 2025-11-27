@@ -1,5 +1,7 @@
 # Among Us Game Mechanics - Complete Reference for AI Agents
 
+> **Note**: This document describes the full Among Us game mechanics. See the [Implementation Status](#implementation-status) section at the end for what is currently active in this simulation.
+
 ## Core Game Structure
 
 ### Player Roles
@@ -478,3 +480,121 @@ Map Settings:
 6. **Kill Zone Presence**: Near body discovery location
 7. **Sabotage Timing**: Benefits from sabotage timing
 8. **Vote Patterns**: Consistently voting with impostors
+
+---
+
+## Implementation Status
+
+> This section documents what is **currently implemented** in the Agentic Among Us simulation versus what is documented above but not yet active.
+
+### ✅ Fully Implemented
+
+| System | Details |
+|--------|---------|
+| **Movement & Physics** | A* pathfinding, steering behaviors, collision avoidance, wall-whisker detection |
+| **Navigation Mesh** | Full Skeld map with walkable zones, room labels, hallways |
+| **Vision System** | Configurable vision radius, line-of-sight calculations |
+| **Task System** | Task assignment (5 per agent), navigation to tasks, execution with durations |
+| **Impostor Task Faking** | Wait at task location for appropriate duration without progress |
+| **Zone Detection** | Agents know their current room/hallway location |
+| **Agent Memory** | Observations, suspicion levels, conversation history, alibi tracking |
+| **Thought System** | Internal reasoning triggered by events (room entry, spotting agents, etc.) |
+| **Speech System** | Agents speak to nearby players, proximity-based hearing |
+| **Social Actions** | Buddy up, follow, avoid, confront, spread rumors, defend self |
+| **AI Decision Making** | LLM-powered with 10 goal types (see below) |
+
+### AI Decision Types (Active)
+
+```
+GO_TO_TASK     - Navigate to assigned task location
+WANDER         - Random exploration of the map
+FOLLOW_AGENT   - Tail another agent for safety or suspicion
+AVOID_AGENT    - Stay away from suspicious players
+BUDDY_UP       - Team up with trusted players
+CONFRONT       - Question suspicious behavior face-to-face
+SPREAD_RUMOR   - Share suspicions with other agents
+DEFEND_SELF    - Provide alibis when accused
+SPEAK          - General conversation
+IDLE           - Wait and observe surroundings
+```
+
+### Thought Triggers (Active)
+
+```
+arrived_at_destination  - Reached navigation target
+task_completed          - Finished a task
+task_started            - Began working on a task
+agent_spotted           - Another agent entered vision
+agent_lost_sight        - Agent left vision range
+entered_room            - Moved into a new room
+idle_random             - Periodic thoughts while idle
+heard_speech            - Heard another agent speak
+passed_agent_closely    - Brief proximity encounter
+task_in_action_radius   - Task location nearby
+```
+
+### ❌ Not Yet Implemented
+
+| System | Status | Notes |
+|--------|--------|-------|
+| **Kill Mechanics** | ❌ | Impostors cannot eliminate crewmates yet |
+| **Body Discovery** | ❌ | No corpses, no report button |
+| **Emergency Meetings** | ❌ | Button location exists but non-functional |
+| **Discussion Phase** | ❌ | No meeting chat or accusations |
+| **Voting System** | ❌ | No vote casting or counting |
+| **Ejection** | ❌ | No player removal |
+| **Sabotage (Reactor)** | ❌ | Timer and fix mechanics not active |
+| **Sabotage (O2)** | ❌ | Timer and fix mechanics not active |
+| **Sabotage (Lights)** | ❌ | Vision reduction not implemented |
+| **Sabotage (Comms)** | ❌ | Task hiding not implemented |
+| **Door System** | ❌ | Doors don't close or block movement |
+| **Vent System** | ❌ | Impostors cannot use vents |
+| **Win Conditions** | ❌ | Game runs indefinitely |
+| **Ghost Mode** | ❌ | Dead players cannot continue |
+| **Security Cameras** | ❌ | No camera monitoring |
+| **Admin Table** | ❌ | No player location display |
+
+### Current Simulation Configuration
+
+```
+Players:           8 (6 Crewmates, 2 Impostors)
+Tasks per Agent:   5
+Map:               The Skeld
+Tick Rate:         60 Hz
+Vision System:     Radius-based with obstruction
+AI Backend:        External LLM server (with fallback)
+```
+
+### Map Data Available
+
+The simulation has full Skeld map data including:
+- ✅ All walkable zone polygons with obstacle holes
+- ✅ Room and hallway labels (14 named areas)
+- ✅ 30+ task locations with types and durations
+- ✅ Vent positions and connections (defined but not usable)
+- ✅ Door positions (defined but non-functional)
+- ✅ Camera locations (defined but not active)
+
+### Agent Capabilities Summary
+
+**Crewmates can:**
+- Navigate the full Skeld map using pathfinding
+- Complete assigned tasks with realistic durations
+- See other agents within vision radius
+- Remember observations and track suspicion
+- Speak to nearby agents
+- Form alliances (buddy system)
+- Report suspicious behavior via rumors
+
+**Impostors can:**
+- Navigate identically to crewmates
+- Fake tasks (stand at location without progress)
+- Track and follow potential victims
+- Spread false information
+- Manipulate suspicion through social actions
+
+**Impostors cannot (yet):**
+- Kill crewmates
+- Use vents for travel
+- Trigger sabotages
+- Close doors
