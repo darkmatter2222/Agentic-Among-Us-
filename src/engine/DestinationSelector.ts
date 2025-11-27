@@ -4,7 +4,7 @@
  */
 
 import type { Point, WalkableZone, Task } from '@shared/data/poly3-map.ts';
-import { calculateCentroid, pointInPolygon, isPointWalkable } from '@shared/data/poly3-map.ts';
+import { calculateCentroid, pointInPolygon, isPointWalkable, OBSTACLES } from '@shared/data/poly3-map.ts';
 import type { NavMesh } from './NavMesh.ts';
 import type { Zone } from './ZoneDetector.ts';
 
@@ -201,10 +201,10 @@ export class DestinationSelector {
     };
     
     // Check if walkable
-    if (isPointWalkable(point.x, point.y, this.walkableZones)) {
+    if (isPointWalkable(point.x, point.y, this.walkableZones, OBSTACLES)) {
       return point;
     }
-    
+
     // Fallback: try a few more times
     for (let i = 0; i < 5; i++) {
       const angle = Math.random() * Math.PI * 2;
@@ -213,13 +213,11 @@ export class DestinationSelector {
         x: position.x + Math.cos(angle) * distance,
         y: position.y + Math.sin(angle) * distance
       };
-      
-      if (isPointWalkable(testPoint.x, testPoint.y, this.walkableZones)) {
+
+      if (isPointWalkable(testPoint.x, testPoint.y, this.walkableZones, OBSTACLES)) {
         return testPoint;
       }
-    }
-    
-    return null;
+    }    return null;
   }
   
   /**
@@ -305,7 +303,7 @@ export class DestinationSelector {
       return false;
     }
 
-    return isPointWalkable(x, y, this.walkableZones);
+    return isPointWalkable(x, y, this.walkableZones, OBSTACLES);
   }
 
   private averagePoint(points: Point[]): Point {

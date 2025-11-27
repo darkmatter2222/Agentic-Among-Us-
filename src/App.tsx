@@ -31,6 +31,7 @@ function App() {
   const [showActionRadius, setShowActionRadius] = useState(true);
   const [showThinkingBubbles, setShowThinkingBubbles] = useState(true);
   const [showSpeechBubbles, setShowSpeechBubbles] = useState(true);
+  const [lightsOn, setLightsOn] = useState(true);
 
   useEffect(() => {
     // Prevent double initialization during React Strict Mode or HMR
@@ -109,6 +110,8 @@ function App() {
       lightingRendererRef.current = lightingRenderer;
 
       const agentVisualRenderer = new AIAgentVisualRenderer();
+      // Wire up lighting renderer for vision reduction and color confidence
+      agentVisualRenderer.setLightingRenderer(lightingRenderer);
       layers.players.addChild(agentVisualRenderer.getContainer());
       agentVisualRendererRef.current = agentVisualRenderer;
 
@@ -315,12 +318,28 @@ function App() {
     });
   }, []);
 
+  const handleToggleLights = useCallback(() => {
+    setLightsOn(prev => {
+      const newValue = !prev;
+      lightingRendererRef.current?.setLightsEnabled(newValue);
+      return newValue;
+    });
+  }, []);
+
   return (
     <div className="app-shell">
       <div className="map-wrapper">
         <div className="controls-panel">
           <button className="control-btn" onClick={handleCenterMap} title="Center & fit map">
             ⊙
+          </button>
+          <div className="control-divider" />
+          <button 
+            className={`control-btn ${lightsOn ? 'active' : ''}`} 
+            onClick={handleToggleLights} 
+            title="Toggle Lights (Sabotage)"
+          >
+            💡
           </button>
           <div className="control-divider" />
           <button 
@@ -373,4 +392,3 @@ function App() {
 }
 
 export default App;
-

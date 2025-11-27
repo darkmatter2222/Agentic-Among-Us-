@@ -29,6 +29,9 @@ export class RoomLightingRenderer {
   private lightSprites: PIXI.Sprite[] = [];
   private gradientTextures: Map<string, PIXI.Texture> = new Map();
   
+  // Store all light configurations for brightness calculations
+  private allLights: LightConfig[] = [];
+  
   // Number of rays to cast for each light (higher = smoother edges at walls)
   private readonly RAY_COUNT = 90;
   
@@ -96,6 +99,64 @@ export class RoomLightingRenderer {
   }
 
   // ============================================
+  // BRIGHTNESS CALCULATION (for color confidence)
+  // ============================================
+
+  /**
+   * Calculate the brightness at a given position based on all lights
+   * Returns a value between 0 (complete darkness) and 1 (full brightness)
+   * Used for determining color confidence when lights are on/off
+   */
+  getBrightnessAtPosition(x: number, y: number): number {
+    // If lights are off, return very low brightness
+    if (!this.lightsEnabled) {
+      return 0.08; // Minimal ambient light
+    }
+
+    // Calculate cumulative brightness from all lights
+    let totalBrightness = 0.15; // Ambient light base
+
+    for (const light of this.allLights) {
+      const dx = x - light.position.x;
+      const dy = y - light.position.y;
+      const distanceSq = dx * dx + dy * dy;
+      const distance = Math.sqrt(distanceSq);
+      
+      if (distance < light.radius) {
+        // Light falloff - inverse square-ish with smoothing
+        const normalizedDist = distance / light.radius;
+        // Smooth falloff curve
+        const falloff = 1 - (normalizedDist * normalizedDist);
+        totalBrightness += light.intensity * falloff * 8; // Boost factor
+      }
+    }
+
+    // Clamp to reasonable range
+    return Math.min(1.0, totalBrightness);
+  }
+
+  /**
+   * Get color confidence percentage based on brightness
+   * Higher brightness = more confident in identifying the player's color
+   */
+  getColorConfidenceAtPosition(x: number, y: number): number {
+    const brightness = this.getBrightnessAtPosition(x, y);
+    
+    // Map brightness to confidence (0-100%)
+    // At full brightness, 95-100% confidence
+    // At low brightness, 15-40% confidence
+    if (brightness >= 0.8) {
+      return 0.95 + (brightness - 0.8) * 0.25; // 95-100%
+    } else if (brightness >= 0.5) {
+      return 0.70 + (brightness - 0.5) * 0.83; // 70-95%
+    } else if (brightness >= 0.2) {
+      return 0.40 + (brightness - 0.2) * 1.0; // 40-70%
+    } else {
+      return 0.15 + brightness * 1.25; // 15-40%
+    }
+  }
+
+  // ============================================
   // MAIN RENDERING
   // ============================================
 
@@ -105,11 +166,13 @@ export class RoomLightingRenderer {
   renderLights(): void {
     this.lightContainer.removeChildren();
     this.lightSprites = [];
+    this.allLights = []; // Reset light list
     
     // Render lights for each labeled room
     POLY3_MAP_DATA.labeledZones.forEach((zone: LabeledZone) => {
       const lights = this.calculateLightsForRoom(zone);
       lights.forEach(light => {
+        this.allLights.push(light); // Track all lights
         this.renderRayTracedLight(light);
       });
     });
@@ -392,6 +455,7 @@ export class RoomLightingRenderer {
     
     hallwayLights.forEach(light => {
       if (isPointWalkable(light.position.x, light.position.y, POLY3_MAP_DATA.walkableZones)) {
+        this.allLights.push(light); // Track hallway lights too
         this.renderRayTracedLight(light);
       }
     });

@@ -2,6 +2,7 @@
  * Vision Box Renderer
  * Renders box-shaped field of view with wall occlusion (ray tracing)
  * Features gradient feathering on edges and strict walkable area clamping
+ * Supports dynamic vision reduction when lights are sabotaged
  */
 
 import * as PIXI from 'pixi.js';
@@ -21,12 +22,19 @@ interface Edge {
   end: Point;
 }
 
+// Callback type to check if lights are on (injected from parent)
+export type LightsStateCallback = () => boolean;
+
 export class VisionBoxRenderer {
   private container: PIXI.Container;
   private graphics: PIXI.Graphics;
   private gradientGraphics: PIXI.Graphics;
   private config: VisionBoxConfig;
   private walls: Edge[] = [];
+  private lightsStateCallback: LightsStateCallback | null = null;
+  
+  // Vision multiplier when lights are off (crewmates see 25% of normal)
+  private readonly LIGHTS_OFF_VISION_MULTIPLIER = 0.25;
   
   constructor(config?: Partial<VisionBoxConfig>) {
     this.container = new PIXI.Container();
@@ -46,6 +54,24 @@ export class VisionBoxRenderer {
     
     // Extract wall edges from map data
     this.extractWallsFromMap();
+  }
+
+  /**
+   * Set callback to check lights state (for vision reduction during sabotage)
+   */
+  setLightsStateCallback(callback: LightsStateCallback): void {
+    this.lightsStateCallback = callback;
+  }
+  
+  /**
+   * Get the effective vision size based on lights state
+   */
+  private getEffectiveVisionSize(): number {
+    const lightsOn = this.lightsStateCallback ? this.lightsStateCallback() : true;
+    if (lightsOn) {
+      return this.config.size;
+    }
+    return this.config.size * this.LIGHTS_OFF_VISION_MULTIPLIER;
   }
   
   /**
@@ -143,9 +169,11 @@ export class VisionBoxRenderer {
   /**
    * Generate vision polygon with wall occlusion
    * Uses ray tracing to find visible area within the box
+   * Respects lights state for vision reduction during sabotage
    */
   private generateVisionPolygon(position: Point): Point[] {
-    const { size, rayCount } = this.config;
+    const { rayCount } = this.config;
+    const size = this.getEffectiveVisionSize(); // Use effective size based on lights
     const points: Point[] = [];
     
     // Total rays around 360 degrees, more rays = smoother edges
@@ -183,7 +211,10 @@ export class VisionBoxRenderer {
     this.graphics.clear();
     this.gradientGraphics.clear();
     
-    const { color, alpha, featherSize } = this.config;
+    const { color, alpha } = this.config;
+    // Scale feather size proportionally to vision size
+    const effectiveSize = this.getEffectiveVisionSize();
+    const featherSize = this.config.featherSize * (effectiveSize / this.config.size);
     
     // Generate vision polygon with wall occlusion
     const visionPoly = this.generateVisionPolygon(position);

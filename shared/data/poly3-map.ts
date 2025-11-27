@@ -36,6 +36,19 @@ export interface Task {
   room: string;
 }
 
+export interface Obstacle {
+  id: string;
+  type: string;  // 'table', 'chair', 'console', 'bed'
+  position: Point;
+  width: number;
+  height: number;
+}
+
+export interface EmergencyButton {
+  position: Point;
+  room: string;
+}
+
 export interface MapMetadata {
   image: string;
   version: string;
@@ -50,6 +63,8 @@ export interface MapData {
   doors: Door[];
   tasks: Task[];
   cameras: never[];
+  obstacles: Obstacle[];
+  emergencyButton: EmergencyButton | null;
 }
 
 // Import the JSON data
@@ -90,8 +105,32 @@ export function pointInPolygon(x: number, y: number, vertices: Point[]): boolean
   return inside;
 }
 
+// Helper function to check if a point is inside a rectangular obstacle
+export function isPointInObstacle(x: number, y: number, obstacle: Obstacle): boolean {
+  const halfWidth = obstacle.width / 2;
+  const halfHeight = obstacle.height / 2;
+  return (
+    x >= obstacle.position.x - halfWidth &&
+    x <= obstacle.position.x + halfWidth &&
+    y >= obstacle.position.y - halfHeight &&
+    y <= obstacle.position.y + halfHeight
+  );
+}
+
 // Helper function to check if a point is in a walkable area
-export function isPointWalkable(x: number, y: number, walkableZones: WalkableZone[]): boolean {
+export function isPointWalkable(
+  x: number,
+  y: number,
+  walkableZones: WalkableZone[],
+  obstacles: Obstacle[] = []
+): boolean {
+  // First check if point is inside any obstacle (tables, chairs, etc.)
+  for (const obstacle of obstacles) {
+    if (isPointInObstacle(x, y, obstacle)) {
+      return false; // Inside an obstacle
+    }
+  }
+
   for (const zone of walkableZones) {
     // Check if point is inside the zone boundary
     if (pointInPolygon(x, y, zone.vertices)) {
@@ -125,3 +164,5 @@ export const LABELED_ZONES = POLY3_MAP_DATA.labeledZones;
 export const VENTS = POLY3_MAP_DATA.vents;
 export const DOORS = POLY3_MAP_DATA.doors;
 export const TASKS = POLY3_MAP_DATA.tasks;
+export const OBSTACLES = POLY3_MAP_DATA.obstacles || [];
+export const EMERGENCY_BUTTON = POLY3_MAP_DATA.emergencyButton;

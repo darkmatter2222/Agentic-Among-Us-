@@ -1,13 +1,12 @@
 import * as PIXI from 'pixi.js';
-import { 
-  POLY3_MAP_DATA, 
-  calculateCentroid, 
-  type Point, 
-  type WalkableZone, 
-  type LabeledZone 
-} from '@shared/data/poly3-map';
-
-/**
+import {
+  POLY3_MAP_DATA,
+  calculateCentroid,
+  type Point,
+  type WalkableZone,
+  type LabeledZone,
+  type Obstacle
+} from '@shared/data/poly3-map';/**
  * Renderer for the poly 3.json map format
  * Renders walkable zones with cyberpunk-inspired spaceship aesthetic
  * Based on JSON_FORMAT_SPECIFICATION.md
@@ -18,6 +17,8 @@ export class Poly3MapRenderer {
   private labelGraphics: PIXI.Text[] = [];
   private ventSprites: Map<string, PIXI.Graphics> = new Map();
   private taskSprites: Map<string, PIXI.Graphics> = new Map();
+  private obstacleSprites: Map<string, PIXI.Graphics> = new Map();
+  private emergencyButtonSprite: PIXI.Container | null = null;
   private glowGraphics: PIXI.Graphics | null = null;
   private scale: number = 1; // Direct pixel mapping from JSON
 
@@ -66,8 +67,10 @@ export class Poly3MapRenderer {
     this.labelGraphics = [];
     this.ventSprites.clear();
     this.taskSprites.clear();
+    this.obstacleSprites.clear();
+    this.emergencyButtonSprite = null;
     this.glowGraphics = null;
-    
+
     // Add layers in order (back to front)
     this.renderBackground();
     this.renderWalkableZonesWithRoomColors(); // Base floor with room colors
@@ -75,11 +78,11 @@ export class Poly3MapRenderer {
     this.renderNeonAccents(); // Cyberpunk glow lines along edges
     this.renderWallEdges(); // Wall outlines for depth
     this.renderLabeledZoneText(); // Room labels with glow
+    this.renderObstacles(); // Tables, chairs, etc.
     this.renderVents();
     this.renderTasks();
-  }
-
-  private renderBackground(): void {
+    this.renderEmergencyButton(); // Emergency button in cafeteria
+  }  private renderBackground(): void {
     const bg = new PIXI.Graphics();
     bg.rect(-500, -500, 4000, 3000);
     bg.fill(0x05050A); // Very dark blue-black (deep space)
@@ -548,6 +551,132 @@ export class Poly3MapRenderer {
   }
 
   /**
+   * Render obstacles (tables, chairs, etc.) - cyberpunk furniture style
+   */
+  private renderObstacles(): void {
+    const obstacles = POLY3_MAP_DATA.obstacles || [];
+
+    // Obstacle type colors - dark metallic cyberpunk aesthetic
+    const obstacleColors: Record<string, { base: number; edge: number; glow: number }> = {
+      'table': { base: 0x2A1F1A, edge: 0x8B4513, glow: 0xD2691E },
+      'chair': { base: 0x1A1A1A, edge: 0x4A4A4A, glow: 0x808080 },
+      'console': { base: 0x1A2A2A, edge: 0x2F4F4F, glow: 0x00CED1 },
+      'bed': { base: 0x1A1A2A, edge: 0x4B0082, glow: 0x9370DB }
+    };
+
+    obstacles.forEach((obstacle: Obstacle) => {
+      const graphics = new PIXI.Graphics();
+      const x = obstacle.position.x * this.scale;
+      const y = obstacle.position.y * this.scale;
+      const hw = (obstacle.width / 2) * this.scale;
+      const hh = (obstacle.height / 2) * this.scale;
+
+      const colors = obstacleColors[obstacle.type] || obstacleColors['table'];
+
+      // Outer glow (subtle cyberpunk effect)
+      graphics.roundRect(x - hw - 3, y - hh - 3, obstacle.width * this.scale + 6, obstacle.height * this.scale + 6, 4);
+      graphics.fill({ color: colors.glow, alpha: 0.15 });
+
+      // Main body with rounded corners
+      graphics.roundRect(x - hw, y - hh, obstacle.width * this.scale, obstacle.height * this.scale, 3);
+      graphics.fill({ color: colors.base, alpha: 0.95 });
+
+      // Edge highlight
+      graphics.setStrokeStyle({ width: 2, color: colors.edge, alpha: 0.8 });
+      graphics.roundRect(x - hw, y - hh, obstacle.width * this.scale, obstacle.height * this.scale, 3);
+      graphics.stroke();
+
+      // Inner detail line (gives depth)
+      graphics.setStrokeStyle({ width: 1, color: colors.glow, alpha: 0.3 });
+      graphics.roundRect(x - hw + 4, y - hh + 4, obstacle.width * this.scale - 8, obstacle.height * this.scale - 8, 2);
+      graphics.stroke();
+
+      // For tables, add a subtle surface pattern
+      if (obstacle.type === 'table') {
+        // Center dot/button detail
+        graphics.circle(x, y, 5);
+        graphics.fill({ color: colors.glow, alpha: 0.4 });
+      }
+
+      graphics.zIndex = 20;
+      this.obstacleSprites.set(obstacle.id, graphics);
+      this.container.addChild(graphics);
+    });
+  }
+
+  /**
+   * Render the emergency button - prominent red button with glow
+   */
+  private renderEmergencyButton(): void {
+    const emergencyButton = POLY3_MAP_DATA.emergencyButton;
+    if (!emergencyButton) return;
+
+    const buttonContainer = new PIXI.Container();
+    const x = emergencyButton.position.x * this.scale;
+    const y = emergencyButton.position.y * this.scale;
+
+    // Outer glow (pulsing red aura)
+    const outerGlow = new PIXI.Graphics();
+    outerGlow.circle(x, y, 25);
+    outerGlow.fill({ color: 0xFF0000, alpha: 0.2 });
+    buttonContainer.addChild(outerGlow);
+
+    // Button base (dark red platform)
+    const base = new PIXI.Graphics();
+    base.circle(x, y, 20);
+    base.fill({ color: 0x660000, alpha: 0.95 });
+    base.setStrokeStyle({ width: 3, color: 0x880000 });
+    base.stroke();
+    buttonContainer.addChild(base);
+
+    // Button top (bright red)
+    const button = new PIXI.Graphics();
+    button.circle(x, y, 14);
+    button.fill({ color: 0xFF0000, alpha: 1.0 });
+    button.setStrokeStyle({ width: 2, color: 0xFFFFFF, alpha: 0.5 });
+    button.stroke();
+    buttonContainer.addChild(button);
+
+    // Highlight (gives 3D effect)
+    const highlight = new PIXI.Graphics();
+    highlight.circle(x - 3, y - 3, 6);
+    highlight.fill({ color: 0xFFFFFF, alpha: 0.4 });
+    buttonContainer.addChild(highlight);
+
+    // "!" symbol
+    const exclamation = new PIXI.Text({
+      text: '!',
+      style: {
+        fontFamily: 'Arial',
+        fontSize: 18,
+        fill: 0xFFFFFF,
+        fontWeight: 'bold'
+      }
+    });
+    exclamation.anchor.set(0.5);
+    exclamation.position.set(x, y);
+    buttonContainer.addChild(exclamation);
+
+    // Label below button
+    const label = new PIXI.Text({
+      text: 'EMERGENCY',
+      style: {
+        fontFamily: 'Arial',
+        fontSize: 30,
+        fill: 0xFF4444,
+        fontWeight: 'bold'
+      }
+    });
+    label.anchor.set(0.5, 0);
+    label.position.set(x, y + 28);
+    buttonContainer.addChild(label);
+
+    buttonContainer.zIndex = 30;
+    this.emergencyButtonSprite = buttonContainer;
+    this.container.addChild(buttonContainer);
+  }
+
+  /**
    * Update animations
    */
   update(_deltaTime: number): void {
@@ -556,15 +685,20 @@ export class Poly3MapRenderer {
       const pulse = Math.sin(Date.now() * 0.001) * 0.1 + 0.9;
       ventGraphics.alpha = pulse;
     });
-    
+
     // Animate task indicators with a gentle glow
     this.taskSprites.forEach((taskGraphics) => {
       const pulse = Math.sin(Date.now() * 0.002) * 0.2 + 0.8;
       taskGraphics.alpha = pulse;
     });
-  }
 
-  /**
+    // Animate emergency button with a pulsing red glow
+    if (this.emergencyButtonSprite && this.emergencyButtonSprite.children.length > 0) {
+      const outerGlow = this.emergencyButtonSprite.children[0] as PIXI.Graphics;
+      const pulse = Math.sin(Date.now() * 0.003) * 0.15 + 0.25;
+      outerGlow.alpha = pulse;
+    }
+  }  /**
    * Get map bounds for camera centering
    */
   getMapBounds(): { minX: number; minY: number; maxX: number; maxY: number } {

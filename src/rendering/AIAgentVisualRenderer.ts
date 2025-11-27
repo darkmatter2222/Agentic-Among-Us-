@@ -1,15 +1,17 @@
 /**
  * AI Agent Visual Renderer
  * Renders all AI agents with vision boxes, action radii, paths, and speech bubbles
+ * Supports color confidence based on lighting (for lights sabotage mechanic)
  */
 
 import * as PIXI from 'pixi.js';
 import type { AgentSnapshot, SpeechEvent } from '@shared/types/simulation.types.ts';
-import { VisionBoxRenderer } from './VisionBoxRenderer.ts';
+import { VisionBoxRenderer, type LightsStateCallback } from './VisionBoxRenderer.ts';
 import { ActionRadiusRenderer } from './ActionRadiusRenderer.ts';
 import { PathLineRenderer } from './PathLineRenderer.ts';
 import { SpeechBubbleRenderer } from './SpeechBubbleRenderer.ts';
 import { ThinkingBubbleRenderer } from './ThinkingBubbleRenderer.ts';
+import type { RoomLightingRenderer } from './RoomLightingRenderer.ts';
 
 export interface AgentVisuals {
   spriteContainer: PIXI.Container; // Container for body + legs
@@ -17,6 +19,7 @@ export interface AgentVisuals {
   leftLeg: PIXI.Graphics;          // Left leg (redrawn each frame for animation)
   rightLeg: PIXI.Graphics;         // Right leg (redrawn each frame for animation)
   shadow: PIXI.Graphics;           // Shadow under character
+  darknessOverlay: PIXI.Graphics;  // Darkness overlay for lights-off effect
   bodyColor: number;               // Store color for leg redrawing
   visionBox: VisionBoxRenderer;
   actionRadius: ActionRadiusRenderer;
@@ -60,6 +63,10 @@ export class AIAgentVisualRenderer {
   private showPaths: boolean = true;
   private showSpeechBubbles: boolean = true;
   private showThinkingBubbles: boolean = true;
+  
+  // Lighting reference for color confidence calculations
+  private lightingRenderer: RoomLightingRenderer | null = null;
+  private lightsStateCallback: LightsStateCallback | null = null;
 
   constructor() {
     this.container = new PIXI.Container();
@@ -77,6 +84,19 @@ export class AIAgentVisualRenderer {
     });
     this.container.addChild(this.thinkingBubbleRenderer.getContainer());
     this.container.addChild(this.speechBubbleRenderer.getContainer());
+  }
+
+  /**
+   * Set the lighting renderer reference (for color confidence and vision reduction)
+   */
+  setLightingRenderer(renderer: RoomLightingRenderer): void {
+    this.lightingRenderer = renderer;
+    this.lightsStateCallback = () => renderer.areLightsOn();
+    
+    // Update all existing vision boxes with the lights callback
+    for (const state of this.agentVisuals.values()) {
+      state.visuals.visionBox.setLightsStateCallback(this.lightsStateCallback);
+    }
   }
 
   syncAgents(snapshots: AgentSnapshot[], recentSpeech?: SpeechEvent[]): void {
@@ -256,6 +276,26 @@ export class AIAgentVisualRenderer {
         visuals.pathLine.setVisible(true);
       } else {
         visuals.pathLine.setVisible(false);
+      }
+      
+      // Update darkness overlay based on lighting
+      if (this.lightingRenderer) {
+        const lightsOn = this.lightingRenderer.areLightsOn();
+        if (!lightsOn) {
+          // When lights are off, get brightness at agent position
+          const brightness = this.lightingRenderer.getBrightnessAtPosition(
+            visuals.spriteContainer.x,
+            visuals.spriteContainer.y
+          );
+          // Darkness overlay alpha is inverse of brightness
+          // More brightness = less darkness
+          const targetAlpha = Math.max(0, 0.75 - brightness * 0.8);
+          // Smooth transition
+          visuals.darknessOverlay.alpha += (targetAlpha - visuals.darknessOverlay.alpha) * 0.1;
+        } else {
+          // Fade out darkness overlay when lights are on
+          visuals.darknessOverlay.alpha += (0 - visuals.darknessOverlay.alpha) * 0.15;
+        }
       }
     }
     
@@ -605,6 +645,17 @@ export class AIAgentVisualRenderer {
     bodyGraphics.endFill();
     
     spriteContainer.addChild(bodyGraphics);
+    
+    // Darkness overlay for lights-off effect (drawn on top of body, hidden by default)
+    const darknessOverlay = new PIXI.Graphics();
+    darknessOverlay.zIndex = 20; // Above everything
+    darknessOverlay.alpha = 0; // Start invisible
+    // Draw a dark overlay covering the body area
+    darknessOverlay.beginFill(0x000000, 0.7);
+    darknessOverlay.drawRoundedRect(bodyX - 2 * sizeMultiplier, bodyY - 2 * sizeMultiplier, 
+      bodyWidth + 4 * sizeMultiplier, bodyHeight + 10 * sizeMultiplier, bodyRadius);
+    darknessOverlay.endFill();
+    spriteContainer.addChild(darknessOverlay);
 
     const visionBox = new VisionBoxRenderer({
       size: snapshot.visionRadius * 1.4,
@@ -612,6 +663,11 @@ export class AIAgentVisualRenderer {
       alpha: 0.15,
       rayCount: 90
     });
+    
+    // Set up lights callback if we have a lighting renderer
+    if (this.lightsStateCallback) {
+      visionBox.setLightsStateCallback(this.lightsStateCallback);
+    }
 
     const actionRadius = new ActionRadiusRenderer({
       radius: snapshot.actionRadius,
@@ -635,7 +691,7 @@ export class AIAgentVisualRenderer {
     this.container.addChild(spriteContainer);
 
     const state: AgentVisualState = {
-      visuals: { spriteContainer, bodyGraphics, leftLeg, rightLeg, shadow, bodyColor, visionBox, actionRadius, pathLine },
+      visuals: { spriteContainer, bodyGraphics, leftLeg, rightLeg, shadow, darknessOverlay, bodyColor, visionBox, actionRadius, pathLine },
       targetPosition: { ...snapshot.movement.position },
       previousPosition: { ...snapshot.movement.position },
       targetFacing: snapshot.movement.facing,

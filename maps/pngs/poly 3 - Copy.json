@@ -1254,7 +1254,7 @@
       "type": "Divert Power",
       "position": {
         "x": 706.7586810177455,
-        "y": 394.560279496887
+        "y": 379.0372464204081
       },
       "room": "Upper Engine"
     },
@@ -1553,132 +1553,7 @@
         "y": 862.1056386275867
       },
       "room": "Navigation"
-    },
-    {
-      "type": "Empty Garbage",
-      "position": {
-        "x": 1660.964539183239,
-        "y": 1440.819706462266
-      },
-      "room": "Storage"
-    },
-    {
-      "type": "Divert Power",
-      "position": {
-        "x": 2063.152214346555,
-        "y": 690.0693794907424
-      },
-      "room": "Hallway"
     }
   ],
-  "cameras": [],
-  "obstacles": [
-    {
-      "id": "obstacle_1",
-      "type": "table",
-      "position": {
-        "x": 1440.819706462266,
-        "y": 426.1778171906017
-      },
-      "width": 60.0,
-      "height": 60.0
-    },
-    {
-      "id": "obstacle_2",
-      "type": "table",
-      "position": {
-        "x": 1437.997336811997,
-        "y": 612.4542141083481
-      },
-      "width": 60.0,
-      "height": 60.0
-    },
-    {
-      "id": "obstacle_3",
-      "type": "table",
-      "position": {
-        "x": 1704.7112687624067,
-        "y": 451.57914404302164
-      },
-      "width": 60.0,
-      "height": 60.0
-    },
-    {
-      "id": "obstacle_4",
-      "type": "table",
-      "position": {
-        "x": 1700.4777142870034,
-        "y": 663.256867813188
-      },
-      "width": 60.0,
-      "height": 60.0
-    },
-    {
-      "id": "obstacle_5",
-      "type": "chair",
-      "position": {
-        "x": 2555.6557183184755,
-        "y": 826.9543075287834
-      },
-      "width": 60.0,
-      "height": 60.0
-    },
-    {
-      "id": "obstacle_6",
-      "type": "chair",
-      "position": {
-        "x": 915.8589515122533,
-        "y": 767.6845448731368
-      },
-      "width": 60.0,
-      "height": 60.0
-    },
-    {
-      "id": "obstacle_7",
-      "type": "console",
-      "position": {
-        "x": 942.6714631898077,
-        "y": 856.5891888566067
-      },
-      "width": 60.0,
-      "height": 60.0
-    },
-    {
-      "id": "obstacle_8",
-      "type": "bed",
-      "position": {
-        "x": 1495.855914642509,
-        "y": 1104.9577180802685
-      },
-      "width": 60.0,
-      "height": 60.0
-    },
-    {
-      "id": "obstacle_9",
-      "type": "bed",
-      "position": {
-        "x": 1580.5270041505757,
-        "y": 1229.1419826920994
-      },
-      "width": 60.0,
-      "height": 60.0
-    },
-    {
-      "id": "obstacle_10",
-      "type": "bed",
-      "position": {
-        "x": 1459.1651091890137,
-        "y": 1390.017052757426
-      },
-      "width": 60.0,
-      "height": 60.0
-    }
-  ],
-  "emergencyButton": {
-    "position": {
-      "x": 1584.760558625979,
-      "y": 506.6153522232649
-    },
-    "room": "Cafeteria"
-  }
+  "cameras": []
 }

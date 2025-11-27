@@ -56,6 +56,14 @@ class DoorOrientation(Enum):
     VERTICAL = "vertical"
 
 
+class ObstacleType(Enum):
+    """Obstacle types"""
+    TABLE = "table"
+    CHAIR = "chair"
+    CONSOLE = "console"
+    BED = "bed"
+
+
 @dataclass
 class Point:
     """2D point"""
@@ -117,6 +125,23 @@ class Camera:
 
 
 @dataclass
+class Obstacle:
+    """Obstacle/furniture (e.g., tables in cafeteria)"""
+    id: str
+    obstacle_type: ObstacleType
+    position: Point
+    width: float = 60.0  # 6x vent size (vent is 10 radius, so 20 diameter -> 60x60)
+    height: float = 60.0
+
+
+@dataclass
+class EmergencyButton:
+    """Emergency meeting button"""
+    position: Point
+    room: str = "Cafeteria"
+
+
+@dataclass
 class LabeledZone:
     """Labeled zone for player location detection (e.g., Cafeteria, MedBay)"""
     vertices: List[Point]
@@ -134,6 +159,8 @@ class DrawMode(Enum):
     TASK = "task"
     CAMERA = "camera"
     VENT_LINK = "vent_link"
+    OBSTACLE = "obstacle"
+    EMERGENCY_BUTTON = "emergency_button"
 
 
 class MapEditor:
@@ -161,17 +188,26 @@ class MapEditor:
         self.doors: List[Door] = []
         self.tasks: List[TaskPoint] = []
         self.cameras: List[Camera] = []
-        
+        self.obstacles: List[Obstacle] = []
+        self.emergency_button: Optional[EmergencyButton] = None
+
         # Drawing state
         self.draw_mode: DrawMode = DrawMode.NONE
         self.current_polygon: List[Point] = []
         self.selected_vent: Optional[Vent] = None
         self.vent_counter: int = 1
+        self.obstacle_counter: int = 1
         self.snap_distance: float = 10.0  # Snap distance in pixels
         self.angle_snap_degrees: float = 15.0  # Degrees tolerance for angle snapping
         self.dragging_zone: Optional[WalkableZone] = None
-        
-        # Undo/Redo history
+
+        # Object dragging state (Ctrl+Click)
+        self.dragging_object: Optional[object] = None  # The object being dragged
+        self.dragging_object_type: Optional[str] = None  # Type of object being dragged
+        self.drag_offset_x: float = 0  # Offset from click to object center
+        self.drag_offset_y: float = 0
+        self.hover_object: Optional[object] = None  # Object under mouse with Ctrl held
+        self.hover_object_type: Optional[str] = None  # Type of hovered object        # Undo/Redo history
         self.history: List[Dict] = []
         self.history_index: int = -1
         self.max_history: int = 50
@@ -233,14 +269,17 @@ class MapEditor:
         # Object placement
         objects_frame = ttk.LabelFrame(parent, text="Place Objects", padding=10)
         objects_frame.pack(fill=tk.X, padx=5, pady=5)
-        
+
         ttk.Button(objects_frame, text="Place Vent", command=lambda: self.set_mode(DrawMode.VENT)).pack(fill=tk.X, pady=2)
         ttk.Button(objects_frame, text="Link Vents", command=lambda: self.set_mode(DrawMode.VENT_LINK)).pack(fill=tk.X, pady=2)
         ttk.Button(objects_frame, text="Place Door", command=lambda: self.set_mode(DrawMode.DOOR)).pack(fill=tk.X, pady=2)
         ttk.Button(objects_frame, text="Place Task", command=lambda: self.set_mode(DrawMode.TASK)).pack(fill=tk.X, pady=2)
         ttk.Button(objects_frame, text="Place Camera", command=lambda: self.set_mode(DrawMode.CAMERA)).pack(fill=tk.X, pady=2)
-        
-        # Controls
+        ttk.Button(objects_frame, text="Place Obstacle (Table)", command=lambda: self.set_mode(DrawMode.OBSTACLE)).pack(fill=tk.X, pady=2)
+        ttk.Button(objects_frame, text="Place Emergency Button", command=lambda: self.set_mode(DrawMode.EMERGENCY_BUTTON)).pack(fill=tk.X, pady=2)
+
+        # Move objects hint
+        ttk.Label(objects_frame, text="Ctrl+Click+Drag to move objects", font=("Arial", 8, "italic"), foreground="gray").pack(fill=tk.X, pady=1)        # Controls
         controls_frame = ttk.LabelFrame(parent, text="Controls", padding=10)
         controls_frame.pack(fill=tk.X, padx=5, pady=5)
         
@@ -293,6 +332,7 @@ class MapEditor:
         self.canvas.bind("<MouseWheel>", self.on_mouse_wheel)
         self.canvas.bind("<Button-2>", self.on_middle_click)  # Middle click for delete
         self.canvas.bind("<B1-Motion>", self.on_canvas_drag)  # Drag for zone selection
+        self.canvas.bind("<ButtonRelease-1>", self.on_canvas_release)  # Release for object drag
         
     def set_mode(self, mode: DrawMode):
         """Set the current drawing mode"""
@@ -353,12 +393,25 @@ class MapEditor:
         """Handle canvas click events"""
         x = self.canvas.canvasx(event.x)
         y = self.canvas.canvasy(event.y)
-        
+
         # Convert to map coordinates (accounting for both scale and zoom)
         display_scale = self.scale * self.zoom if self.scale > 0 else 1.0
         map_x = x / display_scale
         map_y = y / display_scale
-        
+
+        # Check for Ctrl+Click to start dragging an object
+        if event.state & 0x4:  # Ctrl key is held
+            obj, obj_type = self.find_object_at(x, y)
+            if obj:
+                self.dragging_object = obj
+                self.dragging_object_type = obj_type
+                # Calculate offset from click to object center
+                if obj_type in ['vent', 'door', 'task', 'camera', 'obstacle', 'emergency_button']:
+                    self.drag_offset_x = map_x - obj.position.x
+                    self.drag_offset_y = map_y - obj.position.y
+                self.update_status(f"Dragging {obj_type}...")
+                return
+
         if self.draw_mode == DrawMode.WALL:
             # Priority 1: Snap to existing vertices
             vertex_snap = self.find_snap_point(x, y)
@@ -410,12 +463,46 @@ class MapEditor:
             
         elif self.draw_mode == DrawMode.CAMERA:
             self.place_camera(map_x, map_y)
+
+        elif self.draw_mode == DrawMode.OBSTACLE:
+            self.place_obstacle(map_x, map_y)
+
+        elif self.draw_mode == DrawMode.EMERGENCY_BUTTON:
+            self.place_emergency_button(map_x, map_y)
             
     def on_canvas_drag(self, event):
-        """Handle canvas drag for zone selection"""
+        """Handle canvas drag for zone selection and object movement"""
+        x = self.canvas.canvasx(event.x)
+        y = self.canvas.canvasy(event.y)
+        display_scale = self.scale * self.zoom if self.scale > 0 else 1.0
+        map_x = x / display_scale
+        map_y = y / display_scale
+
+        # Handle object dragging (Ctrl+Drag)
+        if self.dragging_object is not None:
+            new_x = map_x - self.drag_offset_x
+            new_y = map_y - self.drag_offset_y
+
+            if self.dragging_object_type in ['vent', 'door', 'task', 'camera', 'obstacle', 'emergency_button']:
+                self.dragging_object.position.x = new_x
+                self.dragging_object.position.y = new_y
+            self.redraw_all()
+            return
+
         if self.draw_mode == DrawMode.SELECT_ZONE:
             # Visual feedback for dragging (optional)
             pass
+
+    def on_canvas_release(self, event):
+        """Handle mouse button release - finish dragging"""
+        if self.dragging_object is not None:
+            self.save_state()
+            self.update_status(f"Moved {self.dragging_object_type}")
+            self.dragging_object = None
+            self.dragging_object_type = None
+            self.drag_offset_x = 0
+            self.drag_offset_y = 0
+            self.redraw_all()
             
     def on_canvas_right_click(self, event):
         """Handle right-click to finish polygon or delete element"""
@@ -424,23 +511,85 @@ class MapEditor:
         elif self.draw_mode == DrawMode.NONE:
             # Delete mode - find and delete element at click position
             self.delete_element_at(event.x, event.y)
+
+    def find_object_at(self, screen_x: float, screen_y: float) -> Tuple[Optional[object], Optional[str]]:
+        """Find any movable object at screen position. Returns (object, type_string) or (None, None)"""
+        display_scale = self.scale * self.zoom
+
+        # Check vents (small targets)
+        for vent in self.vents:
+            vx = vent.position.x * display_scale
+            vy = vent.position.y * display_scale
+            if abs(vx - screen_x) < 15 and abs(vy - screen_y) < 15:
+                return (vent, 'vent')
+
+        # Check doors
+        for door in self.doors:
+            dx = door.position.x * display_scale
+            dy = door.position.y * display_scale
+            if abs(dx - screen_x) < 20 and abs(dy - screen_y) < 20:
+                return (door, 'door')
+
+        # Check tasks
+        for task in self.tasks:
+            tx = task.position.x * display_scale
+            ty = task.position.y * display_scale
+            if abs(tx - screen_x) < 15 and abs(ty - screen_y) < 15:
+                return (task, 'task')
+
+        # Check cameras
+        for camera in self.cameras:
+            cx = camera.position.x * display_scale
+            cy = camera.position.y * display_scale
+            if abs(cx - screen_x) < 15 and abs(cy - screen_y) < 15:
+                return (camera, 'camera')
+
+        # Check obstacles (larger targets)
+        for obstacle in self.obstacles:
+            ox = obstacle.position.x * display_scale
+            oy = obstacle.position.y * display_scale
+            hw = (obstacle.width / 2) * display_scale
+            hh = (obstacle.height / 2) * display_scale
+            if abs(ox - screen_x) < hw + 5 and abs(oy - screen_y) < hh + 5:
+                return (obstacle, 'obstacle')
+
+        # Check emergency button
+        if self.emergency_button:
+            bx = self.emergency_button.position.x * display_scale
+            by = self.emergency_button.position.y * display_scale
+            if abs(bx - screen_x) < 20 and abs(by - screen_y) < 20:
+                return (self.emergency_button, 'emergency_button')
+
+        return (None, None)
             
     def on_canvas_motion(self, event):
         """Handle mouse motion for preview"""
         import math
         x = self.canvas.canvasx(event.x)
         y = self.canvas.canvasy(event.y)
-        
+
         # Show current coordinates (accounting for zoom)
         display_scale = self.scale * self.zoom if self.scale > 0 else 1.0
         map_x = x / display_scale
         map_y = y / display_scale
-        
+
         # Remove old indicators
         self.canvas.delete("snap_indicator")
         self.canvas.delete("angle_guide")
-        
-        # Show snap indicators if in wall drawing mode or labeled zone mode
+        self.canvas.delete("hover_glow")
+
+        # Check for Ctrl key - show hover glow on movable objects
+        if event.state & 0x4:  # Ctrl key is held
+            obj, obj_type = self.find_object_at(x, y)
+            if obj:
+                self.hover_object = obj
+                self.hover_object_type = obj_type
+                self.draw_hover_glow(obj, obj_type, display_scale)
+                self.update_status(f"Ctrl+Click to drag {obj_type} | Position: ({map_x:.1f}, {map_y:.1f})")
+                return
+            else:
+                self.hover_object = None
+                self.hover_object_type = None        # Show snap indicators if in wall drawing mode or labeled zone mode
         if self.draw_mode == DrawMode.WALL or self.draw_mode == DrawMode.SELECT_ZONE:
             # First check for vertex snap
             snap_point = self.find_snap_point(x, y)
@@ -502,7 +651,64 @@ class MapEditor:
                 self.update_status(f"Position: ({map_x:.1f}, {map_y:.1f}) | Zoom: {self.zoom:.2f}x")
         else:
             self.update_status(f"Position: ({map_x:.1f}, {map_y:.1f}) | Zoom: {self.zoom:.2f}x")
-        
+
+    def draw_hover_glow(self, obj, obj_type: str, display_scale: float):
+        """Draw a glow effect around an object when hovering with Ctrl held"""
+        glow_color = "#00ffff"  # Cyan glow
+        glow_width = 4
+
+        if obj_type == 'vent':
+            x = obj.position.x * display_scale
+            y = obj.position.y * display_scale
+            # Draw outer glow
+            self.canvas.create_oval(
+                x - 16, y - 16, x + 16, y + 16,
+                outline=glow_color, width=glow_width, tags="hover_glow"
+            )
+        elif obj_type == 'door':
+            x = obj.position.x * display_scale
+            y = obj.position.y * display_scale
+            if obj.orientation == DoorOrientation.HORIZONTAL:
+                self.canvas.create_rectangle(
+                    x - 20, y - 8, x + 20, y + 8,
+                    outline=glow_color, width=glow_width, tags="hover_glow"
+                )
+            else:
+                self.canvas.create_rectangle(
+                    x - 8, y - 20, x + 8, y + 20,
+                    outline=glow_color, width=glow_width, tags="hover_glow"
+                )
+        elif obj_type == 'task':
+            x = obj.position.x * display_scale
+            y = obj.position.y * display_scale
+            self.canvas.create_rectangle(
+                x - 13, y - 13, x + 13, y + 13,
+                outline=glow_color, width=glow_width, tags="hover_glow"
+            )
+        elif obj_type == 'camera':
+            x = obj.position.x * display_scale
+            y = obj.position.y * display_scale
+            self.canvas.create_oval(
+                x - 14, y - 14, x + 14, y + 14,
+                outline=glow_color, width=glow_width, tags="hover_glow"
+            )
+        elif obj_type == 'obstacle':
+            x = obj.position.x * display_scale
+            y = obj.position.y * display_scale
+            hw = (obj.width / 2) * display_scale
+            hh = (obj.height / 2) * display_scale
+            self.canvas.create_rectangle(
+                x - hw - 5, y - hh - 5, x + hw + 5, y + hh + 5,
+                outline=glow_color, width=glow_width, tags="hover_glow"
+            )
+        elif obj_type == 'emergency_button':
+            x = obj.position.x * display_scale
+            y = obj.position.y * display_scale
+            self.canvas.create_oval(
+                x - 25, y - 25, x + 25, y + 25,
+                outline=glow_color, width=glow_width, tags="hover_glow"
+            )
+
     def on_mouse_wheel(self, event):
         """Handle mouse wheel for zoom"""
         # Get mouse position before zoom
@@ -1188,7 +1394,97 @@ class MapEditor:
             self.save_state()
             self.redraw_all()
             self.update_status(f"Placed camera at ({x:.1f}, {y:.1f})")
-            
+
+    def place_obstacle(self, x: float, y: float):
+        """Place an obstacle (e.g., table)"""
+        # Create obstacle type selection dialog
+        obstacle_dialog = tk.Toplevel(self.root)
+        obstacle_dialog.title("Select Obstacle Type")
+        obstacle_dialog.geometry("300x250")
+
+        frame = ttk.Frame(obstacle_dialog, padding=10)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(frame, text="Select Obstacle Type:", font=("Arial", 12, "bold")).pack(pady=5)
+
+        listbox = tk.Listbox(frame, height=6)
+        listbox.pack(fill=tk.BOTH, expand=True, pady=5)
+
+        for obs_type in ObstacleType:
+            listbox.insert(tk.END, obs_type.value.title())
+
+        # Width and height inputs
+        size_frame = ttk.Frame(frame)
+        size_frame.pack(fill=tk.X, pady=5)
+
+        ttk.Label(size_frame, text="Width:").pack(side=tk.LEFT)
+        width_var = tk.StringVar(value="60")
+        width_entry = ttk.Entry(size_frame, textvariable=width_var, width=8)
+        width_entry.pack(side=tk.LEFT, padx=5)
+
+        ttk.Label(size_frame, text="Height:").pack(side=tk.LEFT)
+        height_var = tk.StringVar(value="60")
+        height_entry = ttk.Entry(size_frame, textvariable=height_var, width=8)
+        height_entry.pack(side=tk.LEFT, padx=5)
+
+        def on_select():
+            selection = listbox.curselection()
+            if selection:
+                type_name = listbox.get(selection[0]).lower()
+                # Find matching ObstacleType
+                for obs_type in ObstacleType:
+                    if obs_type.value == type_name:
+                        try:
+                            width = float(width_var.get())
+                            height = float(height_var.get())
+                        except ValueError:
+                            width = 60.0
+                            height = 60.0
+
+                        obstacle_id = f"obstacle_{self.obstacle_counter}"
+                        self.obstacle_counter += 1
+
+                        obstacle = Obstacle(
+                            id=obstacle_id,
+                            obstacle_type=obs_type,
+                            position=Point(x, y),
+                            width=width,
+                            height=height
+                        )
+                        self.obstacles.append(obstacle)
+                        self.save_state()
+                        self.redraw_all()
+                        self.update_status(f"Placed {obs_type.value} at ({x:.1f}, {y:.1f})")
+                        break
+            obstacle_dialog.destroy()
+
+        ttk.Button(frame, text="Place", command=on_select).pack(pady=5)
+
+    def place_emergency_button(self, x: float, y: float):
+        """Place the emergency button (only one allowed)"""
+        if self.emergency_button:
+            response = messagebox.askyesno(
+                "Emergency Button Exists",
+                "An emergency button already exists. Replace it?"
+            )
+            if not response:
+                return
+
+        room_name = simpledialog.askstring(
+            "Emergency Button Room",
+            "Enter room name for emergency button:",
+            initialvalue="Cafeteria"
+        )
+
+        if room_name:
+            self.emergency_button = EmergencyButton(
+                position=Point(x, y),
+                room=room_name
+            )
+            self.save_state()
+            self.redraw_all()
+            self.update_status(f"Placed emergency button in {room_name}")
+
     def straighten_all_vectors(self):
         """Straighten all polygon vertices to nearest 90/45/30 degree angles"""
         import math
@@ -1251,10 +1547,13 @@ class MapEditor:
         if messagebox.askyesno("Clear All", "Are you sure you want to clear all elements?"):
             self.walls = []
             self.walkable_zones = []
+            self.labeled_zones = []
             self.vents = []
             self.doors = []
             self.tasks = []
             self.cameras = []
+            self.obstacles = []
+            self.emergency_button = None
             self.current_polygon = []
             self.save_state()
             self.redraw_all()
@@ -1263,30 +1562,34 @@ class MapEditor:
     def save_state(self):
         """Save current state to history for undo/redo"""
         import copy
-        
+
         # Remove any future states if we're not at the end
         if self.history_index < len(self.history) - 1:
             self.history = self.history[:self.history_index + 1]
-        
+
         # Save current state
         state = {
             'walls': copy.deepcopy(self.walls),
             'walkable_zones': copy.deepcopy(self.walkable_zones),
+            'labeled_zones': copy.deepcopy(self.labeled_zones),
             'vents': copy.deepcopy(self.vents),
             'doors': copy.deepcopy(self.doors),
             'tasks': copy.deepcopy(self.tasks),
             'cameras': copy.deepcopy(self.cameras),
-            'vent_counter': self.vent_counter
+            'obstacles': copy.deepcopy(self.obstacles),
+            'emergency_button': copy.deepcopy(self.emergency_button),
+            'vent_counter': self.vent_counter,
+            'obstacle_counter': self.obstacle_counter
         }
-        
+
         self.history.append(state)
         self.history_index += 1
-        
+
         # Limit history size
         if len(self.history) > self.max_history:
             self.history.pop(0)
             self.history_index -= 1
-            
+
     def undo(self):
         """Undo last action"""
         if self.history_index > 0:
@@ -1295,7 +1598,7 @@ class MapEditor:
             self.update_status(f"Undo - {self.history_index + 1}/{len(self.history)}")
         else:
             self.update_status("Nothing to undo")
-            
+
     def redo(self):
         """Redo last undone action"""
         if self.history_index < len(self.history) - 1:
@@ -1304,19 +1607,23 @@ class MapEditor:
             self.update_status(f"Redo - {self.history_index + 1}/{len(self.history)}")
         else:
             self.update_status("Nothing to redo")
-            
+
     def restore_state(self, state):
         """Restore state from history"""
         import copy
         self.walls = copy.deepcopy(state['walls'])
         self.walkable_zones = copy.deepcopy(state['walkable_zones'])
+        self.labeled_zones = copy.deepcopy(state.get('labeled_zones', []))
         self.vents = copy.deepcopy(state['vents'])
         self.doors = copy.deepcopy(state['doors'])
         self.tasks = copy.deepcopy(state['tasks'])
         self.cameras = copy.deepcopy(state['cameras'])
+        self.obstacles = copy.deepcopy(state.get('obstacles', []))
+        self.emergency_button = copy.deepcopy(state.get('emergency_button', None))
         self.vent_counter = state['vent_counter']
+        self.obstacle_counter = state.get('obstacle_counter', 1)
         self.redraw_all()
-        
+
     def delete_mode(self):
         """Enable delete mode"""
         self.draw_mode = DrawMode.NONE
@@ -1402,7 +1709,29 @@ class MapEditor:
                     deleted = True
                     self.update_status(f"Deleted {zone_name}")
                     break
-        
+
+        # Check obstacles
+        if not deleted:
+            for i, obstacle in enumerate(self.obstacles):
+                ox = obstacle.position.x * display_scale
+                oy = obstacle.position.y * display_scale
+                hw = (obstacle.width / 2) * display_scale
+                hh = (obstacle.height / 2) * display_scale
+                if abs(ox - x) < hw + 5 and abs(oy - y) < hh + 5:
+                    self.obstacles.pop(i)
+                    deleted = True
+                    self.update_status(f"Deleted {obstacle.obstacle_type.value}")
+                    break
+
+        # Check emergency button
+        if not deleted and self.emergency_button:
+            bx = self.emergency_button.position.x * display_scale
+            by = self.emergency_button.position.y * display_scale
+            if abs(bx - x) < 20 and abs(by - y) < 20:
+                self.emergency_button = None
+                deleted = True
+                self.update_status("Deleted emergency button")
+
         if deleted:
             self.save_state()
             self.redraw_all()
@@ -1540,7 +1869,66 @@ class MapEditor:
                 fill="#0099ff33", outline="#0099ff", width=1,
                 tags="camera_vision"
             )
-            
+
+        # Draw obstacles (tables, etc.) - larger rectangles
+        for obstacle in self.obstacles:
+            x = obstacle.position.x * display_scale
+            y = obstacle.position.y * display_scale
+            hw = (obstacle.width / 2) * display_scale  # half width
+            hh = (obstacle.height / 2) * display_scale  # half height
+
+            # Different colors for different obstacle types
+            colors = {
+                ObstacleType.TABLE: ("#8B4513", "#D2691E"),  # Brown/chocolate
+                ObstacleType.CHAIR: ("#696969", "#808080"),  # Gray
+                ObstacleType.CONSOLE: ("#2F4F4F", "#708090"),  # Dark slate
+                ObstacleType.BED: ("#4B0082", "#6A5ACD"),  # Indigo/slate blue
+            }
+            fill_color, outline_color = colors.get(obstacle.obstacle_type, ("#8B4513", "#D2691E"))
+
+            self.canvas.create_rectangle(
+                x - hw, y - hh, x + hw, y + hh,
+                fill=fill_color, outline=outline_color, width=3, tags="obstacle"
+            )
+            # Label
+            self.canvas.create_text(
+                x, y,
+                text=obstacle.obstacle_type.value.title(),
+                fill="#ffffff", font=("Arial", 9, "bold"), tags="obstacle"
+            )
+            self.canvas.create_text(
+                x, y + hh + 10,
+                text=obstacle.id,
+                fill="#aaaaaa", font=("Arial", 7), tags="obstacle"
+            )
+
+        # Draw emergency button (red button with "!" mark)
+        if self.emergency_button:
+            x = self.emergency_button.position.x * display_scale
+            y = self.emergency_button.position.y * display_scale
+
+            # Outer ring (larger, glow effect)
+            self.canvas.create_oval(
+                x - 22, y - 22, x + 22, y + 22,
+                fill="#880000", outline="#ff0000", width=3, tags="emergency_button"
+            )
+            # Inner button
+            self.canvas.create_oval(
+                x - 15, y - 15, x + 15, y + 15,
+                fill="#ff0000", outline="#ffffff", width=2, tags="emergency_button"
+            )
+            # Exclamation mark
+            self.canvas.create_text(
+                x, y,
+                text="!", fill="#ffffff", font=("Arial", 16, "bold"), tags="emergency_button"
+            )
+            # Label
+            self.canvas.create_text(
+                x, y + 28,
+                text="EMERGENCY",
+                fill="#ff0000", font=("Arial", 8, "bold"), tags="emergency_button"
+            )
+
     def save_json(self):
         """Save map data to JSON"""
         if not self.image_path:
@@ -1620,7 +2008,21 @@ class MapEditor:
                             "visionAngle": cam.vision_angle
                         }
                         for cam in self.cameras
-                    ]
+                    ],
+                    "obstacles": [
+                        {
+                            "id": obs.id,
+                            "type": obs.obstacle_type.value,
+                            "position": {"x": obs.position.x, "y": obs.position.y},
+                            "width": obs.width,
+                            "height": obs.height
+                        }
+                        for obs in self.obstacles
+                    ],
+                    "emergencyButton": {
+                        "position": {"x": self.emergency_button.position.x, "y": self.emergency_button.position.y},
+                        "room": self.emergency_button.room
+                    } if self.emergency_button else None
                 }
                 
                 with open(filename, 'w') as f:
@@ -1745,11 +2147,38 @@ class MapEditor:
                         vision_range=cam_data["visionRange"],
                         vision_angle=cam_data["visionAngle"]
                     ))
-                    
+
+                # Load obstacles
+                for obs_data in map_data.get("obstacles", []):
+                    pos = obs_data["position"]
+                    # Find matching ObstacleType
+                    obs_type = next((t for t in ObstacleType if t.value == obs_data["type"]), ObstacleType.TABLE)
+                    self.obstacles.append(Obstacle(
+                        id=obs_data["id"],
+                        obstacle_type=obs_type,
+                        position=Point(pos["x"], pos["y"]),
+                        width=obs_data.get("width", 60.0),
+                        height=obs_data.get("height", 60.0)
+                    ))
+
+                # Update obstacle counter
+                if self.obstacles:
+                    max_id = max(int(obs.id.split('_')[-1]) for obs in self.obstacles if obs.id.startswith('obstacle_'))
+                    self.obstacle_counter = max_id + 1
+
+                # Load emergency button
+                eb_data = map_data.get("emergencyButton")
+                if eb_data:
+                    pos = eb_data["position"]
+                    self.emergency_button = EmergencyButton(
+                        position=Point(pos["x"], pos["y"]),
+                        room=eb_data.get("room", "Cafeteria")
+                    )
+
                 self.redraw_all()
                 self.update_status(f"Loaded: {os.path.basename(filename)}")
                 messagebox.showinfo("Success", "Map loaded successfully!")
-                
+
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to load map: {e}")
 

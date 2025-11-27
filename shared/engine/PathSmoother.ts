@@ -4,7 +4,7 @@
  */
 
 import type { Point } from '../data/poly3-map.ts';
-import { isPointWalkable, WALKABLE_ZONES } from '../data/poly3-map.ts';
+import { isPointWalkable, WALKABLE_ZONES, OBSTACLES } from '../data/poly3-map.ts';
 import type { PathNode } from './Pathfinder.ts';
 
 export interface SmoothPath {
@@ -67,9 +67,9 @@ export class PathSmoother {
       
       for (let t = 0; t < 1; t += 1 / this.smoothness) {
         const point = this.catmullRomPoint(p0, p1, p2, p3, t);
-        
+
         // WALL VALIDATION: Check if this curved point is walkable
-        if (!isPointWalkable(point.x, point.y, WALKABLE_ZONES)) {
+        if (!isPointWalkable(point.x, point.y, WALKABLE_ZONES, OBSTACLES)) {
           invalidCount++;
           // If too many invalid points, this curve cuts through walls
           if (invalidCount > tolerance) {
@@ -150,16 +150,14 @@ export class PathSmoother {
     for (let i = 1; i < steps; i++) {
       const checkX = start.x + dx * i;
       const checkY = start.y + dy * i;
-      
-      if (!isPointWalkable(checkX, checkY, WALKABLE_ZONES)) {
+
+      if (!isPointWalkable(checkX, checkY, WALKABLE_ZONES, OBSTACLES)) {
         return false;
       }
     }
 
     return true;
-  }
-  
-  /**
+  }  /**
    * Catmull-Rom spline interpolation
    * Creates smooth curves passing through all control points
    */
