@@ -13,50 +13,147 @@ export const AGENT_NAMES = COLOR_NAMES;
 // ========== System Prompts ==========
 
 export function buildCrewmatePrompt(context: AIContext): string {
+  const suspicionInfo = buildSuspicionInfo(context);
+  const memoryInfo = context.memoryContext || '';
+  const conversationInfo = buildConversationInfo(context);
+  
   return `You are ${context.agentName}, a CREWMATE in Among Us. You are an AI agent playing the game.
 
 YOUR OBJECTIVES:
 1. Complete your assigned tasks to help the crew win
-2. Stay alert for suspicious behavior
-3. Stick with other crewmates when possible (safety in numbers)
-4. Be helpful and communicate with others
+2. Watch other players carefully for suspicious behavior
+3. Stay safe - buddy up with trusted crewmates when possible
+4. Communicate! Share information, ask questions, and coordinate
+5. If someone is acting suspicious, confront them or warn others
 
 PERSONALITY:
-- You are cautious but not paranoid
-- You want to be efficient with your tasks
-- You trust others until they give you a reason not to
-- You might get nervous in isolated areas
+- You are observant and notice when things don't add up
+- You value teamwork and want to help others
+- You speak up when you see something suspicious
+- You might get nervous in isolated areas (Electrical, dead ends)
+- You form opinions about other players based on what you observe
 
 CURRENT GAME STATE:
 - You are ${context.agentName} (Crewmate)
-- Location: ${context.currentZone || 'Hallway'}
-- Tasks remaining: ${context.assignedTasks.filter((t: TaskAssignment) => !t.isCompleted).length}
+- Location: ${context.currentZone || 'Unknown'}
+- Tasks remaining: ${context.assignedTasks.filter((t: TaskAssignment) => !t.isCompleted).length}/${context.assignedTasks.length}
+- Can speak to: ${context.canSpeakTo.length > 0 ? context.canSpeakTo.join(', ') : 'No one nearby'}
+${context.isBeingFollowed ? '- ⚠️ Someone seems to be following you!' : ''}
+${context.buddyId ? `- Currently buddying with: ${context.buddyId}` : ''}
 
-Remember: Keep responses brief and in-character. You are playing a game, not having a philosophical discussion.`;
+${suspicionInfo}
+${memoryInfo}
+${conversationInfo}
+
+AVAILABLE ACTIONS:
+- GO_TO_TASK [task#] - Go work on a task
+- WANDER - Explore and look around
+- FOLLOW_AGENT [name] - Stick with a player for safety
+- AVOID_AGENT [name] - Stay away from someone suspicious
+- BUDDY_UP [name] - Ask someone to team up
+- CONFRONT [name] - Question someone about suspicious behavior
+- SPREAD_RUMOR - Share concerns with nearby players
+- DEFEND_SELF - Explain yourself if accused
+- SPEAK - Say something to nearby players
+- IDLE - Wait and observe
+
+HOW TO DETECT IMPOSTORS:
+- Fake tasking: Watch if task bar moves when they "complete" a task
+- Task timing: Tasks that complete too fast or too slow are suspicious
+- Visual tasks: Submit Scan, Clear Asteroids, Prime Shields show animations
+- Following behavior: Impostors often follow others to find isolated targets
+- Strange pathing: Going to areas without tasks
+- Avoiding groups: Impostors avoid witnesses
+
+Remember: Be social! Talk to others, share what you've seen, ask questions. This is a social game!`;
 }
 
 export function buildImpostorPrompt(context: AIContext): string {
+  const suspicionInfo = buildSuspicionInfo(context);
+  const memoryInfo = context.memoryContext || '';
+  const conversationInfo = buildConversationInfo(context);
+  
   return `You are ${context.agentName}, an IMPOSTOR in Among Us. You are an AI agent playing the game.
 
 YOUR OBJECTIVES:
-1. BLEND IN by pretending to do tasks (you can't actually complete them)
-2. Act natural and don't draw suspicion
-3. Build trust with crewmates
-4. For now, just focus on appearing innocent (kills/sabotage not active yet)
+1. BLEND IN by pretending to do tasks convincingly
+2. Build trust with crewmates through conversation
+3. Subtly cast suspicion on innocent crewmates
+4. Maintain a consistent alibi and story
+5. For now, focus on appearing innocent (kills not active yet)
+
+DECEPTION STRATEGIES:
+- Fake tasks for realistic durations (not too fast or slow!)
+- Claim to have seen others being "suspicious"
+- Agree with accusations against innocents
+- Defend yourself calmly if accused (panic looks guilty)
+- Ask questions like an innocent player would
+- Follow someone sometimes (but not too much - looks predatory)
+- Spread believable rumors about others
 
 PERSONALITY:
-- You are deceptive but subtle about it
-- You pretend to be helpful and friendly
-- You might point fingers at others to deflect suspicion
-- You're careful not to be caught alone too often or too rarely
+- You are deceptive but appear friendly and helpful
+- You participate in conversations naturally
+- You occasionally point fingers at others subtly
+- You create false alibis and fake task claims
+- You might "buddy up" with someone to appear trustworthy
 
 CURRENT GAME STATE:
-- You are ${context.agentName} (IMPOSTOR - keep this secret!)
-- Location: ${context.currentZone || 'Hallway'}
+- You are ${context.agentName} (IMPOSTOR - KEEP THIS SECRET!)
+- Location: ${context.currentZone || 'Unknown'}
 - Fake tasks to "do": ${context.assignedTasks.filter((t: TaskAssignment) => !t.isCompleted).length}
+- Can speak to: ${context.canSpeakTo.length > 0 ? context.canSpeakTo.join(', ') : 'No one nearby'}
+${context.isBeingFollowed ? '- ⚠️ Someone is following you - act natural!' : ''}
 
-IMPORTANT: You must FAKE completing tasks - walk to them, wait an appropriate time, then move on.
-Remember: Keep responses brief and in-character. Be deceptive but not obviously so.`;
+${suspicionInfo}
+${memoryInfo}
+${conversationInfo}
+
+AVAILABLE ACTIONS:
+- GO_TO_TASK [task#] - FAKE working on a task (wait appropriate time!)
+- WANDER - Explore and look for opportunities
+- FOLLOW_AGENT [name] - Stick close to build trust (not too creepy)
+- AVOID_AGENT [name] - Stay away from someone suspicious of you
+- BUDDY_UP [name] - Appear friendly and trustworthy
+- CONFRONT [name] - Accuse an innocent to deflect suspicion
+- SPREAD_RUMOR - Plant seeds of doubt about innocents
+- DEFEND_SELF - Calmly explain your alibi if accused
+- SPEAK - Chat naturally with nearby players
+- IDLE - Wait and observe
+
+IMPORTANT: Act natural! Don't be too eager to accuse or too quiet. Participate in conversations like an innocent player would.`;
+}
+
+function buildSuspicionInfo(context: AIContext): string {
+  if (!context.suspicionLevels || Object.keys(context.suspicionLevels).length === 0) {
+    return '';
+  }
+  
+  const entries = Object.entries(context.suspicionLevels)
+    .filter(([_, level]) => level !== 50) // Only show non-neutral
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, 4);
+  
+  if (entries.length === 0) return '';
+  
+  const lines = entries.map(([agentId, level]) => {
+    const status = level > 70 ? '🔴 HIGH' : level > 55 ? '🟡 Medium' : level < 40 ? '🟢 Trusted' : '';
+    return `  - ${agentId.replace('agent_', '')}: ${level}% ${status}`;
+  });
+  
+  return `\nYOUR SUSPICION LEVELS:\n${lines.join('\n')}`;
+}
+
+function buildConversationInfo(context: AIContext): string {
+  if (!context.recentConversations || context.recentConversations.length === 0) {
+    return '';
+  }
+  
+  const lines = context.recentConversations.slice(-3).map(c => 
+    `  - ${c.speakerName}: "${c.message.substring(0, 60)}${c.message.length > 60 ? '...' : ''}"`
+  );
+  
+  return `\nRECENT CONVERSATIONS:\n${lines.join('\n')}`;
 }
 
 export function buildThoughtPrompt(context: AIContext, trigger: ThoughtTrigger): string {
@@ -65,48 +162,64 @@ export function buildThoughtPrompt(context: AIContext, trigger: ThoughtTrigger):
     : `You are ${context.agentName}, a loyal CREWMATE.`;
 
   const triggerContext = getThoughtTriggerContext(trigger);
+  const suspicionInfo = context.suspicionContext || '';
 
   return `${basePrompt}
 
 You are having an internal thought (no one else can hear this).
 ${triggerContext}
 
+${suspicionInfo ? `Your current suspicions:\n${suspicionInfo}` : ''}
+
 Generate a brief, natural internal thought (1 sentence max).
-${context.role === 'IMPOSTOR' ? 'Remember: You might think about how to appear innocent or who to blame later.' : 'Remember: You might think about task efficiency, safety, or suspicions.'}
+${context.role === 'IMPOSTOR' 
+  ? 'Think about: appearing innocent, who to frame, your fake alibi, avoiding detection.' 
+  : 'Think about: task efficiency, safety, who you trust/distrust, observations.'}
 
 Stay in character. Be genuine. Keep it SHORT.`;
 }
 
 export function buildSpeechPrompt(context: AIContext): string {
   const basePrompt = context.role === 'IMPOSTOR'
-    ? `You are ${context.agentName}, secretly an IMPOSTOR. You must appear innocent.`
-    : `You are ${context.agentName}, a CREWMATE trying to work with the team.`;
+    ? `You are ${context.agentName}, secretly an IMPOSTOR. You must appear innocent and blend in.`
+    : `You are ${context.agentName}, a CREWMATE working with the team to find the impostor.`;
 
-  // Build info about nearby players using their color names
+  // Build info about nearby players
   const nearbyInfo = context.visibleAgents.length > 0
-    ? `\nNearby players: ${context.visibleAgents.map(a => a.name).join(', ')}`
+    ? `\nNearby players: ${context.visibleAgents.map(a => `${a.name} (${a.activityState || 'unknown'})`).join(', ')}`
     : '\nNo players nearby.';
+
+  const suspicionHint = context.suspicionContext 
+    ? `\nYour suspicions: ${context.suspicionContext.substring(0, 200)}` 
+    : '';
+
+  const recentConvoHint = context.recentConversations && context.recentConversations.length > 0
+    ? `\nJust heard: "${context.recentConversations[context.recentConversations.length - 1]?.message || ''}"`
+    : '';
 
   return `${basePrompt}
 
 You're about to say something out loud to nearby players.
-${nearbyInfo}
+${nearbyInfo}${suspicionHint}${recentConvoHint}
+
+SPEECH TYPES (mix it up!):
+- Greeting/Social: "Hey Red!", "What's up everyone?"
+- Coordination: "Let's go to electrical together", "I'll watch your back"
+- Information: "I just finished admin tasks", "Blue was in medbay"
+- Suspicion: "Pink has been following me", "Where were you, Green?"
+- Defense: "I was just at reactor!", "I did the scan, ask Blue!"
+- Question: "Anyone see anything?", "Who was last in storage?"
+- Agreement: "Yeah, Orange is acting weird", "Good point Red"
 
 Guidelines:
-- Keep it natural and brief (1-2 sentences max)
-- ALWAYS refer to other players by their color name (e.g., "Hey Red!", "Blue, over here!")
-- Crewmates: Be friendly, share info, coordinate
-- Impostors: Blend in, maybe misdirect subtly, act normal
-- Don't be robotic or overly formal
-- Use casual speech like real players would
+- ALWAYS use color names (Red, Blue, Green, etc.)
+- Keep it natural and brief (1-2 sentences)
+- React to what others have said
+- Share observations or ask questions
+- Crewmates: Coordinate, share info, express concerns
+- Impostors: Blend in, subtly misdirect, agree with others
 
-Examples of natural speech:
-- "Hey Red, heading to electrical?"
-- "Blue! Over here, wanna buddy up?"
-- "Just finished admin tasks."
-- "Green, I saw you near reactor."
-- "Anyone else feel like upper engine is sketchy?"
-- "I'm going to medbay, want to come?"`;
+Don't be robotic! Use casual speech.`;
 }
 
 // ========== Trigger Context ==========
@@ -131,19 +244,27 @@ function getThoughtTriggerContext(trigger: ThoughtTrigger): string {
 
 export function parseAIResponse(response: string, context: AIContext): AIDecision {
   // Try to parse structured response
-  const goalMatch = response.match(/GOAL:\s*(GO_TO_TASK|WANDER|FOLLOW_AGENT|AVOID_AGENT|IDLE|SPEAK)/i);
+  const goalMatch = response.match(/GOAL:\s*(GO_TO_TASK|WANDER|FOLLOW_AGENT|AVOID_AGENT|IDLE|SPEAK|BUDDY_UP|CONFRONT|SPREAD_RUMOR|DEFEND_SELF)/i);
   const targetMatch = response.match(/TARGET:\s*(.+?)(?:\n|$)/i);
   const reasoningMatch = response.match(/REASONING:\s*(.+?)(?:\n|$)/i);
   const thoughtMatch = response.match(/THOUGHT:\s*(.+?)(?:\n|$)/i);
+  const speechMatch = response.match(/SPEECH:\s*["']?(.+?)["']?(?:\n|$)/i);
+  const accusationMatch = response.match(/ACCUSATION:\s*(.+?)(?:\n|$)/i);
+  const rumorMatch = response.match(/RUMOR:\s*(.+?)(?:\n|$)/i);
+  const defenseMatch = response.match(/DEFENSE:\s*(.+?)(?:\n|$)/i);
 
   let goalType: AIDecision['goalType'] = 'GO_TO_TASK';
   let targetTaskIndex: number | undefined;
   let targetAgentId: string | undefined;
   let reasoning = 'Continuing tasks';
   let thought: string | undefined;
+  let speech: string | undefined;
+  let accusation: string | undefined;
+  let rumor: string | undefined;
+  let defense: string | undefined;
 
   if (goalMatch) {
-    goalType = goalMatch[1].toUpperCase() as AIDecision['goalType'];
+    goalType = goalMatch[1].toUpperCase().replace('-', '_') as AIDecision['goalType'];
   }
 
   if (targetMatch) {
@@ -172,6 +293,22 @@ export function parseAIResponse(response: string, context: AIContext): AIDecisio
     thought = thoughtMatch[1].trim().replace(/^["']|["']$/g, '');
   }
 
+  if (speechMatch) {
+    speech = speechMatch[1].trim().replace(/^["']|["']$/g, '');
+  }
+
+  if (accusationMatch) {
+    accusation = accusationMatch[1].trim();
+  }
+
+  if (rumorMatch) {
+    rumor = rumorMatch[1].trim();
+  }
+
+  if (defenseMatch) {
+    defense = defenseMatch[1].trim();
+  }
+
   // Fallback: if no clear goal, default to next task
   if (!goalMatch && context.assignedTasks.some((t: TaskAssignment) => !t.isCompleted)) {
     goalType = 'GO_TO_TASK';
@@ -193,7 +330,11 @@ export function parseAIResponse(response: string, context: AIContext): AIDecisio
     targetTaskIndex,
     targetAgentId,
     reasoning,
-    thought
+    thought,
+    speech,
+    accusation,
+    rumor,
+    defense,
   };
 }
 

@@ -18,6 +18,17 @@ export interface AgentSummary {
   assignedTasks?: TaskAssignment[];
   tasksCompleted?: number;
   visibleAgentIds?: string[];
+  // Memory & Suspicion data
+  suspicionLevels?: Record<string, number>;
+  memoryContext?: string;
+  suspicionContext?: string;
+  recentConversations?: Array<{
+    speakerName: string;
+    message: string;
+    timestamp: number;
+  }>;
+  isBeingFollowed?: boolean;
+  buddyId?: string | null;
 }
 
 function hexColor(num: number): string {
@@ -42,12 +53,44 @@ interface ExpandedAgentCardProps {
   onClose: () => void;
 }
 
+type TabType = 'overview' | 'memory' | 'suspicion';
+
+function SuspicionBar({ level, name }: { level: number; name: string }) {
+  const getBarColor = (l: number) => {
+    if (l >= 70) return '#e74c3c'; // Red - high suspicion
+    if (l >= 40) return '#f39c12'; // Orange - moderate
+    if (l >= 20) return '#f1c40f'; // Yellow - slight
+    return '#2ecc71'; // Green - trusted
+  };
+  
+  return (
+    <div className="suspicion-item">
+      <span className="suspicion-name">{name}</span>
+      <div className="suspicion-bar">
+        <div 
+          className="suspicion-fill" 
+          style={{ width: `${level}%`, backgroundColor: getBarColor(level) }}
+        />
+      </div>
+      <span className="suspicion-value">{Math.round(level)}%</span>
+    </div>
+  );
+}
+
 function ExpandedAgentCard({ agent, onClose }: ExpandedAgentCardProps) {
+  const [activeTab, setActiveTab] = useState<TabType>('overview');
   const role = getRoleBadge(agent.role);
   const totalTasks = agent.assignedTasks?.length ?? 0;
   const completed = agent.tasksCompleted ?? 0;
   const taskPercent = totalTasks > 0 ? (completed / totalTasks) * 100 : 0;
   const colorName = getColorName(agent.color);
+  
+  // Get suspicion data sorted by level
+  const suspicionEntries = agent.suspicionLevels 
+    ? Object.entries(agent.suspicionLevels)
+        .map(([id, level]) => ({ id, level }))
+        .sort((a, b) => b.level - a.level)
+    : [];
   
   return (
     <div className="expanded-agent-card">
@@ -56,85 +99,175 @@ function ExpandedAgentCard({ agent, onClose }: ExpandedAgentCardProps) {
           <span className="agent-color-dot large" style={{ backgroundColor: hexColor(agent.color) }} />
           <span className="expanded-card__name">{colorName}</span>
           <span className={`role-badge ${role.className}`}>{role.label}</span>
+          {agent.isBeingFollowed && <span className="followed-badge">👀 Being Followed</span>}
+          {agent.buddyId && <span className="buddy-badge">🤝 Buddy</span>}
         </div>
         <button className="expanded-card__close" onClick={onClose}>×</button>
       </div>
       
-      <div className="expanded-card__section">
-        <div className="section-label">Location</div>
-        <div className="section-value">{agent.currentZone?.replace(' (ROOM)', '').replace(' (HALLWAY)', '') ?? 'Unknown'}</div>
+      {/* Tab Navigation */}
+      <div className="expanded-card__tabs">
+        <button 
+          className={`tab-btn ${activeTab === 'overview' ? 'active' : ''}`}
+          onClick={() => setActiveTab('overview')}
+        >
+          Overview
+        </button>
+        <button 
+          className={`tab-btn ${activeTab === 'memory' ? 'active' : ''}`}
+          onClick={() => setActiveTab('memory')}
+        >
+          Memory
+        </button>
+        <button 
+          className={`tab-btn ${activeTab === 'suspicion' ? 'active' : ''}`}
+          onClick={() => setActiveTab('suspicion')}
+        >
+          Suspicions
+        </button>
       </div>
       
-      <div className="expanded-card__section">
-        <div className="section-label">Status</div>
-        <div className="section-value">
-          <span className={`status-badge status-badge--${agent.activityState.toLowerCase()}`}>
-            {agent.activityState}
-          </span>
-        </div>
-      </div>
-      
-      <div className="expanded-card__section">
-        <div className="section-label">Current Goal</div>
-        <div className="section-value goal-text">{agent.goal ?? 'Idle'}</div>
-      </div>
-      
-      <div className="expanded-card__section">
-        <div className="section-label">Task Progress</div>
-        <div className="task-progress-container">
-          <div className="task-progress-bar">
-            <div 
-              className="task-progress-fill" 
-              style={{ width: `${taskPercent}%` }}
-            />
-          </div>
-          <span className="task-progress-text">{completed}/{totalTasks}</span>
-        </div>
-        {agent.assignedTasks && agent.assignedTasks.length > 0 && (
-          <div className="task-list">
-            {agent.assignedTasks.map((task, idx) => (
-              <div key={idx} className={`task-item ${task.isCompleted ? 'completed' : ''}`}>
-                <span className="task-check">{task.isCompleted ? '✓' : '○'}</span>
-                <span className="task-name">{task.taskType}</span>
-                <span className="task-location">{task.room}</span>
+      {/* Tab Content */}
+      <div className="expanded-card__tab-content">
+        {activeTab === 'overview' && (
+          <>
+            <div className="expanded-card__section">
+              <div className="section-label">Location</div>
+              <div className="section-value">{agent.currentZone?.replace(' (ROOM)', '').replace(' (HALLWAY)', '') ?? 'Unknown'}</div>
+            </div>
+            
+            <div className="expanded-card__section">
+              <div className="section-label">Status</div>
+              <div className="section-value">
+                <span className={`status-badge status-badge--${agent.activityState.toLowerCase()}`}>
+                  {agent.activityState}
+                </span>
               </div>
-            ))}
-          </div>
+            </div>
+            
+            <div className="expanded-card__section">
+              <div className="section-label">Current Goal</div>
+              <div className="section-value goal-text">{agent.goal ?? 'Idle'}</div>
+            </div>
+            
+            <div className="expanded-card__section">
+              <div className="section-label">Task Progress</div>
+              <div className="task-progress-container">
+                <div className="task-progress-bar">
+                  <div 
+                    className="task-progress-fill" 
+                    style={{ width: `${taskPercent}%` }}
+                  />
+                </div>
+                <span className="task-progress-text">{completed}/{totalTasks}</span>
+              </div>
+              {agent.assignedTasks && agent.assignedTasks.length > 0 && (
+                <div className="task-list">
+                  {agent.assignedTasks.map((task, idx) => (
+                    <div key={idx} className={`task-item ${task.isCompleted ? 'completed' : ''}`}>
+                      <span className="task-check">{task.isCompleted ? '✓' : '○'}</span>
+                      <span className="task-name">{task.taskType}</span>
+                      <span className="task-location">{task.room}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            
+            <div className="expanded-card__section">
+              <div className="section-label">Current Thought</div>
+              <div className="thought-bubble">
+                {agent.currentThought ? (
+                  <p className="thought-text">💭 {agent.currentThought}</p>
+                ) : (
+                  <p className="thought-text empty">No recent thoughts...</p>
+                )}
+              </div>
+            </div>
+            
+            <div className="expanded-card__section">
+              <div className="section-label">Visible Agents ({agent.visibleAgentIds?.length ?? 0})</div>
+              <div className="visible-agents-list">
+                {agent.visibleAgentIds && agent.visibleAgentIds.length > 0 ? (
+                  agent.visibleAgentIds.map(id => (
+                    <span key={id} className="visible-agent-tag">{id.replace('agent_', '#')}</span>
+                  ))
+                ) : (
+                  <span className="no-visible">None in sight</span>
+                )}
+              </div>
+            </div>
+            
+            {agent.recentSpeech && (
+              <div className="expanded-card__section">
+                <div className="section-label">Last Speech</div>
+                <div className="speech-bubble-preview">
+                  <p>🗣️ "{agent.recentSpeech}"</p>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+        
+        {activeTab === 'memory' && (
+          <>
+            <div className="expanded-card__section">
+              <div className="section-label">Recent Observations</div>
+              <div className="memory-context-box">
+                {agent.memoryContext ? (
+                  <pre className="memory-text">{agent.memoryContext}</pre>
+                ) : (
+                  <p className="memory-text empty">No recent observations recorded...</p>
+                )}
+              </div>
+            </div>
+            
+            <div className="expanded-card__section">
+              <div className="section-label">Recent Conversations</div>
+              <div className="conversation-list">
+                {agent.recentConversations && agent.recentConversations.length > 0 ? (
+                  agent.recentConversations.map((conv, idx) => (
+                    <div key={idx} className="conversation-item">
+                      <span className="conversation-speaker">{conv.speakerName}:</span>
+                      <span className="conversation-message">"{conv.message}"</span>
+                    </div>
+                  ))
+                ) : (
+                  <p className="no-conversations">No recent conversations...</p>
+                )}
+              </div>
+            </div>
+          </>
+        )}
+        
+        {activeTab === 'suspicion' && (
+          <>
+            <div className="expanded-card__section">
+              <div className="section-label">Suspicion Levels</div>
+              <div className="suspicion-list">
+                {suspicionEntries.length > 0 ? (
+                  suspicionEntries.map(({ id, level }) => (
+                    <SuspicionBar key={id} name={id.replace('agent_', '')} level={level} />
+                  ))
+                ) : (
+                  <p className="no-suspicion">No suspicion data yet...</p>
+                )}
+              </div>
+            </div>
+            
+            <div className="expanded-card__section">
+              <div className="section-label">Suspicion Context</div>
+              <div className="suspicion-context-box">
+                {agent.suspicionContext ? (
+                  <pre className="suspicion-text">{agent.suspicionContext}</pre>
+                ) : (
+                  <p className="suspicion-text empty">No suspicion reasoning yet...</p>
+                )}
+              </div>
+            </div>
+          </>
         )}
       </div>
-      
-      <div className="expanded-card__section">
-        <div className="section-label">Current Thought</div>
-        <div className="thought-bubble">
-          {agent.currentThought ? (
-            <p className="thought-text">💭 {agent.currentThought}</p>
-          ) : (
-            <p className="thought-text empty">No recent thoughts...</p>
-          )}
-        </div>
-      </div>
-      
-      <div className="expanded-card__section">
-        <div className="section-label">Visible Agents ({agent.visibleAgentIds?.length ?? 0})</div>
-        <div className="visible-agents-list">
-          {agent.visibleAgentIds && agent.visibleAgentIds.length > 0 ? (
-            agent.visibleAgentIds.map(id => (
-              <span key={id} className="visible-agent-tag">{id.replace('agent_', '#')}</span>
-            ))
-          ) : (
-            <span className="no-visible">None in sight</span>
-          )}
-        </div>
-      </div>
-      
-      {agent.recentSpeech && (
-        <div className="expanded-card__section">
-          <div className="section-label">Last Speech</div>
-          <div className="speech-bubble-preview">
-            <p>🗣️ "{agent.recentSpeech}"</p>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

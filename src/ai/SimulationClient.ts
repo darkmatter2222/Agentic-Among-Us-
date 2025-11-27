@@ -248,9 +248,14 @@ export class SimulationClient {
     this.world = {
       tick: delta.tick,
       timestamp: delta.timestamp,
-      agents: updatedAgents
+      agents: updatedAgents,
+      // Preserve world-level state from delta or previous
+      taskProgress: delta.taskProgress ?? this.world?.taskProgress ?? 0,
+      gamePhase: delta.gamePhase ?? this.world?.gamePhase ?? 'PLAYING',
+      recentThoughts: delta.recentThoughts ?? this.world?.recentThoughts ?? [],
+      recentSpeech: delta.recentSpeech ?? this.world?.recentSpeech ?? [],
     };
-    console.debug('[simulation] world updated to tick', delta.tick, 'agent count', updatedAgents.length);
+    console.debug('[simulation] world updated to tick', delta.tick, 'agent count', updatedAgents.length, 'taskProgress', this.world.taskProgress);
 
     this.emitWorldUpdate();
   }

@@ -37,6 +37,14 @@ export function serializeAgent(agent: AIAgent, timestamp: number): AgentSnapshot
   const summary = serializeStateMachineState(playerState, timestamp);
   const movement = serializeMovementState(movementState);
 
+  // Get recent conversations from memory
+  const recentConversations = agent.getRecentConversations ? 
+    agent.getRecentConversations().map(conv => ({
+      speakerName: conv.speakerName,
+      message: conv.message,
+      timestamp: conv.timestamp,
+    })) : [];
+
   return {
     id: agent.getId(),
     name: agent.getName(),
@@ -67,6 +75,13 @@ export function serializeAgent(agent: AIAgent, timestamp: number): AgentSnapshot
     // Perception
     visibleAgentIds: agent.getVisibleAgentIds(),
     suspicionLevels: agent.getSuspicionLevels(),
+    
+    // Memory context for UI
+    memoryContext: agent.getMemoryContext ? agent.getMemoryContext() : undefined,
+    suspicionContext: agent.getSuspicionContext ? agent.getSuspicionContext() : undefined,
+    recentConversations,
+    isBeingFollowed: typeof agent.isBeingFollowed === 'function' ? agent.isBeingFollowed() : false,
+    buddyId: agent.getBuddyId ? agent.getBuddyId() : null,
   };
 }
 

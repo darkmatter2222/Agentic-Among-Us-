@@ -113,6 +113,13 @@ function App() {
             assignedTasks: agent.assignedTasks,
             tasksCompleted: agent.tasksCompleted ?? 0,
             visibleAgentIds: agent.visibleAgentIds,
+            // Memory & Suspicion data
+            suspicionLevels: agent.suspicionLevels,
+            memoryContext: agent.memoryContext,
+            suspicionContext: agent.suspicionContext,
+            recentConversations: agent.recentConversations,
+            isBeingFollowed: agent.isBeingFollowed,
+            buddyId: agent.buddyId,
           }))
         );
         setTaskProgress(snapshot.taskProgress ?? 0);

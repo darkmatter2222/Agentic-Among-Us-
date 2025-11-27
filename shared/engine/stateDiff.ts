@@ -191,5 +191,9 @@ export function diffWorldSnapshots(previous: WorldSnapshot | null, current: Worl
     timestamp: current.timestamp,
     agents: deltas,
     removedAgents,
+    taskProgress: current.taskProgress,
+    gamePhase: current.gamePhase,
+    recentThoughts: current.recentThoughts,
+    recentSpeech: current.recentSpeech,
   };
 }

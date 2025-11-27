@@ -100,6 +100,10 @@ export class AIAgentManager {
     // Set up cross-references for visibility
     for (const agent of this.agents) {
       agent.setOtherAgents(this.agents);
+      // Set up speech broadcasting
+      agent.setSpeechBroadcastCallback((speakerId, message, zone) => {
+        this.broadcastSpeech(speakerId, message, zone);
+      });
     }
     
     console.log(`Created ${this.agents.length} AI agents (${numImpostors} impostors)`);
@@ -261,6 +265,31 @@ export class AIAgentManager {
     }
     
     return totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0;
+  }
+  
+  /**
+   * Broadcast speech from one agent to all agents in hearing range
+   */
+  private broadcastSpeech(speakerId: string, message: string, zone: string | null): void {
+    const speaker = this.agents.find(a => a.getId() === speakerId);
+    if (!speaker) return;
+    
+    const speakerPos = speaker.getPosition();
+    const speechRange = 150; // Same as in AIAgent
+    
+    for (const listener of this.agents) {
+      if (listener.getId() === speakerId) continue; // Don't broadcast to self
+      
+      const listenerPos = listener.getPosition();
+      const dx = listenerPos.x - speakerPos.x;
+      const dy = listenerPos.y - speakerPos.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      
+      if (distance <= speechRange) {
+        // Listener can hear the speech
+        listener.hearSpeech(speakerId, speaker.getName(), message, zone);
+      }
+    }
   }
   
   /**

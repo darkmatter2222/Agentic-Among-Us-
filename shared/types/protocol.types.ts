@@ -42,6 +42,11 @@ export interface WorldDelta {
   timestamp: number;
   agents: AgentDelta[];
   removedAgents: string[];
+  // World-level state that changes
+  taskProgress?: number;
+  gamePhase?: 'INITIALIZING' | 'PLAYING' | 'MEETING' | 'GAME_OVER';
+  recentThoughts?: import('./simulation.types.ts').ThoughtEvent[];
+  recentSpeech?: import('./simulation.types.ts').SpeechEvent[];
 }
 
 export interface AgentDelta {

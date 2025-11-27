@@ -93,6 +93,17 @@ export interface AgentSnapshot {
   
   // Social/Trust (suspicion levels toward other agents)
   suspicionLevels?: Record<string, number>; // agentId -> 0-100
+  
+  // Memory context for UI
+  memoryContext?: string;
+  suspicionContext?: string;
+  recentConversations?: Array<{
+    speakerName: string;
+    message: string;
+    timestamp: number;
+  }>;
+  isBeingFollowed?: boolean;
+  buddyId?: string | null;
 }
 
 export interface AgentSummarySnapshot {
@@ -118,13 +129,17 @@ export interface WorldSnapshot {
 // ========== AI Decision Types ==========
 
 export interface AIDecision {
-  goalType: 'GO_TO_TASK' | 'WANDER' | 'FOLLOW_AGENT' | 'AVOID_AGENT' | 'IDLE' | 'SPEAK';
+  goalType: 'GO_TO_TASK' | 'WANDER' | 'FOLLOW_AGENT' | 'AVOID_AGENT' | 'IDLE' | 'SPEAK' | 'BUDDY_UP' | 'CONFRONT' | 'SPREAD_RUMOR' | 'DEFEND_SELF';
   targetTaskIndex?: number;
   targetAgentId?: string;
   targetPosition?: Point;
   reasoning: string;
   thought?: string;
   speech?: string;
+  // Social context
+  accusation?: string; // For CONFRONT - what to accuse
+  rumor?: string; // For SPREAD_RUMOR - what to spread
+  defense?: string; // For DEFEND_SELF - alibi/defense statement
 }
 
 export interface AIContext {
@@ -140,8 +155,19 @@ export interface AIContext {
     name: string;
     zone: string | null;
     distance: number;
+    activityState?: string;
   }>;
   suspicionLevels: Record<string, number>;
   recentEvents: string[];
   canSpeakTo: string[]; // Agent IDs within speech range
+  // Enhanced memory context
+  memoryContext?: string; // Summary of relevant memories
+  suspicionContext?: string; // Detailed suspicion reasoning
+  recentConversations?: Array<{
+    speakerName: string;
+    message: string;
+    timestamp: number;
+  }>;
+  isBeingFollowed?: boolean;
+  buddyId?: string | null;
 }
