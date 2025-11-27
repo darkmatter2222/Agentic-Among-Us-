@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import './App.css';
 import { GameRenderer } from './rendering/GameRenderer';
 import { Poly3MapRenderer } from './rendering/Poly3MapRenderer';
+import { RoomLightingRenderer } from './rendering/RoomLightingRenderer';
 import { AIAgentVisualRenderer } from './rendering/AIAgentVisualRenderer';
 import { getSimulationClient } from './ai/SimulationClient';
 import type { WorldSnapshot, SpeechEvent } from '@shared/types/simulation.types.ts';
@@ -13,6 +14,7 @@ function App() {
   const recentSpeechRef = useRef<SpeechEvent[]>([]);
   const gameRendererRef = useRef<GameRenderer | null>(null);
   const mapRendererRef = useRef<Poly3MapRenderer | null>(null);
+  const lightingRendererRef = useRef<RoomLightingRenderer | null>(null);
   const agentVisualRendererRef = useRef<AIAgentVisualRenderer | null>(null);
   const animationFrameIdRef = useRef<number>(0);
   const disposedRef = useRef<boolean>(false);
@@ -68,6 +70,7 @@ function App() {
 
       agentVisualRendererRef.current?.update(deltaTime);
       mapRendererRef.current?.update(deltaTime);
+      lightingRendererRef.current?.update(deltaTime);
       gameRendererRef.current?.update(deltaTime);
 
       animationFrameIdRef.current = requestAnimationFrame(animate);
@@ -98,6 +101,12 @@ function App() {
       mapRenderer.renderMap();
       layers.map.addChild(mapRenderer.getContainer());
       mapRendererRef.current = mapRenderer;
+
+      // Add ray-traced room lighting (above floor, below players)
+      const lightingRenderer = new RoomLightingRenderer();
+      lightingRenderer.renderLights();
+      layers.map.addChild(lightingRenderer.getContainer());
+      lightingRendererRef.current = lightingRenderer;
 
       const agentVisualRenderer = new AIAgentVisualRenderer();
       layers.players.addChild(agentVisualRenderer.getContainer());
