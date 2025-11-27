@@ -4,7 +4,7 @@
  */
 
 import * as PIXI from 'pixi.js';
-import type { Point } from '../data/poly3-map.ts';
+import type { Point } from '@shared/data/poly3-map.ts';
 
 export interface ActionRadiusConfig {
   radius: number;

@@ -3,7 +3,7 @@
  */
 
 import * as PIXI from 'pixi.js';
-import type { Door } from '../types/game.types';
+import type { Door } from '@shared/types/game.types';
 
 export class DoorRenderer {
   private container: PIXI.Container;

@@ -3,8 +3,8 @@
  * Handles smooth movement along paths with interpolation and speed variation
  */
 
-import type { Point } from '../data/poly3-map.ts';
-import { isPointWalkable, WALKABLE_ZONES } from '../data/poly3-map.ts';
+import type { Point } from '@shared/data/poly3-map.ts';
+import { isPointWalkable, WALKABLE_ZONES } from '@shared/data/poly3-map.ts';
 import type { SmoothPath } from './PathSmoother.ts';
 
 export interface MovementState {

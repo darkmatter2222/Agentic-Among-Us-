@@ -5,7 +5,7 @@ import {
   type Point, 
   type WalkableZone, 
   type LabeledZone 
-} from '../data/poly3-map';
+} from '@shared/data/poly3-map';
 
 /**
  * Renderer for the poly 3.json map format

@@ -3,8 +3,8 @@
  * Converts linear waypoint paths into smooth, curved paths using Catmull-Rom splines
  */
 
-import type { Point } from '../data/poly3-map.ts';
-import { isPointWalkable, WALKABLE_ZONES } from '../data/poly3-map.ts';
+import type { Point } from '@shared/data/poly3-map.ts';
+import { isPointWalkable, WALKABLE_ZONES } from '@shared/data/poly3-map.ts';
 import type { PathNode } from './Pathfinder.ts';
 
 export interface SmoothPath {

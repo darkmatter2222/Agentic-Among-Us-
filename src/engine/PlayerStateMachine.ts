@@ -3,7 +3,7 @@
  * Manages player states and transitions (IDLE, WALKING, IN_ROOM, etc.)
  */
 
-import type { Point } from '../data/poly3-map.ts';
+import type { Point } from '@shared/data/poly3-map.ts';
 import type { ZoneType } from './ZoneDetector.ts';
 
 export const PlayerActivityState = {

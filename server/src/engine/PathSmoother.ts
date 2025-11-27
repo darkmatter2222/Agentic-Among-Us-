@@ -3,7 +3,7 @@
  * Converts linear waypoint paths into smooth, natural paths using String Pulling
  */
 
-import type { Point } from '../data/poly3-map.ts';
+import type { Point } from '@shared/data/poly3-map.ts';
 import type { NavMesh } from './NavMesh.ts';
 import type { PathNode } from './Pathfinder.ts';
 

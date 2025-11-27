@@ -3,8 +3,8 @@
  */
 
 import * as PIXI from 'pixi.js';
-import type { Player, Wall, Position } from '../types/game.types';
-import { PlayerState } from '../types/game.types';
+import type { Player, Wall, Position } from '@shared/types/game.types';
+import { PlayerState } from '@shared/types/game.types';
 
 export class VisionRenderer {
   private container: PIXI.Container;

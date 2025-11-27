@@ -3,13 +3,13 @@
  * Manages all AI agents, their movement, and interactions
  */
 
-import type { Point } from '../data/poly3-map.ts';
+import type { Point } from '@shared/data/poly3-map.ts';
 import { NavMeshBuilder } from './NavMesh.ts';
 import { Pathfinder } from './Pathfinder.ts';
 import { ZoneDetector } from './ZoneDetector.ts';
 import { DestinationSelector } from './DestinationSelector.ts';
 import { AIAgent, type AIAgentConfig } from './AIAgent.ts';
-import type { WalkableZone, LabeledZone, Task } from '../data/poly3-map.ts';
+import type { WalkableZone, LabeledZone, Task } from '@shared/data/poly3-map.ts';
 
 export interface AgentManagerConfig {
   walkableZones: WalkableZone[];
@@ -41,7 +41,7 @@ export class AIAgentManager {
     console.log(`Zone detector initialized with ${zones.length} zones`);
     
     // Initialize destination selector
-    this.destinationSelector = new DestinationSelector(config.walkableZones, config.tasks);
+    this.destinationSelector = new DestinationSelector(config.walkableZones, config.tasks, navMesh);
     
     // Create agents
     this.agents = [];

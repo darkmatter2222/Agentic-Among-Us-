@@ -3,8 +3,9 @@
  * Intelligently selects random destinations within walkable zones
  */
 
-import type { Point, WalkableZone, Task } from '../data/poly3-map.ts';
-import { calculateCentroid, pointInPolygon, isPointWalkable } from '../data/poly3-map.ts';
+import type { Point, WalkableZone, Task } from '@shared/data/poly3-map.ts';
+import { calculateCentroid, pointInPolygon, isPointWalkable } from '@shared/data/poly3-map.ts';
+import type { NavMesh } from './NavMesh.ts';
 import type { Zone } from './ZoneDetector.ts';
 
 export interface DestinationOptions {
@@ -20,15 +21,35 @@ export class DestinationSelector {
   private walkableZones: WalkableZone[];
   private tasks: Task[];
   private roomCenters: Map<string, Point>;
+  private navNodesByZone: Map<string, Point[]>;
   
-  constructor(walkableZones: WalkableZone[], tasks: Task[] = []) {
+  constructor(walkableZones: WalkableZone[], tasks: Task[] = [], navMesh?: NavMesh) {
     this.walkableZones = walkableZones;
     this.tasks = tasks;
     this.roomCenters = new Map();
+    this.navNodesByZone = new Map();
     
     // Pre-compute room centers
     for (const zone of walkableZones) {
       this.roomCenters.set(zone.roomName, calculateCentroid(zone.vertices));
+    }
+
+    if (navMesh) {
+      for (const [zoneName, nodeIds] of navMesh.zones.entries()) {
+        const positions: Point[] = [];
+
+        for (const nodeId of nodeIds) {
+          const node = navMesh.nodes.get(nodeId);
+          if (node) {
+            positions.push({ ...node.position });
+          }
+        }
+
+        if (positions.length > 0) {
+          this.navNodesByZone.set(zoneName, positions);
+          this.roomCenters.set(zoneName, this.averagePoint(positions));
+        }
+      }
     }
   }
   
@@ -90,24 +111,20 @@ export class DestinationSelector {
     
     // Fallback: just return a zone center
     const zone = candidateZones[Math.floor(Math.random() * candidateZones.length)];
-    return zone.center;
+    const bounds = this.computeBounds(zone.vertices);
+    const fallback = this.getNavNodePoint(zone, false, bounds);
+    return fallback ?? zone.center;
   }
   
   /**
    * Generate a random point within a zone
    */
   private generatePointInZone(zone: Zone, avoidEdges: boolean): Point | null {
-    const vertices = zone.vertices;
-    
-    // Calculate zone bounds
-    let minX = Infinity, maxX = -Infinity;
-    let minY = Infinity, maxY = -Infinity;
-    
-    for (const vertex of vertices) {
-      minX = Math.min(minX, vertex.x);
-      maxX = Math.max(maxX, vertex.x);
-      minY = Math.min(minY, vertex.y);
-      maxY = Math.max(maxY, vertex.y);
+    const bounds = this.computeBounds(zone.vertices);
+
+    const navPoint = this.getNavNodePoint(zone, avoidEdges, bounds);
+    if (navPoint) {
+      return navPoint;
     }
     
     // Try to generate a point within bounds
@@ -118,19 +135,16 @@ export class DestinationSelector {
       if (avoidEdges) {
         // Bias toward center
         const centerBias = 0.6;
-        x = minX + (maxX - minX) * (Math.random() * (1 - centerBias) + centerBias * 0.5);
-        y = minY + (maxY - minY) * (Math.random() * (1 - centerBias) + centerBias * 0.5);
+        x = bounds.minX + (bounds.maxX - bounds.minX) * (Math.random() * (1 - centerBias) + centerBias * 0.5);
+        y = bounds.minY + (bounds.maxY - bounds.minY) * (Math.random() * (1 - centerBias) + centerBias * 0.5);
       } else {
-        x = minX + Math.random() * (maxX - minX);
-        y = minY + Math.random() * (maxY - minY);
+        x = bounds.minX + Math.random() * (bounds.maxX - bounds.minX);
+        y = bounds.minY + Math.random() * (bounds.maxY - bounds.minY);
       }
       
       // Check if point is in the zone
-      if (pointInPolygon(x, y, vertices)) {
-        // Check if walkable
-        if (isPointWalkable(x, y, this.walkableZones)) {
-          return { x, y };
-        }
+      if (this.isPointUsable(x, y, zone)) {
+        return { x, y };
       }
     }
     
@@ -222,5 +236,90 @@ export class DestinationSelector {
    */
   getRoomCenters(): Map<string, Point> {
     return new Map(this.roomCenters);
+  }
+
+  private computeBounds(vertices: Point[]) {
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+
+    for (const vertex of vertices) {
+      minX = Math.min(minX, vertex.x);
+      maxX = Math.max(maxX, vertex.x);
+      minY = Math.min(minY, vertex.y);
+      maxY = Math.max(maxY, vertex.y);
+    }
+
+    return { minX, maxX, minY, maxY };
+  }
+
+  private getNavNodePoint(zone: Zone, avoidEdges: boolean, bounds: { minX: number; maxX: number; minY: number; maxY: number }): Point | null {
+    const nodes = this.navNodesByZone.get(zone.name);
+    if (!nodes || nodes.length === 0) {
+      return null;
+    }
+
+    const attempts = avoidEdges ? 6 : 1;
+    const maxRadius = Math.max(20, Math.min(80, Math.min(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY) * 0.25));
+
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      const base = nodes[Math.floor(Math.random() * nodes.length)];
+
+      if (!avoidEdges) {
+        if (this.isPointUsable(base.x, base.y, zone)) {
+          return { x: base.x, y: base.y };
+        }
+        continue;
+      }
+
+      const jittered = this.jitterPoint(base, maxRadius, zone);
+      if (jittered) {
+        return jittered;
+      }
+    }
+
+    const fallback = nodes.find(node => this.isPointUsable(node.x, node.y, zone));
+    return fallback ? { x: fallback.x, y: fallback.y } : null;
+  }
+
+  private jitterPoint(origin: Point, radius: number, zone: Zone): Point | null {
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const angle = Math.random() * Math.PI * 2;
+      const distance = Math.random() * radius;
+      const candidate = {
+        x: origin.x + Math.cos(angle) * distance,
+        y: origin.y + Math.sin(angle) * distance
+      };
+
+      if (this.isPointUsable(candidate.x, candidate.y, zone)) {
+        return candidate;
+      }
+    }
+
+    return null;
+  }
+
+  private isPointUsable(x: number, y: number, zone: Zone): boolean {
+    if (!pointInPolygon(x, y, zone.vertices)) {
+      return false;
+    }
+
+    return isPointWalkable(x, y, this.walkableZones);
+  }
+
+  private averagePoint(points: Point[]): Point {
+    const sum = points.reduce(
+      (acc, point) => ({
+        x: acc.x + point.x,
+        y: acc.y + point.y
+      }),
+      { x: 0, y: 0 }
+    );
+
+    return {
+      x: sum.x / points.length,
+      y: sum.y / points.length
+    };
   }
 }

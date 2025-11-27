@@ -3,8 +3,8 @@
  * Converts walkable polygons into a navigation graph for pathfinding
  */
 
-import type { Point, WalkableZone } from '../data/poly3-map.ts';
-import { calculateCentroid, pointInPolygon } from '../data/poly3-map.ts';
+import type { Point, WalkableZone } from '@shared/data/poly3-map.ts';
+import { calculateCentroid, pointInPolygon } from '@shared/data/poly3-map.ts';
 
 export interface NavNode {
   id: string;

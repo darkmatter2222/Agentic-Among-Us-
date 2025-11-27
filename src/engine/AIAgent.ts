@@ -3,7 +3,7 @@
  * Manages AI behavior, decision making, and movement for individual agents
  */
 
-import type { Point } from '../data/poly3-map.ts';
+import type { Point } from '@shared/data/poly3-map.ts';
 import { MovementController } from './MovementController.ts';
 import { PlayerStateMachine, PlayerActivityState } from './PlayerStateMachine.ts';
 import type { Zone } from './ZoneDetector.ts';
@@ -125,48 +125,54 @@ export class AIAgent {
     
     console.log(`[${this.config.id}] Deciding to move from`, currentPosition);
     
-    // Select a random destination
-    const destination = this.destinationSelector.selectRandomDestination(
-      currentPosition,
-      this.zones,
-      {
-        preferRooms: Math.random() > 0.3, // 70% chance to prefer rooms
-        avoidEdges: true,
-        minDistanceFromCurrent: 100
+    const maxAttempts = 5;
+    let lastFailureReason: 'no-destination' | 'no-path' | null = null;
+    
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const destination = this.destinationSelector.selectRandomDestination(
+        currentPosition,
+        this.zones,
+        {
+          preferRooms: Math.random() > 0.3,
+          avoidEdges: true,
+          minDistanceFromCurrent: 100
+        }
+      );
+      
+      if (!destination) {
+        lastFailureReason = 'no-destination';
+        continue;
       }
-    );
+      
+      console.log(`[${this.config.id}] Selected destination (attempt ${attempt + 1}):`, destination);
+      
+      const pathResult = this.pathfinder.findPath(currentPosition, destination);
+      
+      if (!pathResult.success || pathResult.path.length === 0) {
+        lastFailureReason = 'no-path';
+        continue;
+      }
+      
+      console.log(`[${this.config.id}] Path found with ${pathResult.path.length} waypoints`);
+      
+      const smoothPath = this.pathSmoother.smoothPath(pathResult.path);
+      
+      console.log(`[${this.config.id}] Smoothed path has ${smoothPath.points.length} points`);
+      
+      this.movementController.setPath(smoothPath);
+      this.stateMachine.transitionTo(PlayerActivityState.WALKING, 'Moving to destination');
+      
+      this.behaviorState.currentGoal = 'Walking to random location';
+      return;
+    }
     
-    if (!destination) {
-      // Couldn't find destination, try again later
+    if (lastFailureReason === 'no-destination') {
       console.log(`[${this.config.id}] Could not find destination`);
-      this.behaviorState.nextDecisionTime = Date.now() + 2000;
-      return;
+    } else if (lastFailureReason === 'no-path') {
+      console.warn(`[${this.config.id}] Pathfinding failed after ${maxAttempts} attempts`);
     }
     
-    console.log(`[${this.config.id}] Selected destination:`, destination);
-    
-    // Find path to destination
-    const pathResult = this.pathfinder.findPath(currentPosition, destination);
-    
-    if (!pathResult.success || pathResult.path.length === 0) {
-      // Pathfinding failed, try again later
-      console.log(`[${this.config.id}] Pathfinding failed`);
-      this.behaviorState.nextDecisionTime = Date.now() + 2000;
-      return;
-    }
-    
-    console.log(`[${this.config.id}] Path found with ${pathResult.path.length} waypoints`);
-    
-    // Smooth the path
-    const smoothPath = this.pathSmoother.smoothPath(pathResult.path);
-    
-    console.log(`[${this.config.id}] Smoothed path has ${smoothPath.points.length} points`);
-    
-    // Set movement
-    this.movementController.setPath(smoothPath);
-    this.stateMachine.transitionTo(PlayerActivityState.WALKING, 'Moving to destination');
-    
-    this.behaviorState.currentGoal = 'Walking to random location';
+    this.behaviorState.nextDecisionTime = Date.now() + 2000;
   }
   
   /**

@@ -4,8 +4,8 @@
  * then runs A* directly on that dense graph to generate smooth, wall-safe routes.
  */
 
-import type { Point, WalkableZone } from '../data/poly3-map.ts';
-import { isPointWalkable } from '../data/poly3-map.ts';
+import type { Point, WalkableZone } from '@shared/data/poly3-map.ts';
+import { isPointWalkable } from '@shared/data/poly3-map.ts';
 import type { NavMesh } from './NavMesh.ts';
 
 export interface PathNode {

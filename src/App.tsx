@@ -3,141 +3,119 @@ import './App.css';
 import { GameRenderer } from './rendering/GameRenderer';
 import { Poly3MapRenderer } from './rendering/Poly3MapRenderer';
 import { AIAgentVisualRenderer } from './rendering/AIAgentVisualRenderer';
-import { AIAgentManager } from './engine/AIAgentManager';
-import { WALKABLE_ZONES, LABELED_ZONES, TASKS } from './data/poly3-map';
+import { SimulationClient } from './ai/SimulationClient';
+import type { WorldSnapshot } from '@shared/types/simulation.types.ts';
 import { AgentInfoPanel, type AgentSummary } from './components/AgentInfoPanel';
 
 function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const latestSnapshotRef = useRef<WorldSnapshot | null>(null);
   const [agentSummaries, setAgentSummaries] = useState<AgentSummary[]>([]);
 
   useEffect(() => {
-    let cleanup = false;
-    let gameRenderer: GameRenderer | null = null;
-    let agentManager: AIAgentManager | null = null;
-    let lastStatusUpdate = 0;
-    
-    const initGame = async () => {
-      try {
-        console.log('Initializing game...');
-        
-        if (!canvasRef.current) {
-          console.error('Canvas ref is null');
-          return;
-        }
-        
-        // Initialize game renderer
-        gameRenderer = new GameRenderer();
-        await gameRenderer.initialize(canvasRef.current);
-        console.log('Pixi initialized');
-        
-        if (cleanup) {
-          gameRenderer.destroy();
-          return;
-        }
-        
-        // Get layers for rendering
-        const layers = gameRenderer.getLayers();
-        console.log('Layers initialized');
-        
-        // Render the new poly3 map
-        console.log('Rendering poly3 map...');
-        const mapRenderer = new Poly3MapRenderer();
-        mapRenderer.renderMap();
-        layers.map.addChild(mapRenderer.getContainer());
-        
-        // Initialize AI Agent Manager
-        console.log('Initializing AI Agent Manager...');
-        agentManager = new AIAgentManager({
-          walkableZones: WALKABLE_ZONES,
-          labeledZones: LABELED_ZONES,
-          tasks: TASKS,
-          numAgents: 8
-        });
-        
-        // Create agent visual renderer
-        const agentVisualRenderer = new AIAgentVisualRenderer();
-        layers.players.addChild(agentVisualRenderer.getContainer());
-        
-        // Initialize all agents
-        const agents = agentManager.getAgents();
-        for (const agent of agents) {
-          agentVisualRenderer.initializeAgent(agent);
-        }
-        
-        console.log('AI agents initialized');
-        
-        // Center camera on the map
-        const mapCenter = mapRenderer.getMapCenter();
-        console.log('Map center:', mapCenter);
-        
-        gameRenderer.getCamera().setZoom(0.5);
-        gameRenderer.getCamera().focusOn(mapCenter.x, mapCenter.y, false);
-        
-        console.log('Game initialization complete');
-        
-        // Start render loop
-        let lastTime = Date.now();
-        let frameCount = 0;
-        const animate = () => {
-          if (cleanup) return;
-          
-          const now = Date.now();
-          const deltaTime = (now - lastTime) / 1000;
-          lastTime = now;
-          
-          // Debug logging every 60 frames
-          if (frameCount++ % 60 === 0) {
-            console.log('DeltaTime:', deltaTime.toFixed(4), 'FPS:', (1/deltaTime).toFixed(1));
-          }
-          
-          // Update AI agents
-          agentManager?.update(deltaTime);
-          
-          // Update agent visuals
-          if (agentManager) {
-            agentVisualRenderer.updateAgents(agentManager.getAgents());
-          }
+    let disposed = false;
 
-          if (agentManager && now - lastStatusUpdate > 200) {
-            const summaries = agentManager.getAgents().map(agent => {
-              const stateMachine = agent.getStateMachine();
-              return {
-                id: agent.getId(),
-                activityState: stateMachine.getActivityState(),
-                currentZone: stateMachine.getCurrentZone(),
-                locationState: stateMachine.getLocationState(),
-                goal: agent.getCurrentGoal()
-              } satisfies AgentSummary;
-            });
+    const gameRenderer = new GameRenderer();
+    let mapRenderer: Poly3MapRenderer | null = null;
+    let agentVisualRenderer: AIAgentVisualRenderer | null = null;
+    const simulationClient = new SimulationClient();
 
-            setAgentSummaries(summaries);
-            lastStatusUpdate = now;
-          }
-          
-          // Update map animations
-          mapRenderer.update(deltaTime);
-          
-          // Update camera and renderer
-          gameRenderer?.getCamera().update(deltaTime);
-          gameRenderer?.update(deltaTime);
-          
-          requestAnimationFrame(animate);
-        };
-        animate();
-        
-      } catch (error) {
-        console.error('Failed to initialize game:', error);
-      }
+    let animationFrameId = 0;
+    let lastFrameTime = performance.now();
+    let lastAppliedTick = -1;
+    let lastSummaryAt = 0;
+
+    const applyLatestSnapshot = () => {
+      if (!agentVisualRenderer) return;
+      const snapshot = latestSnapshotRef.current;
+      if (!snapshot) return;
+      if (snapshot.tick === lastAppliedTick) return;
+      agentVisualRenderer.syncAgents(snapshot.agents);
+      lastAppliedTick = snapshot.tick;
     };
-    
-    initGame();
-    
-    return () => {
-      cleanup = true;
-      if (gameRenderer) {
-        gameRenderer.destroy();
+
+    const animate = () => {
+      if (disposed) return;
+
+      const now = performance.now();
+      const deltaTime = (now - lastFrameTime) / 1000;
+      lastFrameTime = now;
+
+      applyLatestSnapshot();
+
+      agentVisualRenderer?.update(deltaTime);
+      mapRenderer?.update(deltaTime);
+      gameRenderer.update(deltaTime);
+
+      animationFrameId = requestAnimationFrame(animate);
+    };
+
+    const initializeScene = async () => {
+      if (!canvasRef.current) {
+        console.error('Canvas ref is null');
+        return;
       }
+
+      await gameRenderer.initialize(canvasRef.current);
+      const layers = gameRenderer.getLayers();
+
+      mapRenderer = new Poly3MapRenderer();
+      mapRenderer.renderMap();
+      layers.map.addChild(mapRenderer.getContainer());
+
+      agentVisualRenderer = new AIAgentVisualRenderer();
+      layers.players.addChild(agentVisualRenderer.getContainer());
+
+      const mapCenter = mapRenderer.getMapCenter();
+      gameRenderer.getCamera().setZoom(0.5);
+      gameRenderer.getCamera().focusOn(mapCenter.x, mapCenter.y, false);
+
+      lastFrameTime = performance.now();
+      animationFrameId = requestAnimationFrame(animate);
+    };
+
+    void initializeScene();
+
+    const unsubscribeWorld = simulationClient.onWorldUpdate((snapshot) => {
+      latestSnapshotRef.current = snapshot;
+
+      const now = performance.now();
+      if (!disposed && (now - lastSummaryAt >= 200 || lastSummaryAt === 0)) {
+        setAgentSummaries(
+          snapshot.agents.map(agent => ({
+            id: agent.id,
+            activityState: agent.activityState,
+            currentZone: agent.currentZone,
+            locationState: agent.locationState,
+            goal: agent.currentGoal
+          }))
+        );
+        lastSummaryAt = now;
+      }
+    });
+
+    const unsubscribeConnection = simulationClient.onConnectionStateChange((state) => {
+      console.info('[simulation] connection state:', state);
+      if (state === 'stale' && !disposed) {
+        setAgentSummaries([]);
+      }
+    });
+
+    simulationClient.connect();
+
+    return () => {
+      disposed = true;
+      unsubscribeWorld();
+      unsubscribeConnection();
+      simulationClient.disconnect();
+
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+      }
+
+      agentVisualRenderer?.destroy();
+      mapRenderer = null;
+      gameRenderer.destroy();
     };
   }, []);
 

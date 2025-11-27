@@ -3,7 +3,7 @@
  */
 
 import * as PIXI from 'pixi.js';
-import type { Room, Wall } from '../types/game.types';
+import type { Room, Wall } from '@shared/types/game.types';
 
 export class MapRenderer {
   private container: PIXI.Container;

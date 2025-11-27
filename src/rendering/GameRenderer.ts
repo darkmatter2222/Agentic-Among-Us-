@@ -4,7 +4,7 @@
  */
 
 import * as PIXI from 'pixi.js';
-import type { GameState } from '../types/game.types';
+import type { GameState } from '@shared/types/game.types';
 
 export class GameRenderer {
   private app: PIXI.Application;

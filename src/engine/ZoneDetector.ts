@@ -3,8 +3,8 @@
  * Classifies areas as rooms or hallways and tracks player location
  */
 
-import type { Point, WalkableZone, LabeledZone } from '../data/poly3-map.ts';
-import { pointInPolygon, getCurrentZone } from '../data/poly3-map.ts';
+import type { Point, WalkableZone, LabeledZone } from '@shared/data/poly3-map.ts';
+import { pointInPolygon, getCurrentZone } from '@shared/data/poly3-map.ts';
 
 export const ZoneType = {
   ROOM: 'ROOM',

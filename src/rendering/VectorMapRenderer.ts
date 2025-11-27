@@ -1,6 +1,6 @@
 import * as PIXI from 'pixi.js';
-import { SKELD_VECTOR_ROOMS, SKELD_VECTOR_HALLWAYS, SKELD_OUTLINE, SKELD_VECTOR_DOORS, CAMERA_POSITIONS } from '../data/skeld-map-vector';
-import type { Position } from '../types/game.types';
+import { SKELD_VECTOR_ROOMS, SKELD_VECTOR_HALLWAYS, SKELD_OUTLINE, SKELD_VECTOR_DOORS, CAMERA_POSITIONS } from '@shared/data/skeld-map-vector';
+import type { Position } from '@shared/types/game.types';
 
 export class VectorMapRenderer {
   private container: PIXI.Container;
