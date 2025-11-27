@@ -159,7 +159,7 @@ export async function buildServer(options: BuildOptions = {}) {
     return snapshots;
   });
 
-  fastify.get('/ws/state', { websocket: true }, (socket, req) => {
+  fastify.get('/ws/state', { websocket: true }, async (socket, req) => {
     fastify.log.info({ 
       msg: 'WebSocket connection attempt', 
       ip: req.ip,

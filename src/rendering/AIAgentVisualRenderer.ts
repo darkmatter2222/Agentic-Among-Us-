@@ -165,7 +165,6 @@ export class AIAgentVisualRenderer {
     const visorColor = 0x84D2F6; // Light blue glass
     const backpackColor = snapshot.color;
     const outlineColor = 0x000000;
-    const outlineWidth = 2;
     
     // Draw black outline/shadow layer first (slightly larger)
     sprite.beginFill(outlineColor);

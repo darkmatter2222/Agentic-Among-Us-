@@ -6,6 +6,8 @@ import type {
   AgentSummarySnapshot,
   MovementSnapshot,
   WorldSnapshot,
+  ThoughtEvent,
+  SpeechEvent,
 } from '../types/simulation.types.ts';
 
 function serializeMovementState(state: MovementState): MovementSnapshot {
@@ -37,6 +39,7 @@ export function serializeAgent(agent: AIAgent, timestamp: number): AgentSnapshot
 
   return {
     id: agent.getId(),
+    name: agent.getName(),
     color: agent.getColor(),
     visionRadius: agent.getVisionRadius(),
     actionRadius: agent.getActionRadius(),
@@ -46,6 +49,23 @@ export function serializeAgent(agent: AIAgent, timestamp: number): AgentSnapshot
     currentZone: summary.currentZone,
     currentGoal: agent.getCurrentGoal(),
     timeInStateMs: summary.timeInStateMs,
+    
+    // AI State
+    role: agent.getRole(),
+    playerState: agent.getPlayerState(),
+    assignedTasks: agent.getAssignedTasks(),
+    currentTaskIndex: agent.getCurrentTaskIndex(),
+    tasksCompleted: agent.getTasksCompleted(),
+    
+    // Thoughts & Speech
+    currentThought: agent.getCurrentThought(),
+    lastThoughtTime: agent.getLastThoughtTime(),
+    recentSpeech: agent.getRecentSpeech(),
+    lastSpeechTime: agent.getLastSpeechTime(),
+    
+    // Perception
+    visibleAgentIds: agent.getVisibleAgentIds(),
+    suspicionLevels: agent.getSuspicionLevels(),
   };
 }
 
@@ -60,14 +80,26 @@ export function serializeAgentSummary(agent: AIAgent): AgentSummarySnapshot {
   };
 }
 
+export interface SerializeWorldOptions {
+  gamePhase?: 'INITIALIZING' | 'PLAYING' | 'MEETING' | 'GAME_OVER';
+  taskProgress?: number;
+  recentThoughts?: ThoughtEvent[];
+  recentSpeech?: SpeechEvent[];
+}
+
 export function serializeWorld(
   agents: AIAgent[],
   tick: number,
-  timestamp: number
+  timestamp: number,
+  options: SerializeWorldOptions = {}
 ): WorldSnapshot {
   return {
     tick,
     timestamp,
+    gamePhase: options.gamePhase ?? 'PLAYING',
     agents: agents.map(agent => serializeAgent(agent, timestamp)),
+    recentThoughts: options.recentThoughts ?? [],
+    recentSpeech: options.recentSpeech ?? [],
+    taskProgress: options.taskProgress ?? 0,
   };
 }

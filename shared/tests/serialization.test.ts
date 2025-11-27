@@ -107,6 +107,7 @@ describe('serialization helpers', () => {
 describe('diffWorldSnapshots', () => {
   const baseAgent: AgentSnapshot = {
     id: 'agent-1',
+    name: 'Agent 1',
     color: 0xff3366,
     visionRadius: 120,
     actionRadius: 45,

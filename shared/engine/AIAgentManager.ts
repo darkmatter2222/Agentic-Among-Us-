@@ -1,6 +1,6 @@
 /**
- * AI Agent Manager
- * Manages all AI agents, their movement, and interactions
+ * AI Agent Manager (Enhanced with Role & Task Assignment)
+ * Manages all AI agents, their roles, tasks, and AI decision-making
  */
 
 import type { Point } from '../data/poly3-map.ts';
@@ -8,15 +8,58 @@ import { NavMeshBuilder } from './NavMesh.ts';
 import { Pathfinder } from './Pathfinder.ts';
 import { ZoneDetector } from './ZoneDetector.ts';
 import { DestinationSelector } from './DestinationSelector.ts';
-import { AIAgent, type AIAgentConfig } from './AIAgent.ts';
+import { AIAgent, type AIAgentConfig, type AIAgentRoleConfig, type AIDecisionCallback, type AITriggerCallback } from './AIAgent.ts';
 import type { WalkableZone, LabeledZone, Task } from '../data/poly3-map.ts';
+import type { PlayerRole } from '../types/game.types.ts';
+import type { TaskAssignment, AIContext, AIDecision } from '../types/simulation.types.ts';
+
+// ========== Agent Names ==========
+
+const AGENT_NAMES = [
+  'Red', 'Blue', 'Green', 'Yellow',
+  'Magenta', 'Cyan', 'Orange', 'Purple'
+];
+
+// ========== Configuration ==========
 
 export interface AgentManagerConfig {
   walkableZones: WalkableZone[];
   labeledZones: LabeledZone[];
   tasks: Task[];
   numAgents: number;
+  numImpostors?: number;
+  tasksPerAgent?: number;
+  aiServerUrl?: string;
 }
+
+// ========== Task Duration Lookup ==========
+
+function getTaskDuration(taskType: string): number {
+  const durations: Record<string, number> = {
+    'Swipe Card': 3000,
+    'Prime Shields': 3000,
+    'Empty Garbage': 4000,
+    'Chart Course': 4000,
+    'Stabilize Steering': 3000,
+    'Unlock Manifolds': 5000,
+    'Clean O2 Filter': 5000,
+    'Divert Power': 3000,
+    'Accept Power': 2000,
+    'Start Reactor': 12000,
+    'Submit Scan': 10000,
+    'Inspect Sample': 60000,
+    'Fuel Engines': 8000,
+    'Upload Data': 9000,
+    'Download Data': 9000,
+    'Clear Asteroids': 15000,
+    'Fix Wiring': 4000,
+    'Calibrate Distributor': 4000,
+    'Align Engine Output': 4000
+  };
+  return durations[taskType] || 5000;
+}
+
+// ========== Main Class ==========
 
 export class AIAgentManager {
   private agents: AIAgent[];
@@ -24,6 +67,12 @@ export class AIAgentManager {
   private pathfinder: Pathfinder;
   private zoneDetector: ZoneDetector;
   private destinationSelector: DestinationSelector;
+  private availableTasks: Task[];
+  private impostorIds: Set<string>;
+  
+  // AI Decision callbacks (can be set externally for LLM integration)
+  private decisionCallback: AIDecisionCallback | null = null;
+  private triggerCallback: AITriggerCallback | null = null;
   
   constructor(config: AgentManagerConfig) {
     // Build navigation mesh
@@ -43,16 +92,50 @@ export class AIAgentManager {
     // Initialize destination selector
     this.destinationSelector = new DestinationSelector(config.walkableZones, config.tasks, navMesh);
     
-    // Create agents
+    // Store available tasks for assignment
+    this.availableTasks = config.tasks;
+    this.impostorIds = new Set();
+    
+    // Create agents with roles and tasks
     this.agents = [];
-    this.createAgents(config.numAgents, zones);
-    console.log(`Created ${this.agents.length} AI agents`);
+    const numImpostors = config.numImpostors ?? 2;
+    const tasksPerAgent = config.tasksPerAgent ?? 5;
+    
+    this.createAgentsWithRoles(config.numAgents, zones, numImpostors, tasksPerAgent);
+    
+    // Set up cross-references for visibility
+    for (const agent of this.agents) {
+      agent.setOtherAgents(this.agents);
+    }
+    
+    console.log(`Created ${this.agents.length} AI agents (${numImpostors} impostors)`);
   }
   
   /**
-   * Create AI agents with random starting positions
+   * Set AI callbacks for LLM integration
    */
-  private createAgents(numAgents: number, zones: any[]): void {
+  setAICallbacks(
+    decisionCallback: AIDecisionCallback,
+    triggerCallback: AITriggerCallback
+  ): void {
+    this.decisionCallback = decisionCallback;
+    this.triggerCallback = triggerCallback;
+    
+    // Propagate to all agents
+    for (const agent of this.agents) {
+      agent.setAICallbacks(decisionCallback, triggerCallback);
+    }
+  }
+  
+  /**
+   * Create AI agents with randomly assigned roles and tasks
+   */
+  private createAgentsWithRoles(
+    numAgents: number, 
+    zones: ReturnType<ZoneDetector['getAllZones']>,
+    numImpostors: number,
+    tasksPerAgent: number
+  ): void {
     const colors = [
       0xFF0000, // Red
       0x0000FF, // Blue
@@ -66,6 +149,11 @@ export class AIAgentManager {
     
     const walkableZones = zones.filter(z => z.isWalkable);
     
+    // Randomly select impostors
+    const indices = Array.from({ length: numAgents }, (_, i) => i);
+    this.shuffleArray(indices);
+    const impostorIndices = new Set(indices.slice(0, numImpostors));
+    
     for (let i = 0; i < numAgents; i++) {
       // Select random starting zone
       const zone = walkableZones[Math.floor(Math.random() * walkableZones.length)];
@@ -77,8 +165,16 @@ export class AIAgentManager {
         { avoidEdges: true }
       ) || zone.center;
       
+      const role: PlayerRole = impostorIndices.has(i) ? 'IMPOSTOR' : 'CREWMATE';
+      const agentName = AGENT_NAMES[i % AGENT_NAMES.length];
+      
+      if (role === 'IMPOSTOR') {
+        this.impostorIds.add(`agent_${i}`);
+      }
+      
       const agentConfig: AIAgentConfig = {
         id: `agent_${i}`,
+        name: agentName,
         color: colors[i % colors.length],
         startPosition,
         baseSpeed: 80 + Math.random() * 40, // 80-120 units/sec
@@ -93,23 +189,65 @@ export class AIAgentManager {
         zones
       );
       
+      // Assign role and tasks
+      const assignedTasks = this.assignTasksToAgent(tasksPerAgent, role);
+      const roleConfig: AIAgentRoleConfig = {
+        role,
+        assignedTasks
+      };
+      agent.initializeRole(roleConfig);
+      
       this.agents.push(agent);
       
       // Initialize zone detection for starting position
       const zoneEvent = this.zoneDetector.updatePlayerPosition(agent.getId(), startPosition);
       if (zoneEvent) {
         agent.getStateMachine().updateLocation(zoneEvent.toZone, zoneEvent.zoneType);
-        console.log(`${agent.getId()} entered ${zoneEvent.toZone} (${zoneEvent.zoneType})`);
+        console.log(`${agent.getId()} (${agentName}, ${role}) entered ${zoneEvent.toZone}`);
       }
     }
   }
   
   /**
-   * Update all agents (call every frame)
+   * Assign random tasks to an agent
+   */
+  private assignTasksToAgent(count: number, role: PlayerRole): TaskAssignment[] {
+    const assignments: TaskAssignment[] = [];
+    const shuffledTasks = [...this.availableTasks];
+    this.shuffleArray(shuffledTasks);
+    
+    for (let i = 0; i < Math.min(count, shuffledTasks.length); i++) {
+      const task = shuffledTasks[i];
+      assignments.push({
+        taskType: task.type,
+        room: task.room,
+        position: { x: task.position.x, y: task.position.y },
+        isCompleted: false,
+        isFaking: role === 'IMPOSTOR', // Impostors fake all tasks
+        duration: getTaskDuration(task.type)
+      });
+    }
+    
+    return assignments;
+  }
+  
+  /**
+   * Fisher-Yates shuffle
+   */
+  private shuffleArray<T>(array: T[]): void {
+    for (let i = array.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [array[i], array[j]] = [array[j], array[i]];
+    }
+  }
+  
+  /**
+   * Update all agents (call every frame) - NON-BLOCKING
    */
   update(deltaTime: number): void {
+    // Update all agents synchronously (they no longer block on AI)
     for (const agent of this.agents) {
-      // Update agent AI and movement
+      // Update agent AI and movement (non-blocking now)
       agent.update(deltaTime);
       
       // Check zone transitions
@@ -117,11 +255,27 @@ export class AIAgentManager {
       const zoneEvent = this.zoneDetector.updatePlayerPosition(agent.getId(), position);
       
       if (zoneEvent) {
-        // Zone changed
         agent.getStateMachine().updateLocation(zoneEvent.toZone, zoneEvent.zoneType);
-        console.log(`${agent.getId()} entered ${zoneEvent.toZone} (${zoneEvent.zoneType})`);
       }
     }
+  }
+  
+  /**
+   * Get overall task progress (crewmate tasks only)
+   */
+  getTaskProgress(): number {
+    let totalTasks = 0;
+    let completedTasks = 0;
+    
+    for (const agent of this.agents) {
+      if (agent.getRole() === 'CREWMATE') {
+        const tasks = agent.getAssignedTasks();
+        totalTasks += tasks.length;
+        completedTasks += tasks.filter(t => t.isCompleted).length;
+      }
+    }
+    
+    return totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0;
   }
   
   /**
@@ -161,5 +315,19 @@ export class AIAgentManager {
       positions.set(agent.getId(), agent.getPosition());
     }
     return positions;
+  }
+  
+  /**
+   * Check if agent is an impostor (for debugging/UI)
+   */
+  isImpostor(agentId: string): boolean {
+    return this.impostorIds.has(agentId);
+  }
+  
+  /**
+   * Get impostor IDs (for debugging)
+   */
+  getImpostorIds(): string[] {
+    return Array.from(this.impostorIds);
   }
 }
