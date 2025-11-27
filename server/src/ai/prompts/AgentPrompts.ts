@@ -5,13 +5,10 @@
 
 import type { PlayerRole } from '@shared/types/game.types.ts';
 import type { AIContext, AIDecision, ThoughtTrigger, TaskAssignment } from '@shared/types/simulation.types.ts';
+import { COLOR_NAMES } from '@shared/constants/colors.ts';
 
-// ========== Agent Names ==========
-
-export const AGENT_NAMES = [
-  'Red', 'Blue', 'Green', 'Yellow', 
-  'Magenta', 'Cyan', 'Orange', 'Purple'
-];
+// Re-export for backward compatibility
+export const AGENT_NAMES = COLOR_NAMES;
 
 // ========== System Prompts ==========
 
@@ -85,20 +82,29 @@ export function buildSpeechPrompt(context: AIContext): string {
     ? `You are ${context.agentName}, secretly an IMPOSTOR. You must appear innocent.`
     : `You are ${context.agentName}, a CREWMATE trying to work with the team.`;
 
+  // Build info about nearby players using their color names
+  const nearbyInfo = context.visibleAgents.length > 0
+    ? `\nNearby players: ${context.visibleAgents.map(a => a.name).join(', ')}`
+    : '\nNo players nearby.';
+
   return `${basePrompt}
 
 You're about to say something out loud to nearby players.
+${nearbyInfo}
 
 Guidelines:
 - Keep it natural and brief (1-2 sentences max)
+- ALWAYS refer to other players by their color name (e.g., "Hey Red!", "Blue, over here!")
 - Crewmates: Be friendly, share info, coordinate
 - Impostors: Blend in, maybe misdirect subtly, act normal
 - Don't be robotic or overly formal
 - Use casual speech like real players would
 
 Examples of natural speech:
-- "Hey, heading to electrical?"
+- "Hey Red, heading to electrical?"
+- "Blue! Over here, wanna buddy up?"
 - "Just finished admin tasks."
+- "Green, I saw you near reactor."
 - "Anyone else feel like upper engine is sketchy?"
 - "I'm going to medbay, want to come?"`;
 }

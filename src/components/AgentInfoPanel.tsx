@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import './AgentInfoPanel.css';
 import type { TaskAssignment } from '@shared/types/simulation.types.ts';
 import type { PlayerRole } from '@shared/types/game.types.ts';
+import { getColorName } from '@shared/constants/colors.ts';
 
 export interface AgentSummary {
   id: string;
@@ -46,13 +47,14 @@ function ExpandedAgentCard({ agent, onClose }: ExpandedAgentCardProps) {
   const totalTasks = agent.assignedTasks?.length ?? 0;
   const completed = agent.tasksCompleted ?? 0;
   const taskPercent = totalTasks > 0 ? (completed / totalTasks) * 100 : 0;
+  const colorName = getColorName(agent.color);
   
   return (
     <div className="expanded-agent-card">
       <div className="expanded-card__header">
         <div className="expanded-card__title">
           <span className="agent-color-dot large" style={{ backgroundColor: hexColor(agent.color) }} />
-          <span className="expanded-card__name">{agent.id}</span>
+          <span className="expanded-card__name">{colorName}</span>
           <span className={`role-badge ${role.className}`}>{role.label}</span>
         </div>
         <button className="expanded-card__close" onClick={onClose}>×</button>
@@ -139,10 +141,38 @@ function ExpandedAgentCard({ agent, onClose }: ExpandedAgentCardProps) {
 
 export function AgentInfoPanel({ agents, width = 380, taskProgress = 0 }: AgentInfoPanelProps) {
   const [expandedAgentId, setExpandedAgentId] = useState<string | null>(null);
+  const [columnWidths, setColumnWidths] = useState<number[]>([90, 80, 70, 80]); // Agent, Zone, Status, Tasks
+  const resizingRef = useRef<{ index: number; startX: number; startWidth: number } | null>(null);
   const expandedAgent = expandedAgentId ? agents.find(a => a.id === expandedAgentId) : null;
   
   const crewmateCount = agents.filter(a => a.role === 'CREWMATE').length;
   const impostorCount = agents.filter(a => a.role === 'IMPOSTOR').length;
+  
+  const handleMouseDown = useCallback((index: number, e: React.MouseEvent) => {
+    e.preventDefault();
+    resizingRef.current = { index, startX: e.clientX, startWidth: columnWidths[index] };
+    
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!resizingRef.current) return;
+      const { index, startX, startWidth } = resizingRef.current;
+      const diff = e.clientX - startX;
+      const newWidth = Math.max(40, startWidth + diff);
+      setColumnWidths(prev => {
+        const next = [...prev];
+        next[index] = newWidth;
+        return next;
+      });
+    };
+    
+    const handleMouseUp = () => {
+      resizingRef.current = null;
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+    
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  }, [columnWidths]);
   
   return (
     <aside className="agent-panel" style={{ width }}>
@@ -178,10 +208,22 @@ export function AgentInfoPanel({ agents, width = 380, taskProgress = 0 }: AgentI
           <table className="agent-table">
             <thead>
               <tr>
-                <th>Agent</th>
-                <th>Zone</th>
-                <th>Status</th>
-                <th>Tasks</th>
+                <th style={{ width: columnWidths[0] }}>
+                  Agent
+                  <span className="resize-handle" onMouseDown={(e) => handleMouseDown(0, e)} />
+                </th>
+                <th style={{ width: columnWidths[1] }}>
+                  Zone
+                  <span className="resize-handle" onMouseDown={(e) => handleMouseDown(1, e)} />
+                </th>
+                <th style={{ width: columnWidths[2] }}>
+                  Status
+                  <span className="resize-handle" onMouseDown={(e) => handleMouseDown(2, e)} />
+                </th>
+                <th style={{ width: columnWidths[3] }}>
+                  Tasks
+                  <span className="resize-handle" onMouseDown={(e) => handleMouseDown(3, e)} />
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -189,6 +231,7 @@ export function AgentInfoPanel({ agents, width = 380, taskProgress = 0 }: AgentI
               const role = getRoleBadge(agent.role);
               const totalTasks = agent.assignedTasks?.length ?? 0;
               const completed = agent.tasksCompleted ?? 0;
+              const colorName = getColorName(agent.color);
               
               return (
                 <tr 
@@ -196,20 +239,20 @@ export function AgentInfoPanel({ agents, width = 380, taskProgress = 0 }: AgentI
                   className="agent-row clickable"
                   onClick={() => setExpandedAgentId(agent.id)}
                 >
-                  <td className="agent-row__id">
+                  <td className="agent-row__id" style={{ width: columnWidths[0] }}>
                     <span className="agent-color-dot" style={{ backgroundColor: hexColor(agent.color) }} />
-                    <span className="agent-num">{agent.id.replace('agent_', '')}</span>
+                    <span className="agent-num">{colorName}</span>
                     <span className={`role-badge mini ${role.className}`}>{role.label}</span>
                   </td>
-                  <td className="agent-row__zone" title={agent.currentZone ?? 'Unknown'}>
+                  <td className="agent-row__zone" style={{ width: columnWidths[1] }} title={agent.currentZone ?? 'Unknown'}>
                     {agent.currentZone?.replace(' (ROOM)', '').replace(' (HALLWAY)', '') ?? '?'}
                   </td>
-                  <td className="agent-row__status">
+                  <td className="agent-row__status" style={{ width: columnWidths[2] }}>
                     <span className={`status-badge status-badge--${agent.activityState.toLowerCase()}`}>
                       {agent.activityState}
                     </span>
                   </td>
-                  <td className="agent-row__tasks">
+                  <td className="agent-row__tasks" style={{ width: columnWidths[3] }}>
                     <div className="mini-progress">
                       <div className="mini-progress-bar">
                         <div 

@@ -86,6 +86,7 @@ export interface AgentSnapshot {
   lastThoughtTime?: number;
   recentSpeech?: string | null;
   lastSpeechTime?: number;
+  isThinking?: boolean; // True when agent is waiting for LLM response
   
   // Perception (who this agent can see)
   visibleAgentIds?: string[];

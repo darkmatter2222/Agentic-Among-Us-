@@ -9,13 +9,13 @@ import { VisionConeRenderer } from './VisionConeRenderer.ts';
 import { ActionRadiusRenderer } from './ActionRadiusRenderer.ts';
 import { PathLineRenderer } from './PathLineRenderer.ts';
 import { SpeechBubbleRenderer } from './SpeechBubbleRenderer.ts';
+import { ThinkingBubbleRenderer } from './ThinkingBubbleRenderer.ts';
 
 export interface AgentVisuals {
   sprite: PIXI.Graphics;
   visionCone: VisionConeRenderer;
   actionRadius: ActionRadiusRenderer;
   pathLine: PathLineRenderer;
-  nameText: PIXI.Text;
 }
 
 interface AgentVisualState {
@@ -25,6 +25,7 @@ interface AgentVisualState {
   targetPath: AgentSnapshot['movement']['path'];
   pathDirty: boolean;
   lastSpeechTime: number; // Track when we last showed a speech bubble
+  isThinking: boolean; // Track if agent is waiting for LLM response
 }
 
 export class AIAgentVisualRenderer {
@@ -33,6 +34,7 @@ export class AIAgentVisualRenderer {
   private container: PIXI.Container;
   private agentVisuals: Map<string, AgentVisualState>;
   private speechBubbleRenderer: SpeechBubbleRenderer;
+  private thinkingBubbleRenderer: ThinkingBubbleRenderer;
   private showVisionCones: boolean = true;
   private showActionRadius: boolean = true;
   private showPaths: boolean = true;
@@ -48,6 +50,10 @@ export class AIAgentVisualRenderer {
       displayDuration: 5000,
       offsetY: -55,
     });
+    this.thinkingBubbleRenderer = new ThinkingBubbleRenderer({
+      offsetY: -55,
+    });
+    this.container.addChild(this.thinkingBubbleRenderer.getContainer());
     this.container.addChild(this.speechBubbleRenderer.getContainer());
   }
 
@@ -62,9 +68,7 @@ export class AIAgentVisualRenderer {
       state.targetFacing = snapshot.movement.facing;
       state.targetPath = snapshot.movement.path.map(point => ({ ...point }));
       state.pathDirty = true;
-
-      // Keep names in sync in case identifiers change format at runtime.
-      state.visuals.nameText.text = snapshot.id;
+      state.isThinking = snapshot.isThinking ?? false;
 
       // Adjust dynamic radii if they change (should be rare but keeps parity with server).
       state.visuals.visionCone.updateConfig({ radius: snapshot.visionRadius * 1.4, color: snapshot.color });
@@ -105,7 +109,6 @@ export class AIAgentVisualRenderer {
         state.visuals.visionCone.destroy();
         state.visuals.actionRadius.destroy();
         state.visuals.pathLine.destroy();
-        state.visuals.nameText.destroy();
         this.speechBubbleRenderer.removeBubble(agentId);
         this.agentVisuals.delete(agentId);
       }
@@ -115,6 +118,7 @@ export class AIAgentVisualRenderer {
   update(deltaTime: number): void {
     const lerpFactor = Math.min(1, deltaTime * AIAgentVisualRenderer.SMOOTHING_SPEED);
     const agentPositions = new Map<string, { x: number; y: number }>();
+    const thinkingAgents = new Set<string>();
 
     for (const [agentId, state] of this.agentVisuals) {
       const { visuals, targetPosition, targetFacing } = state;
@@ -130,12 +134,14 @@ export class AIAgentVisualRenderer {
       if (Math.abs(dx) > 0.5) {
         visuals.sprite.scale.x = dx > 0 ? -1 : 1;
       }
-
-      visuals.nameText.x = visuals.sprite.x;
-      visuals.nameText.y = visuals.sprite.y + 32;
       
-      // Track positions for speech bubbles
+      // Track positions for speech/thinking bubbles
       agentPositions.set(agentId, { x: visuals.sprite.x, y: visuals.sprite.y });
+      
+      // Track which agents are thinking
+      if (state.isThinking) {
+        thinkingAgents.add(agentId);
+      }
 
       if (this.showVisionCones) {
         visuals.visionCone.render({ x: visuals.sprite.x, y: visuals.sprite.y }, targetFacing);
@@ -161,6 +167,9 @@ export class AIAgentVisualRenderer {
         visuals.pathLine.setVisible(false);
       }
     }
+    
+    // Update thinking bubbles with current positions and thinking states
+    this.thinkingBubbleRenderer.update(deltaTime, agentPositions, thinkingAgents);
     
     // Update speech bubbles with current agent positions
     this.speechBubbleRenderer.update(deltaTime, agentPositions);
@@ -188,13 +197,13 @@ export class AIAgentVisualRenderer {
       state.visuals.visionCone.destroy();
       state.visuals.actionRadius.destroy();
       state.visuals.pathLine.destroy();
-      state.visuals.nameText.destroy();
     }
     this.agentVisuals.clear();
     this.speechBubbleRenderer.destroy();
+    this.thinkingBubbleRenderer.destroy();
     this.container.removeChildren();
     
-    // Recreate speech bubble renderer after clear
+    // Recreate bubble renderers after clear
     this.speechBubbleRenderer = new SpeechBubbleRenderer({
       maxWidth: 220,
       fontSize: 13,
@@ -203,6 +212,10 @@ export class AIAgentVisualRenderer {
       displayDuration: 5000,
       offsetY: -55,
     });
+    this.thinkingBubbleRenderer = new ThinkingBubbleRenderer({
+      offsetY: -55,
+    });
+    this.container.addChild(this.thinkingBubbleRenderer.getContainer());
     this.container.addChild(this.speechBubbleRenderer.getContainer());
   }
 
@@ -212,10 +225,10 @@ export class AIAgentVisualRenderer {
       state.visuals.visionCone.destroy();
       state.visuals.actionRadius.destroy();
       state.visuals.pathLine.destroy();
-      state.visuals.nameText.destroy();
     }
     this.agentVisuals.clear();
     this.speechBubbleRenderer.destroy();
+    this.thinkingBubbleRenderer.destroy();
     this.container.destroy();
   }
 
@@ -295,28 +308,19 @@ export class AIAgentVisualRenderer {
       gapLength: 4
     });
 
-    const nameText = new PIXI.Text(snapshot.id, {
-      fontFamily: 'Arial',
-      fontSize: 24,
-      fill: 0xFFFFFF,
-      stroke: { color: 0x000000, width: 2 }
-    });
-    nameText.anchor.set(0.5, 0);
-    nameText.y = 32;
-
     this.container.addChild(visionCone.getContainer());
     this.container.addChild(pathLine.getContainer());
     this.container.addChild(actionRadius.getContainer());
     this.container.addChild(sprite);
-    this.container.addChild(nameText);
 
     const state: AgentVisualState = {
-      visuals: { sprite, visionCone, actionRadius, pathLine, nameText },
+      visuals: { sprite, visionCone, actionRadius, pathLine },
       targetPosition: { ...snapshot.movement.position },
       targetFacing: snapshot.movement.facing,
       targetPath: snapshot.movement.path.map(point => ({ ...point })),
       pathDirty: true,
       lastSpeechTime: 0,
+      isThinking: snapshot.isThinking ?? false,
     };
 
     sprite.position.set(snapshot.movement.position.x, snapshot.movement.position.y);

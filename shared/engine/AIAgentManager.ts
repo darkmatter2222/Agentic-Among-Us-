@@ -9,16 +9,10 @@ import { Pathfinder } from './Pathfinder.ts';
 import { ZoneDetector } from './ZoneDetector.ts';
 import { DestinationSelector } from './DestinationSelector.ts';
 import { AIAgent, type AIAgentConfig, type AIAgentRoleConfig, type AIDecisionCallback, type AITriggerCallback } from './AIAgent.ts';
+import { COLOR_NAMES, AGENT_COLORS } from '../constants/colors.ts';
 import type { WalkableZone, LabeledZone, Task } from '../data/poly3-map.ts';
 import type { PlayerRole } from '../types/game.types.ts';
 import type { TaskAssignment, AIContext, AIDecision } from '../types/simulation.types.ts';
-
-// ========== Agent Names ==========
-
-const AGENT_NAMES = [
-  'Red', 'Blue', 'Green', 'Yellow',
-  'Magenta', 'Cyan', 'Orange', 'Purple'
-];
 
 // ========== Configuration ==========
 
@@ -136,17 +130,6 @@ export class AIAgentManager {
     numImpostors: number,
     tasksPerAgent: number
   ): void {
-    const colors = [
-      0xFF0000, // Red
-      0x0000FF, // Blue
-      0x00FF00, // Green
-      0xFFFF00, // Yellow
-      0xFF00FF, // Magenta
-      0x00FFFF, // Cyan
-      0xFFA500, // Orange
-      0x800080  // Purple
-    ];
-    
     const walkableZones = zones.filter(z => z.isWalkable);
     
     // Randomly select impostors
@@ -166,7 +149,9 @@ export class AIAgentManager {
       ) || zone.center;
       
       const role: PlayerRole = impostorIndices.has(i) ? 'IMPOSTOR' : 'CREWMATE';
-      const agentName = AGENT_NAMES[i % AGENT_NAMES.length];
+      const colorIndex = i % COLOR_NAMES.length;
+      const agentName = COLOR_NAMES[colorIndex];
+      const agentColor = AGENT_COLORS[colorIndex];
       
       if (role === 'IMPOSTOR') {
         this.impostorIds.add(`agent_${i}`);
@@ -175,7 +160,7 @@ export class AIAgentManager {
       const agentConfig: AIAgentConfig = {
         id: `agent_${i}`,
         name: agentName,
-        color: colors[i % colors.length],
+        color: agentColor,
         startPosition,
         baseSpeed: 80 + Math.random() * 40, // 80-120 units/sec
         visionRadius: 150,

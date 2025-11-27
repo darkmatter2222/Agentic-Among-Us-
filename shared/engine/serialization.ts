@@ -62,6 +62,7 @@ export function serializeAgent(agent: AIAgent, timestamp: number): AgentSnapshot
     lastThoughtTime: agent.getLastThoughtTime(),
     recentSpeech: agent.getRecentSpeech(),
     lastSpeechTime: agent.getLastSpeechTime(),
+    isThinking: agent.getIsThinking(),
     
     // Perception
     visibleAgentIds: agent.getVisibleAgentIds(),

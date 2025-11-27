@@ -1,7 +1,7 @@
 .agent-panel {
   flex-shrink: 0;
   min-width: 280px;
-  max-width: 600px;
+  max-width: 900px;
   height: 100%;
   background: rgba(12, 17, 27, 0.95);
   color: #f5f7fa;
@@ -97,6 +97,7 @@
   width: 100%;
   border-collapse: collapse;
   font-size: 0.75rem;
+  table-layout: fixed;
 }
 
 .agent-table thead {
@@ -115,6 +116,25 @@
   opacity: 0.5;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   font-weight: 500;
+  position: relative;
+  user-select: none;
+}
+
+/* Resizable column handle */
+.agent-table th .resize-handle {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.15s ease;
+}
+
+.agent-table th .resize-handle:hover,
+.agent-table th .resize-handle.resizing {
+  background: rgba(138, 180, 248, 0.5);
 }
 
 .agent-table td {

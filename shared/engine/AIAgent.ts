@@ -839,6 +839,10 @@ export class AIAgent {
     return this.aiState.suspicionLevels;
   }
   
+  getIsThinking(): boolean {
+    return this.behaviorState.isThinking;
+  }
+  
   getAIState(): AIAgentState {
     return this.aiState;
   }
