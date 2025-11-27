@@ -171,6 +171,15 @@
   min-width: 12px;
 }
 
+/* Role-based name coloring */
+.crewmate-name {
+  color: #4caf50 !important;
+}
+
+.impostor-name {
+  color: #ef5350 !important;
+}
+
 .agent-color-dot {
   width: 10px;
   height: 10px;
@@ -309,7 +318,14 @@
 .expanded-card__name {
   font-size: 1.1rem;
   font-weight: 600;
-  color: #8ab4f8;
+}
+
+.expanded-card__name.crewmate-name {
+  color: #4caf50;
+}
+
+.expanded-card__name.impostor-name {
+  color: #ef5350;
 }
 
 .expanded-card__close {

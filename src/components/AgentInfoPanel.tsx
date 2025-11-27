@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import './AgentInfoPanel.css';
 import type { TaskAssignment } from '@shared/types/simulation.types.ts';
 import type { PlayerRole } from '@shared/types/game.types.ts';
@@ -46,6 +46,8 @@ interface AgentInfoPanelProps {
   agents: AgentSummary[];
   width?: number;
   taskProgress?: number;
+  selectedAgentId?: string | null;
+  onAgentSelect?: (agentId: string) => void;
 }
 
 interface ExpandedAgentCardProps {
@@ -95,10 +97,10 @@ function ExpandedAgentCard({ agent, onClose }: ExpandedAgentCardProps) {
   return (
     <div className="expanded-agent-card">
       <div className="expanded-card__header">
-        <div className="expanded-card__title">
-          <span className="agent-color-dot large" style={{ backgroundColor: hexColor(agent.color) }} />
-          <span className="expanded-card__name">{colorName}</span>
-          <span className={`role-badge ${role.className}`}>{role.label}</span>
+      <div className="expanded-card__title">
+        <span className="agent-color-dot large" style={{ backgroundColor: hexColor(agent.color) }} />
+        <span className={`expanded-card__name ${agent.role === 'IMPOSTOR' ? 'impostor-name' : 'crewmate-name'}`}>{colorName}</span>
+        <span className={`role-badge ${role.className}`}>{role.label}</span>
           {agent.isBeingFollowed && <span className="followed-badge">👀 Being Followed</span>}
           {agent.buddyId && <span className="buddy-badge">🤝 Buddy</span>}
         </div>
@@ -272,10 +274,18 @@ function ExpandedAgentCard({ agent, onClose }: ExpandedAgentCardProps) {
   );
 }
 
-export function AgentInfoPanel({ agents, width = 380, taskProgress = 0 }: AgentInfoPanelProps) {
+export function AgentInfoPanel({ agents, width = 380, taskProgress = 0, selectedAgentId, onAgentSelect }: AgentInfoPanelProps) {
   const [expandedAgentId, setExpandedAgentId] = useState<string | null>(null);
   const [columnWidths, setColumnWidths] = useState<number[]>([90, 80, 70, 80]); // Agent, Zone, Status, Tasks
   const resizingRef = useRef<{ index: number; startX: number; startWidth: number } | null>(null);
+  
+  // Sync expanded agent with selected agent from parent
+  useEffect(() => {
+    if (selectedAgentId) {
+      setExpandedAgentId(selectedAgentId);
+    }
+  }, [selectedAgentId]);
+  
   const expandedAgent = expandedAgentId ? agents.find(a => a.id === expandedAgentId) : null;
   
   const crewmateCount = agents.filter(a => a.role === 'CREWMATE').length;
@@ -367,14 +377,17 @@ export function AgentInfoPanel({ agents, width = 380, taskProgress = 0 }: AgentI
               const colorName = getColorName(agent.color);
               
               return (
-                <tr 
-                  key={agent.id} 
+                <tr
+                  key={agent.id}
                   className="agent-row clickable"
-                  onClick={() => setExpandedAgentId(agent.id)}
+                  onClick={() => {
+                    setExpandedAgentId(agent.id);
+                    onAgentSelect?.(agent.id);
+                  }}
                 >
                   <td className="agent-row__id" style={{ width: columnWidths[0] }}>
                     <span className="agent-color-dot" style={{ backgroundColor: hexColor(agent.color) }} />
-                    <span className="agent-num">{colorName}</span>
+                    <span className={`agent-num ${agent.role === 'IMPOSTOR' ? 'impostor-name' : 'crewmate-name'}`}>{colorName}</span>
                     <span className={`role-badge mini ${role.className}`}>{role.label}</span>
                   </td>
                   <td className="agent-row__zone" style={{ width: columnWidths[1] }} title={agent.currentZone ?? 'Unknown'}>

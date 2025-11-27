@@ -174,6 +174,13 @@ export class GameRenderer {
   }
 
   /**
+   * Zoom at a specific screen point
+   */
+  zoomAtPoint(zoom: number, pivotX: number, pivotY: number): void {
+    this.camera.zoomAtPoint(zoom, pivotX, pivotY);
+  }
+
+  /**
    * Focus camera on position
    */
   focusOn(x: number, y: number, smooth: boolean = true): void {
@@ -195,7 +202,7 @@ export class GameRenderer {
 /**
  * Camera controller for panning and zooming
  */
-class Camera {
+export class Camera {
   x: number = 0;
   y: number = 0;
   zoom: number = 1.0;
@@ -237,7 +244,33 @@ class Camera {
   }
 
   setZoom(zoom: number): void {
-    this.targetZoom = Math.max(0.5, Math.min(3.0, zoom));
+    this.targetZoom = Math.max(0.1, Math.min(5.0, zoom));
+  }
+
+  /**
+   * Zoom towards a specific point (for zooming at cursor)
+   * @param zoom New zoom level
+   * @param pivotX Screen X coordinate to zoom towards
+   * @param pivotY Screen Y coordinate to zoom towards  
+   */
+  zoomAtPoint(zoom: number, pivotX: number, pivotY: number): void {
+    const oldZoom = this.zoom;
+    const newZoom = Math.max(0.1, Math.min(5.0, zoom));
+    
+    if (newZoom === oldZoom) return;
+    
+    // Calculate the world position under the cursor before zoom
+    const worldX = (pivotX - this.x) / oldZoom;
+    const worldY = (pivotY - this.y) / oldZoom;
+    
+    // Calculate new camera position to keep cursor at same world position
+    const newX = pivotX - worldX * newZoom;
+    const newY = pivotY - worldY * newZoom;
+    
+    this.targetZoom = newZoom;
+    this.targetX = newX;
+    this.targetY = newY;
+    this.following = false;
   }
 
   pan(dx: number, dy: number): void {
@@ -252,7 +285,7 @@ class Camera {
     const zoomToUse = this.targetZoom;
     const screenX = -x * zoomToUse + 960;
     const screenY = -y * zoomToUse + 540;
-    
+
     if (smooth) {
       this.targetX = screenX;
       this.targetY = screenY;
@@ -265,7 +298,32 @@ class Camera {
     }
   }
 
-  followPlayer(player: { x: number; y: number }): void {
+  /**
+   * Focus on a world position, centered in a specific viewport area
+   * Use this when the visible area is not the full 1920x1080 canvas
+   * @param x World X position (in pixels)
+   * @param y World Y position (in pixels)
+   * @param viewportWidth Width of the visible area
+   * @param viewportHeight Height of the visible area
+   * @param smooth Whether to animate the transition
+   */
+  focusOnWithViewport(x: number, y: number, viewportWidth: number, viewportHeight: number, smooth: boolean = true): void {
+    const zoomToUse = this.targetZoom;
+    // Center in the actual visible viewport, not the full 1920x1080 canvas
+    const screenX = -x * zoomToUse + viewportWidth / 2;
+    const screenY = -y * zoomToUse + viewportHeight / 2;
+
+    if (smooth) {
+      this.targetX = screenX;
+      this.targetY = screenY;
+    } else {
+      this.x = screenX;
+      this.y = screenY;
+      this.targetX = screenX;
+      this.targetY = screenY;
+      this.zoom = zoomToUse;
+    }
+  }  followPlayer(player: { x: number; y: number }): void {
     this.following = true;
     this.followTarget = player;
   }
@@ -273,6 +331,14 @@ class Camera {
   stopFollowing(): void {
     this.following = false;
     this.followTarget = undefined;
+  }
+
+  isFollowing(): boolean {
+    return this.following;
+  }
+
+  getFollowTarget(): { x: number; y: number } | undefined {
+    return this.followTarget;
   }
 
   reset(): void {

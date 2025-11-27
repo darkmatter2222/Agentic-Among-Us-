@@ -8,6 +8,9 @@ import { getSimulationClient } from './ai/SimulationClient';
 import type { WorldSnapshot, SpeechEvent } from '@shared/types/simulation.types.ts';
 import { AgentInfoPanel, type AgentSummary } from './components/AgentInfoPanel';
 
+// Vision distance in pixels (matches agent visionRadius config)
+const AGENT_VISION_DISTANCE = 150;
+
 function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const latestSnapshotRef = useRef<WorldSnapshot | null>(null);
@@ -25,6 +28,8 @@ function App() {
   const [isDraggingPanel, setIsDraggingPanel] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
   const lastMousePos = useRef({ x: 0, y: 0 });
+  const [followingAgentId, setFollowingAgentId] = useState<string | null>(null);
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   
   // Visibility toggle states (all enabled by default)
   const [showVisionBoxes, setShowVisionBoxes] = useState(true);
@@ -205,6 +210,13 @@ function App() {
     if (e.button === 0) {
       setIsPanning(true);
       lastMousePos.current = { x: e.clientX, y: e.clientY };
+      
+      // Add document-level mouseup to ensure panning stops even if mouse leaves canvas
+      const handleDocumentMouseUp = () => {
+        setIsPanning(false);
+        document.removeEventListener('mouseup', handleDocumentMouseUp);
+      };
+      document.addEventListener('mouseup', handleDocumentMouseUp);
     }
   }, []);
 
@@ -212,16 +224,91 @@ function App() {
     if (isPanning && gameRendererRef.current) {
       const dx = e.clientX - lastMousePos.current.x;
       const dy = e.clientY - lastMousePos.current.y;
+
+      // Stop following when user pans
+      if ((dx !== 0 || dy !== 0) && followingAgentId) {
+        setFollowingAgentId(null);
+        gameRendererRef.current.getCamera().stopFollowing();
+      }
+
       gameRendererRef.current.panCamera(dx, dy);
       lastMousePos.current = { x: e.clientX, y: e.clientY };
     }
-  }, [isPanning]);
 
-  const handleCanvasMouseUp = useCallback(() => {
+    // Check if hovering over an agent's action radius for cursor feedback
+    if (gameRendererRef.current && latestSnapshotRef.current) {
+      const rect = (e.target as HTMLElement).getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      const camera = gameRendererRef.current.getCamera();
+      const transform = camera.getTransform();
+      const worldX = (mouseX - transform.x) / transform.scale;
+      const worldY = (mouseY - transform.y) / transform.scale;
+
+      const agents = latestSnapshotRef.current.agents;
+      const hoveredAgent = agents.find(agent => {
+        // Positions are already in pixels (same coordinate space as the map)
+        const agentX = agent.movement.position.x;
+        const agentY = agent.movement.position.y;
+        const dist = Math.sqrt((worldX - agentX) ** 2 + (worldY - agentY) ** 2);
+        // actionRadius is also in pixels
+        return dist < agent.actionRadius;
+      });
+
+      // Update cursor style
+      const canvas = e.target as HTMLElement;
+      canvas.style.cursor = hoveredAgent ? 'pointer' : (isPanning ? 'grabbing' : 'grab');
+    }
+  }, [isPanning, followingAgentId]);  const handleCanvasMouseUp = useCallback((e: React.MouseEvent) => {
+    // Only select agent on click (not drag)
+    const dx = Math.abs(e.clientX - lastMousePos.current.x);
+    const dy = Math.abs(e.clientY - lastMousePos.current.y);
+    const wasDragging = dx > 5 || dy > 5;
+
+    if (!wasDragging && gameRendererRef.current && latestSnapshotRef.current) {
+      // Get click position relative to canvas
+      const rect = (e.target as HTMLElement).getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const clickY = e.clientY - rect.top;
+
+      // Convert screen position to world position
+      const camera = gameRendererRef.current.getCamera();
+      const transform = camera.getTransform();
+      const worldX = (clickX - transform.x) / transform.scale;
+      const worldY = (clickY - transform.y) / transform.scale;
+
+      // Find clicked agent (check within agent's action radius)
+      const agents = latestSnapshotRef.current.agents;
+      const clickedAgent = agents.find(agent => {
+        // Positions are already in pixels (same coordinate space as the map)
+        const agentX = agent.movement.position.x;
+        const agentY = agent.movement.position.y;
+        const dist = Math.sqrt((worldX - agentX) ** 2 + (worldY - agentY) ** 2);
+        // actionRadius is also in pixels
+        return dist < agent.actionRadius;
+      });
+
+      if (clickedAgent) {
+        // Select and follow the clicked agent
+        setSelectedAgentId(clickedAgent.id);
+        setFollowingAgentId(clickedAgent.id);
+
+        // Calculate zoom level based on vision distance
+        const canvasSize = Math.min(1920, 1080);
+        // AGENT_VISION_DISTANCE is in pixels
+        const targetZoom = (canvasSize * 0.4) / (AGENT_VISION_DISTANCE * 2);
+
+        camera.setZoom(Math.min(Math.max(targetZoom, 0.5), 2.5));
+
+        // Start following the agent - position is already in pixels
+          const agentPos = { x: clickedAgent.movement.position.x, y: clickedAgent.movement.position.y };
+          camera.followPlayer(agentPos);
+      }
+    }
+
     setIsPanning(false);
-  }, []);
-
-  const handleCanvasMouseLeave = useCallback(() => {
+  }, []);  const handleCanvasMouseLeave = useCallback(() => {
     setIsPanning(false);
   }, []);
 
@@ -229,10 +316,24 @@ function App() {
     if (gameRendererRef.current) {
       const camera = gameRendererRef.current.getCamera();
       const currentZoom = camera.zoom;
-      const zoomDelta = e.deltaY > 0 ? -0.1 : 0.1;
-      camera.setZoom(currentZoom + zoomDelta);
+      const zoomDelta = e.deltaY > 0 ? -0.15 : 0.15;
+      const newZoom = currentZoom + zoomDelta;
+      
+      // Get cursor position relative to canvas
+      const rect = e.currentTarget.getBoundingClientRect();
+      const cursorX = e.clientX - rect.left;
+      const cursorY = e.clientY - rect.top;
+      
+      // Zoom at cursor position
+      gameRendererRef.current.zoomAtPoint(newZoom, cursorX, cursorY);
+      
+      // Stop following when user zooms
+      if (followingAgentId) {
+        setFollowingAgentId(null);
+        camera.stopFollowing();
+      }
     }
-  }, []);
+  }, [followingAgentId]);
 
   const handleResizeMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -260,32 +361,63 @@ function App() {
     };
   }, [isDraggingPanel]);
 
+  // Update follow target position when following an agent
+  useEffect(() => {
+    if (!followingAgentId) return;
+    
+    const updateFollowTarget = () => {
+      const snapshot = latestSnapshotRef.current;
+      const agent = snapshot?.agents.find(a => a.id === followingAgentId);
+      const camera = gameRendererRef.current?.getCamera();
+      
+        if (agent && camera && camera.isFollowing()) {
+          const followTarget = camera.getFollowTarget();
+          if (followTarget) {
+            // Position is already in pixels
+            followTarget.x = agent.movement.position.x;
+            followTarget.y = agent.movement.position.y;
+          }
+        }
+      };    // Update every frame
+    const intervalId = setInterval(updateFollowTarget, 16);
+    return () => clearInterval(intervalId);
+  }, [followingAgentId]);
+
   const handleCenterMap = useCallback(() => {
     const gameRenderer = gameRendererRef.current;
     const mapRenderer = mapRendererRef.current;
-    if (!gameRenderer || !mapRenderer) return;
+    const canvas = canvasRef.current;
+    if (!gameRenderer || !mapRenderer || !canvas) return;
+
+    // Stop following when centering map
+    if (followingAgentId) {
+      setFollowingAgentId(null);
+      gameRenderer.getCamera().stopFollowing();
+    }
 
     const bounds = mapRenderer.getMapBounds();
     const mapWidth = bounds.maxX - bounds.minX;
     const mapHeight = bounds.maxY - bounds.minY;
-    const mapCenter = mapRenderer.getMapCenter();
+    const mapCenterX = (bounds.minX + bounds.maxX) / 2;
+    const mapCenterY = (bounds.minY + bounds.maxY) / 2;
 
-    // Get canvas dimensions (Pixi uses 1920x1080 internal)
-    const canvasWidth = 1920;
-    const canvasHeight = 1080;
+    // Get actual visible canvas dimensions (excludes the agent panel)
+    const canvasRect = canvas.getBoundingClientRect();
+    const visibleWidth = canvasRect.width;
+    const visibleHeight = canvasRect.height;
 
-    // Calculate zoom to fit with some padding
-    const padding = 0.9; // 90% of view
-    const zoomX = (canvasWidth * padding) / mapWidth;
-    const zoomY = (canvasHeight * padding) / mapHeight;
-    const zoom = Math.min(zoomX, zoomY, 1.5); // Cap at 1.5x
+    // Calculate zoom to fit entire map with some padding in the VISIBLE area
+    const padding = 0.90; // 90% of visible view
+    const zoomX = (visibleWidth * padding) / mapWidth;
+    const zoomY = (visibleHeight * padding) / mapHeight;
+    const zoom = Math.min(zoomX, zoomY); // Use the smaller zoom to fit everything
 
     const camera = gameRenderer.getCamera();
     camera.setZoom(zoom);
-    camera.focusOn(mapCenter.x, mapCenter.y, true);
-  }, []);
 
-  // Toggle handlers for visibility controls
+    // Use the viewport-aware focus method that centers in the actual visible area
+    camera.focusOnWithViewport(mapCenterX, mapCenterY, visibleWidth, visibleHeight, true);
+  }, [followingAgentId]);// Toggle handlers for visibility controls
   const handleToggleVisionBoxes = useCallback(() => {
     setShowVisionBoxes(prev => {
       const newValue = !prev;
@@ -325,6 +457,36 @@ function App() {
       return newValue;
     });
   }, []);
+
+  // Handle agent selection - zoom in and follow
+    const handleAgentSelect = useCallback((agentId: string) => {
+      setSelectedAgentId(agentId);
+      setFollowingAgentId(agentId);
+
+      // Find agent position and start following
+      const snapshot = latestSnapshotRef.current;
+      const agent = snapshot?.agents.find(a => a.id === agentId);
+      if (!agent || !gameRendererRef.current) return;
+
+      const camera = gameRendererRef.current.getCamera();
+
+      // Calculate zoom level based on vision distance
+      // We want the vision circle to fill about 40% of the screen
+      const canvasSize = Math.min(1920, 1080);
+      // AGENT_VISION_DISTANCE is in pixels
+      const targetZoom = (canvasSize * 0.4) / (AGENT_VISION_DISTANCE * 2);
+
+      camera.setZoom(Math.min(Math.max(targetZoom, 0.5), 2.5));
+
+      // Create a position object that we'll update each frame - position is already in pixels
+      const agentPos = { x: agent.movement.position.x, y: agent.movement.position.y };
+      camera.followPlayer(agentPos);
+    }, []);  // Handle stop following
+  const handleStopFollowing = useCallback(() => {
+    setFollowingAgentId(null);
+    gameRendererRef.current?.getCamera().stopFollowing();
+    handleCenterMap();
+  }, [handleCenterMap]);
 
   return (
     <div className="app-shell">
@@ -371,6 +533,15 @@ function App() {
             💬
           </button>
         </div>
+        {followingAgentId && (
+          <button 
+            className="stop-following-btn" 
+            onClick={handleStopFollowing}
+            title="Stop following agent"
+          >
+            ✕
+          </button>
+        )}
         <div
           className={`map-canvas ${isPanning ? 'panning' : ''}`}
           onMouseDown={handleCanvasMouseDown}
@@ -386,7 +557,13 @@ function App() {
         className="panel-resize-handle"
         onMouseDown={handleResizeMouseDown}
       />
-      <AgentInfoPanel agents={agentSummaries} width={panelWidth} taskProgress={taskProgress} />
+      <AgentInfoPanel 
+        agents={agentSummaries} 
+        width={panelWidth} 
+        taskProgress={taskProgress}
+        selectedAgentId={selectedAgentId}
+        onAgentSelect={handleAgentSelect}
+      />
     </div>
   );
 }
