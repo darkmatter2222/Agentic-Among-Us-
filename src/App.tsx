@@ -23,6 +23,12 @@ function App() {
   const [isDraggingPanel, setIsDraggingPanel] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
   const lastMousePos = useRef({ x: 0, y: 0 });
+  
+  // Visibility toggle states (all enabled by default)
+  const [showVisionBoxes, setShowVisionBoxes] = useState(true);
+  const [showActionRadius, setShowActionRadius] = useState(true);
+  const [showThinkingBubbles, setShowThinkingBubbles] = useState(true);
+  const [showSpeechBubbles, setShowSpeechBubbles] = useState(true);
 
   useEffect(() => {
     // Prevent double initialization during React Strict Mode or HMR
@@ -267,12 +273,76 @@ function App() {
     camera.focusOn(mapCenter.x, mapCenter.y, true);
   }, []);
 
+  // Toggle handlers for visibility controls
+  const handleToggleVisionBoxes = useCallback(() => {
+    setShowVisionBoxes(prev => {
+      const newValue = !prev;
+      agentVisualRendererRef.current?.toggleVisionBoxes(newValue);
+      return newValue;
+    });
+  }, []);
+
+  const handleToggleActionRadius = useCallback(() => {
+    setShowActionRadius(prev => {
+      const newValue = !prev;
+      agentVisualRendererRef.current?.toggleActionRadius(newValue);
+      return newValue;
+    });
+  }, []);
+
+  const handleToggleThinkingBubbles = useCallback(() => {
+    setShowThinkingBubbles(prev => {
+      const newValue = !prev;
+      agentVisualRendererRef.current?.toggleThinkingBubbles(newValue);
+      return newValue;
+    });
+  }, []);
+
+  const handleToggleSpeechBubbles = useCallback(() => {
+    setShowSpeechBubbles(prev => {
+      const newValue = !prev;
+      agentVisualRendererRef.current?.toggleSpeechBubbles(newValue);
+      return newValue;
+    });
+  }, []);
+
   return (
     <div className="app-shell">
       <div className="map-wrapper">
-        <button className="center-map-btn" onClick={handleCenterMap} title="Center & fit map">
-          ⊙
-        </button>
+        <div className="controls-panel">
+          <button className="control-btn" onClick={handleCenterMap} title="Center & fit map">
+            ⊙
+          </button>
+          <div className="control-divider" />
+          <button 
+            className={`control-btn ${showVisionBoxes ? 'active' : ''}`} 
+            onClick={handleToggleVisionBoxes} 
+            title="Toggle Vision Boxes"
+          >
+            👁
+          </button>
+          <button 
+            className={`control-btn ${showActionRadius ? 'active' : ''}`} 
+            onClick={handleToggleActionRadius} 
+            title="Toggle Action Radius"
+          >
+            ◎
+          </button>
+          <button 
+            className={`control-btn ${showThinkingBubbles ? 'active' : ''}`} 
+            onClick={handleToggleThinkingBubbles} 
+            title="Toggle Thinking Bubbles"
+          >
+            💭
+          </button>
+          <button 
+            className={`control-btn ${showSpeechBubbles ? 'active' : ''}`} 
+            onClick={handleToggleSpeechBubbles} 
+            title="Toggle Speech Bubbles"
+          >
+            💬
+          </button>
+        </div>
         <div
           className={`map-canvas ${isPanning ? 'panning' : ''}`}
           onMouseDown={handleCanvasMouseDown}

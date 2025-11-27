@@ -1,11 +1,11 @@
 /**
  * AI Agent Visual Renderer
- * Renders all AI agents with vision cones, action radii, paths, and speech bubbles
+ * Renders all AI agents with vision boxes, action radii, paths, and speech bubbles
  */
 
 import * as PIXI from 'pixi.js';
 import type { AgentSnapshot, SpeechEvent } from '@shared/types/simulation.types.ts';
-import { VisionConeRenderer } from './VisionConeRenderer.ts';
+import { VisionBoxRenderer } from './VisionBoxRenderer.ts';
 import { ActionRadiusRenderer } from './ActionRadiusRenderer.ts';
 import { PathLineRenderer } from './PathLineRenderer.ts';
 import { SpeechBubbleRenderer } from './SpeechBubbleRenderer.ts';
@@ -18,7 +18,7 @@ export interface AgentVisuals {
   rightLeg: PIXI.Graphics;         // Right leg (redrawn each frame for animation)
   shadow: PIXI.Graphics;           // Shadow under character
   bodyColor: number;               // Store color for leg redrawing
-  visionCone: VisionConeRenderer;
+  visionBox: VisionBoxRenderer;
   actionRadius: ActionRadiusRenderer;
   pathLine: PathLineRenderer;
 }
@@ -55,9 +55,11 @@ export class AIAgentVisualRenderer {
   private agentVisuals: Map<string, AgentVisualState>;
   private speechBubbleRenderer: SpeechBubbleRenderer;
   private thinkingBubbleRenderer: ThinkingBubbleRenderer;
-  private showVisionCones: boolean = true;
+  private showVisionBoxes: boolean = true;
   private showActionRadius: boolean = true;
   private showPaths: boolean = true;
+  private showSpeechBubbles: boolean = true;
+  private showThinkingBubbles: boolean = true;
 
   constructor() {
     this.container = new PIXI.Container();
@@ -91,7 +93,7 @@ export class AIAgentVisualRenderer {
       state.isThinking = snapshot.isThinking ?? false;
 
       // Adjust dynamic radii if they change (should be rare but keeps parity with server).
-      state.visuals.visionCone.updateConfig({ radius: snapshot.visionRadius * 1.4, color: snapshot.color });
+      state.visuals.visionBox.updateConfig({ size: snapshot.visionRadius * 1.4, color: snapshot.color });
       state.visuals.actionRadius.updateConfig({ radius: snapshot.actionRadius, color: snapshot.color });
       state.visuals.pathLine.updateConfig({ color: snapshot.color });
       
@@ -126,7 +128,7 @@ export class AIAgentVisualRenderer {
     for (const [agentId, state] of this.agentVisuals) {
       if (!activeIds.has(agentId)) {
         state.visuals.spriteContainer.destroy({ children: true });
-        state.visuals.visionCone.destroy();
+        state.visuals.visionBox.destroy();
         state.visuals.actionRadius.destroy();
         state.visuals.pathLine.destroy();
         this.speechBubbleRenderer.removeBubble(agentId);
@@ -230,12 +232,12 @@ export class AIAgentVisualRenderer {
         thinkingAgents.add(agentId);
       }
 
-      if (this.showVisionCones) {
-        // Vision cone follows container, NOT the bouncing body
-        visuals.visionCone.render({ x: visuals.spriteContainer.x, y: visuals.spriteContainer.y }, targetFacing);
-        visuals.visionCone.setVisible(true);
+      if (this.showVisionBoxes) {
+        // Vision box follows container, NOT the bouncing body
+        visuals.visionBox.render({ x: visuals.spriteContainer.x, y: visuals.spriteContainer.y }, targetFacing);
+        visuals.visionBox.setVisible(true);
       } else {
-        visuals.visionCone.setVisible(false);
+        visuals.visionBox.setVisible(false);
       }
 
       if (this.showActionRadius) {
@@ -258,14 +260,24 @@ export class AIAgentVisualRenderer {
     }
     
     // Update thinking bubbles with current positions and thinking states
-    this.thinkingBubbleRenderer.update(deltaTime, agentPositions, thinkingAgents);
+    if (this.showThinkingBubbles) {
+      this.thinkingBubbleRenderer.update(deltaTime, agentPositions, thinkingAgents);
+      this.thinkingBubbleRenderer.getContainer().visible = true;
+    } else {
+      this.thinkingBubbleRenderer.getContainer().visible = false;
+    }
     
     // Update speech bubbles with current agent positions
-    this.speechBubbleRenderer.update(deltaTime, agentPositions);
+    if (this.showSpeechBubbles) {
+      this.speechBubbleRenderer.update(deltaTime, agentPositions);
+      this.speechBubbleRenderer.getContainer().visible = true;
+    } else {
+      this.speechBubbleRenderer.getContainer().visible = false;
+    }
   }
 
-  toggleVisionCones(show?: boolean): void {
-    this.showVisionCones = show ?? !this.showVisionCones;
+  toggleVisionBoxes(show?: boolean): void {
+    this.showVisionBoxes = show ?? !this.showVisionBoxes;
   }
 
   toggleActionRadius(show?: boolean): void {
@@ -276,6 +288,21 @@ export class AIAgentVisualRenderer {
     this.showPaths = show ?? !this.showPaths;
   }
 
+  toggleSpeechBubbles(show?: boolean): void {
+    this.showSpeechBubbles = show ?? !this.showSpeechBubbles;
+  }
+
+  toggleThinkingBubbles(show?: boolean): void {
+    this.showThinkingBubbles = show ?? !this.showThinkingBubbles;
+  }
+
+  // Getter methods for current toggle states
+  isShowingVisionBoxes(): boolean { return this.showVisionBoxes; }
+  isShowingActionRadius(): boolean { return this.showActionRadius; }
+  isShowingPaths(): boolean { return this.showPaths; }
+  isShowingSpeechBubbles(): boolean { return this.showSpeechBubbles; }
+  isShowingThinkingBubbles(): boolean { return this.showThinkingBubbles; }
+
   getContainer(): PIXI.Container {
     return this.container;
   }
@@ -283,7 +310,7 @@ export class AIAgentVisualRenderer {
   clear(): void {
     for (const state of this.agentVisuals.values()) {
       state.visuals.spriteContainer.destroy({ children: true });
-      state.visuals.visionCone.destroy();
+      state.visuals.visionBox.destroy();
       state.visuals.actionRadius.destroy();
       state.visuals.pathLine.destroy();
     }
@@ -458,7 +485,7 @@ export class AIAgentVisualRenderer {
   destroy(): void {
     for (const state of this.agentVisuals.values()) {
       state.visuals.spriteContainer.destroy({ children: true });
-      state.visuals.visionCone.destroy();
+      state.visuals.visionBox.destroy();
       state.visuals.actionRadius.destroy();
       state.visuals.pathLine.destroy();
     }
@@ -579,11 +606,11 @@ export class AIAgentVisualRenderer {
     
     spriteContainer.addChild(bodyGraphics);
 
-    const visionCone = new VisionConeRenderer({
-      radius: snapshot.visionRadius * 1.4,
+    const visionBox = new VisionBoxRenderer({
+      size: snapshot.visionRadius * 1.4,
       color: snapshot.color,
-      alpha: 0.01,
-      angle: Math.PI / 2
+      alpha: 0.15,
+      rayCount: 90
     });
 
     const actionRadius = new ActionRadiusRenderer({
@@ -602,13 +629,13 @@ export class AIAgentVisualRenderer {
       gapLength: 4
     });
 
-    this.container.addChild(visionCone.getContainer());
+    this.container.addChild(visionBox.getContainer());
     this.container.addChild(pathLine.getContainer());
     this.container.addChild(actionRadius.getContainer());
     this.container.addChild(spriteContainer);
 
     const state: AgentVisualState = {
-      visuals: { spriteContainer, bodyGraphics, leftLeg, rightLeg, shadow, bodyColor, visionCone, actionRadius, pathLine },
+      visuals: { spriteContainer, bodyGraphics, leftLeg, rightLeg, shadow, bodyColor, visionBox, actionRadius, pathLine },
       targetPosition: { ...snapshot.movement.position },
       previousPosition: { ...snapshot.movement.position },
       targetFacing: snapshot.movement.facing,
