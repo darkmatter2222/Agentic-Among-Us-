@@ -281,19 +281,16 @@ export class AIAgent {
    * Make a behavioral decision (non-blocking - fires async and continues)
    */
   private makeDecisionAsync(): void {
-    this.behaviorState.isThinking = true;
-    
     const currentState = this.stateMachine.getActivityState();
     
     if (currentState === PlayerActivityState.IDLE && !this.aiState.isDoingTask) {
+      this.behaviorState.isThinking = true;
       // Fire and forget - don't await
       this.decideNextActionAsync().catch(err => {
         console.warn(`[${this.config.id}] Decision error:`, err);
       }).finally(() => {
         this.behaviorState.isThinking = false;
       });
-    } else {
-      this.behaviorState.isThinking = false;
     }
   }
   
@@ -660,9 +657,12 @@ export class AIAgent {
   private processTriggersAsync(): void {
     if (!this.triggerCallback) return;
     
+    this.behaviorState.isThinking = true;
     // Fire and forget - don't block the update loop
     this.processTriggers().catch(() => {
       // Silently fail on trigger processing
+    }).finally(() => {
+      this.behaviorState.isThinking = false;
     });
   }
   

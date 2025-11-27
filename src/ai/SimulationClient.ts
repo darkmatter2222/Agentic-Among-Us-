@@ -218,6 +218,23 @@ export class SimulationClient {
         };
       }
 
+      if (deltaEntry.aiStateChanged && deltaEntry.aiState) {
+        console.debug('[simulation] delta AI state update', agent.id, {
+          isThinking: deltaEntry.aiState.isThinking,
+          currentThought: deltaEntry.aiState.currentThought?.substring(0, 30),
+          recentSpeech: deltaEntry.aiState.recentSpeech?.substring(0, 30),
+          visibleAgents: deltaEntry.aiState.visibleAgentIds?.length ?? 0,
+          tasks: deltaEntry.aiState.assignedTasks?.length ?? 0
+        });
+        cloned.isThinking = deltaEntry.aiState.isThinking;
+        cloned.currentThought = deltaEntry.aiState.currentThought;
+        cloned.recentSpeech = deltaEntry.aiState.recentSpeech;
+        cloned.visibleAgentIds = deltaEntry.aiState.visibleAgentIds;
+        cloned.assignedTasks = deltaEntry.aiState.assignedTasks;
+        cloned.currentTaskIndex = deltaEntry.aiState.currentTaskIndex;
+        cloned.tasksCompleted = deltaEntry.aiState.tasksCompleted;
+      }
+
       updatedAgents.push(cloned);
       deltaById.delete(agent.id);
     }

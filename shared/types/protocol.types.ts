@@ -50,6 +50,18 @@ export interface AgentDelta {
   summary?: AgentSummarySnapshot;
   movementChanged: boolean;
   movement?: AgentSnapshot['movement'];
+  aiStateChanged?: boolean;
+  aiState?: AgentAIStateDelta;
+}
+
+export interface AgentAIStateDelta {
+  isThinking?: boolean;
+  currentThought?: string | null;
+  recentSpeech?: string | null;
+  visibleAgentIds?: string[];
+  assignedTasks?: AgentSnapshot['assignedTasks'];
+  currentTaskIndex?: number | null;
+  tasksCompleted?: number;
 }
 
 export interface HeartbeatPayload {

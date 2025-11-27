@@ -1,5 +1,5 @@
 import type { AgentSnapshot, WorldSnapshot } from '../types/simulation.types.ts';
-import type { AgentDelta, WorldDelta } from '../types/protocol.types.ts';
+import type { AgentAIStateDelta, AgentDelta, WorldDelta } from '../types/protocol.types.ts';
 
 function compareNumbers(a: number, b: number, epsilon = 0.001): boolean {
   return Math.abs(a - b) <= epsilon;
@@ -43,6 +43,59 @@ function summaryEqual(a: AgentSnapshot, b: AgentSnapshot): boolean {
   );
 }
 
+function arraysEqual<T>(a: T[] | undefined, b: T[] | undefined): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+function tasksEqual(a: AgentSnapshot['assignedTasks'], b: AgentSnapshot['assignedTasks']): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const taskA = a[i];
+    const taskB = b[i];
+    if (taskA.taskType !== taskB.taskType ||
+        taskA.room !== taskB.room ||
+        taskA.isCompleted !== taskB.isCompleted ||
+        taskA.isFaking !== taskB.isFaking ||
+        taskA.startedAt !== taskB.startedAt ||
+        taskA.completedAt !== taskB.completedAt) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function aiStateEqual(a: AgentSnapshot, b: AgentSnapshot): boolean {
+  return (
+    a.isThinking === b.isThinking &&
+    a.currentThought === b.currentThought &&
+    a.recentSpeech === b.recentSpeech &&
+    a.currentTaskIndex === b.currentTaskIndex &&
+    a.tasksCompleted === b.tasksCompleted &&
+    arraysEqual(a.visibleAgentIds, b.visibleAgentIds) &&
+    tasksEqual(a.assignedTasks, b.assignedTasks)
+  );
+}
+
+function buildAIStateDelta(agent: AgentSnapshot): AgentAIStateDelta {
+  return {
+    isThinking: agent.isThinking,
+    currentThought: agent.currentThought,
+    recentSpeech: agent.recentSpeech,
+    visibleAgentIds: agent.visibleAgentIds,
+    assignedTasks: agent.assignedTasks,
+    currentTaskIndex: agent.currentTaskIndex,
+    tasksCompleted: agent.tasksCompleted,
+  };
+}
+
 function buildLookup(snapshot: WorldSnapshot): Map<string, AgentSnapshot> {
   const map = new Map<string, AgentSnapshot>();
   for (const agent of snapshot.agents) {
@@ -68,6 +121,8 @@ export function diffWorldSnapshots(previous: WorldSnapshot | null, current: Worl
         },
         movementChanged: true,
         movement: agent.movement,
+        aiStateChanged: true,
+        aiState: buildAIStateDelta(agent),
       })),
       removedAgents: [],
     };
@@ -93,14 +148,17 @@ export function diffWorldSnapshots(previous: WorldSnapshot | null, current: Worl
         },
         movementChanged: true,
         movement: agent.movement,
+        aiStateChanged: true,
+        aiState: buildAIStateDelta(agent),
       });
       continue;
     }
 
     const movementChanged = !movementEqual(agent.movement, previousAgent.movement);
     const summaryChanged = !summaryEqual(agent, previousAgent);
+    const aiStateChanged = !aiStateEqual(agent, previousAgent);
 
-    if (movementChanged || summaryChanged) {
+    if (movementChanged || summaryChanged || aiStateChanged) {
       deltas.push({
         id: agent.id,
         summaryChanged,
@@ -115,6 +173,8 @@ export function diffWorldSnapshots(previous: WorldSnapshot | null, current: Worl
           : undefined,
         movementChanged,
         movement: movementChanged ? agent.movement : undefined,
+        aiStateChanged,
+        aiState: aiStateChanged ? buildAIStateDelta(agent) : undefined,
       });
     }
   }
