@@ -49,7 +49,20 @@ This project creates a fully autonomous Among Us simulation where:
 
 - **Node.js 22 LTS** or newer
 - **npm 10+**
-- (Optional) Local LLM server for AI decisions (falls back to rule-based behavior)
+- **LLM Server**: Qwen2.5-3B-Instruct running via llama.cpp Docker (see [`docker-manage/`](./docker-manage/README.md))
+
+## LLM Server Setup
+
+The simulation requires a local LLM server for AI agent decisions. We use **Qwen2.5-3B-Instruct** (Q4_K_M quantization) running in Docker with CUDA:
+
+```powershell
+# From docker-manage directory
+.\deploy.ps1
+```
+
+This downloads the model and starts llama.cpp on port 8080. See [`docker-manage/README.md`](./docker-manage/README.md) for full setup instructions.
+
+**Performance**: ~180 tokens/sec on RTX 3090, ~300-400ms per agent decision.
 
 ## Installation
 
@@ -123,7 +136,7 @@ agentrunner/
 
 - **Server**: Fastify, WebSocket, TypeScript
 - **Client**: React 19, PixiJS 8, Zustand
-- **AI**: External LLM server integration with fallback behaviors
+- **AI**: Qwen2.5-3B-Instruct via llama.cpp Docker (CUDA)
 - **Build**: Vite, Vitest, ESLint, TypeScript 5.9
 
 ### WebSocket Protocol
@@ -163,9 +176,11 @@ Agents can pursue these goals based on LLM reasoning:
 
 ## Related Documentation
 
-- [`agents.md`](./agents.md) – Complete Among Us game mechanics reference for AI agents
-- [`upgrade.md`](./upgrade.md) – Migration checklist and progress
-- [`maps/README.md`](./maps/README.md) – Map editor documentation
+- [`agents.md`](./agents.md) — Complete Among Us game mechanics reference for AI agents
+- [`docker-manage/README.md`](./docker-manage/README.md) — LLM server deployment and management
+- [`docker-manage/agents.md`](./docker-manage/agents.md) — Docker infrastructure documentation
+- [`upgrade.md`](./upgrade.md) — Migration checklist and progress
+- [`maps/README.md`](./maps/README.md) — Map editor documentation
 
 ---
 

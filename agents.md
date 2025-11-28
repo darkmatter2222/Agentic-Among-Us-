@@ -570,7 +570,8 @@ Tasks per Agent:   5
 Map:               The Skeld
 Tick Rate:         60 Hz
 Vision System:     Radius-based with obstruction
-AI Backend:        External LLM server (with fallback)
+AI Backend:        Qwen2.5-3B-Instruct (Q4_K_M) via llama.cpp Docker
+LLM Performance:   ~180 tokens/sec, ~300-400ms per decision
 ```
 
 ### Map Data Available

@@ -76,7 +76,7 @@ class AIModelClient {
    * Get a decision through the LLM queue (serialized, with timeout)
    */
   async getDecision(systemPrompt: string, userPrompt: string, options?: AIModelOptions): Promise<string> {
-    const queue = getLLMQueue();
+    const queue = getLLMQueue(10000); // 10 second timeout for LLM requests
     return queue.enqueue(() => this.makeRequest(systemPrompt, userPrompt, options));
   }
 }
@@ -136,7 +136,7 @@ export class AIDecisionService {
    * Get LLM queue statistics for monitoring
    */
   getQueueStats(): LLMQueueStats {
-    return getLLMQueue().getStats();
+    return getLLMQueue(10000).getStats();
   }
 
   /**
@@ -235,7 +235,7 @@ export class AIDecisionService {
     try {
       const response = await this.aiClient.getDecision(systemPrompt, userPrompt, {
         temperature: 0.8,
-        maxTokens: 250
+        maxTokens: 100  // Reduced from 250 for faster responses (~900ms vs ~2.2s)
       });
 
       return parseAIResponse(response, context);

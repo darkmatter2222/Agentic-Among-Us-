@@ -2,6 +2,20 @@
 
 Scripts to manage the llama.cpp Docker container running on your home server (Ubuntu with RTX 3090).
 
+## Quick Start
+
+```powershell
+# One command to deploy everything
+.\deploy.ps1
+```
+
+This will:
+1. Stop any existing containers
+2. Install Docker + NVIDIA toolkit (if needed)
+3. Download the model from HuggingFace
+4. Start the llama.cpp server with CUDA
+5. Test the LLM endpoint
+
 ## Setup
 
 1. Copy `.env.example` to `.env`:
@@ -20,16 +34,17 @@ Scripts to manage the llama.cpp Docker container running on your home server (Ub
 
 | Script | Description |
 |--------|-------------|
-| `deploy.ps1` | Full deployment: tear down old container, download new model, start new container |
+| `deploy.ps1` | Full deployment: install Docker, download model, start container, test |
 | `teardown.ps1` | Stop and remove all GPU containers |
 | `start.ps1` | Start the llama.cpp container with current model |
 | `status.ps1` | Check container status and GPU usage |
 | `logs.ps1` | View container logs |
+| `switch-model.ps1` | Switch to a different model |
 
 ### Usage
 
 ```powershell
-# Full deploy with new Qwen3-8B model
+# Full deploy (recommended first time)
 .\deploy.ps1
 
 # Just tear down existing containers
@@ -42,22 +57,53 @@ Scripts to manage the llama.cpp Docker container running on your home server (Ub
 .\logs.ps1
 ```
 
-## Model Info
+## Current Model
 
-**Qwen3-8B-GGUF (Q8_0)**
-- Size: ~8.71 GB
-- Context: 32,768 tokens (up to 131,072 with YaRN)
-- Features:
-  - Thinking/non-thinking modes (`/think`, `/no_think`)
-  - Excellent agent capabilities
-  - 100+ language support
-  - Superior reasoning vs Qwen2.5
+**Qwen2.5-3B-Instruct (Q4_K_M)**
+- Size: ~2.1 GB
+- Speed: ~180 tokens/sec on RTX 3090
+- Decision time: ~300-400ms per agent decision
+- Context: 4,096 tokens (configurable)
 
-### Best Practices for Qwen3
+### Why This Model?
 
-- **Thinking mode**: `Temperature=0.6`, `TopP=0.95`, `TopK=20`
-- **Non-thinking mode**: `Temperature=0.7`, `TopP=0.8`, `TopK=20`
-- Use `presence_penalty=1.5` for quantized models to reduce repetition
+We chose Qwen2.5-3B-Instruct for optimal speed/quality balance:
+
+| Model | Size | Speed | Decision Time |
+|-------|------|-------|---------------|
+| Qwen3-8B-Q4_K_M | ~5 GB | ~110 tok/s | ~2500ms |
+| **Qwen2.5-3B-Q4_K_M** | **~2 GB** | **~180 tok/s** | **~350ms** |
+
+The 3B model is **4x faster** while maintaining excellent reasoning quality for game agent decisions.
+
+### Container Configuration
+
+```bash
+docker run -d --name llama-server \
+  --gpus all \
+  -v /home/darkmatter2222/models:/models \
+  -p 8080:8080 \
+  ghcr.io/ggerganov/llama.cpp:server-cuda \
+  -m /models/qwen2.5-3b-instruct-q4_k_m.gguf \
+  --host 0.0.0.0 --port 8080 \
+  -ngl 99 -c 4096 -fa
+```
+
+**Flags:**
+- `-ngl 99`: Offload all layers to GPU
+- `-c 4096`: Context size (4K tokens)
+- `-fa`: Flash Attention for faster inference
+
+## Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `SSH_HOST` | Ubuntu server IP | `192.168.86.48` |
+| `SSH_USER` | SSH username | `darkmatter2222` |
+| `SSH_PASSWORD` | SSH password | - |
+| `MODEL_FILE` | GGUF model filename | `qwen2.5-3b-instruct-q4_k_m.gguf` |
+| `CONTEXT_SIZE` | Max context tokens | `4096` |
+| `FLASH_ATTENTION` | Enable flash attention | `true` |
 
 ## Troubleshooting
 
@@ -66,9 +112,32 @@ Scripts to manage the llama.cpp Docker container running on your home server (Ub
 - Ensure Docker has GPU access: `docker run --rm --gpus all nvidia/cuda:12.0-base nvidia-smi`
 
 ### Model download fails
-- The script uses `huggingface-cli` - ensure it's installed in the container
-- Or manually download: `wget https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/main/qwen3-8b-q8_0.gguf`
+- Manual download: `wget https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf`
 
-### Out of memory
-- Try Q6_K (~6.73 GB) or Q5_K_M (~5.85 GB) quantization instead
-- Reduce `GPU_LAYERS` or `CONTEXT_SIZE`
+### Slow inference
+- Ensure all layers on GPU (`-ngl 99`)
+- Enable Flash Attention (`-fa`)
+- Check GPU memory: `nvidia-smi`
+
+### Out of memory (unlikely with 3B model)
+- The 3B model only uses ~2GB VRAM
+- RTX 3090 has 24GB - plenty of headroom
+
+## API Endpoint
+
+Once running, the OpenAI-compatible API is available at:
+
+```
+http://192.168.86.48:8080/v1/chat/completions
+```
+
+Test with:
+```powershell
+$body = @{model="qwen";messages=@(@{role="user";content="Hello"});max_tokens=50} | ConvertTo-Json -Depth 3
+Invoke-RestMethod -Uri "http://192.168.86.48:8080/v1/chat/completions" -Method Post -ContentType "application/json" -Body $body
+```
+
+## Related Documentation
+
+- [`agents.md`](./agents.md) — Infrastructure documentation for AI agents
+- [`../README.md`](../README.md) — Main project documentation
