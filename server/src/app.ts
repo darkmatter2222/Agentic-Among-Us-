@@ -4,6 +4,7 @@ import cors from '@fastify/cors';
 import { WebSocket } from 'ws';
 import { PROTOCOL_VERSION, type ServerMessage } from '@shared/types/protocol.types.ts';
 import type { WorldSnapshot } from '@shared/types/simulation.types.ts';
+import type { LLMTraceEvent } from '@shared/types/llm-trace.types.ts';
 import { diffWorldSnapshots } from '@shared/engine/stateDiff.ts';
 import { GameSimulation } from './simulation/GameSimulation.js';
 import { SimulationLoop } from './simulation/SimulationLoop.js';
@@ -49,6 +50,26 @@ export async function buildServer(options: BuildOptions = {}) {
   const clients = new Set<WebSocket>();
   const HEARTBEAT_INTERVAL_MS = 15000;
   const METRICS_LOG_INTERVAL_MS = 10000;
+
+  // Subscribe to LLM trace events from AIDecisionService
+  const aiService = simulation.getAIService();
+  if (aiService) {
+    aiService.onLLMTrace((trace: LLMTraceEvent) => {
+      if (clients.size === 0) return;
+      const message: ServerMessage = {
+        type: 'llm-trace',
+        payload: trace,
+      };
+      const serialized = JSON.stringify(message);
+      for (const socket of clients) {
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(serialized);
+        }
+      }
+      fastify.log.debug({ agentName: trace.agentName, traceId: trace.id }, 'LLM trace event broadcast');
+    });
+    fastify.log.info('Subscribed to LLM trace events');
+  }
   let heartbeatTimer: NodeJS.Timeout | null = null;
   let metricsLogTimer: NodeJS.Timeout | null = null;
   let lastBroadcastSnapshot: WorldSnapshot | null = null;

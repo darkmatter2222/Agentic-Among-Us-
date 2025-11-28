@@ -14,6 +14,7 @@ import type {
   SpeechEvent,
   ThoughtTrigger
 } from '@shared/types/simulation.types.ts';
+import type { LLMTraceEvent, AgentPositionSnapshot } from '@shared/types/llm-trace.types.ts';
 import { COLOR_NAMES } from '@shared/constants/colors.ts';
 import {
   buildCrewmatePrompt,
@@ -197,6 +198,13 @@ export class AIDecisionService {
   private pendingSpeech: SpeechEvent[];
   private thoughtIdCounter: number;
   private speechIdCounter: number;
+  private traceIdCounter: number;
+  
+  // LLM trace event listeners
+  private traceListeners: Set<(trace: LLMTraceEvent) => void>;
+  
+  // Current agent positions (updated externally for trace capture)
+  private currentAgentPositions: AgentPositionSnapshot[] = [];
   
   // Active conversations between agents
   private activeConversations: Map<string, ActiveConversation>;
@@ -210,6 +218,8 @@ export class AIDecisionService {
     this.pendingSpeech = [];
     this.thoughtIdCounter = 0;
     this.speechIdCounter = 0;
+    this.traceIdCounter = 0;
+    this.traceListeners = new Set();
     this.activeConversations = new Map();
     this.conversationIdCounter = 0;
   }
@@ -252,6 +262,53 @@ export class AIDecisionService {
    * Initialize state tracking for an agent
    * Each agent gets a randomized starting offset to avoid synchronized thinking
    */
+  // ========== LLM Trace Event System ==========
+  
+  /**
+   * Register a listener for LLM trace events
+   */
+  onLLMTrace(listener: (trace: LLMTraceEvent) => void): () => void {
+    this.traceListeners.add(listener);
+    return () => {
+      this.traceListeners.delete(listener);
+    };
+  }
+  
+  /**
+   * Update current agent positions (called by simulation each tick for trace capture)
+   */
+  updateAgentPositions(positions: AgentPositionSnapshot[]): void {
+    this.currentAgentPositions = positions;
+  }
+  
+  /**
+   * Emit a trace event to all listeners
+   */
+  private emitTraceEvent(trace: LLMTraceEvent): void {
+    for (const listener of this.traceListeners) {
+      try {
+        listener(trace);
+      } catch (error) {
+        console.error('[AIDecisionService] Error in trace listener:', error);
+      }
+    }
+  }
+  
+  /**
+   * Generate unique trace ID
+   */
+  private generateTraceId(): string {
+    return `trace-${++this.traceIdCounter}-${Date.now()}`;
+  }
+
+  /**
+   * Get agent color from current positions snapshot
+   */
+  private getAgentColor(agentId: string): number {
+    const agent = this.currentAgentPositions.find(a => a.id === agentId);
+    return agent?.color ?? 0;
+  }
+
   initializeAgent(agentId: string): void {
     const now = Date.now();
     // Randomize initial state to desynchronize agents
@@ -402,14 +459,61 @@ export class AIDecisionService {
       : buildCrewmatePrompt(context);
 
     const userPrompt = this.buildUserPrompt(context);
+    
+    const startTime = Date.now();
+    let rawResponse = '';
 
     try {
       const response = await this.aiClient.getDecision(systemPrompt, userPrompt, {
         temperature: 0.8,
         maxTokens: 100  // Reduced from 250 for faster responses (~900ms vs ~2.2s)
       });
-
-      return parseAIResponse(response, context);
+      rawResponse = response;
+      const decision = parseAIResponse(response, context);
+      
+      // Emit trace event for successful decision
+      this.emitTraceEvent({
+        id: this.generateTraceId(),
+        timestamp: Date.now(),
+        agentId: context.agentId,
+        agentName: context.agentName,
+        agentColor: this.getAgentColor(context.agentId),
+        agentRole: context.role,
+        requestType: 'decision',
+        systemPrompt,
+        userPrompt,
+        rawResponse,
+        parsedDecision: {
+          goalType: decision.goalType,
+          targetAgentId: decision.targetAgentId,
+          targetTaskIndex: decision.targetTaskIndex,
+          reasoning: decision.reasoning,
+          thought: decision.thought,
+          speech: decision.speech
+        },
+        context: {
+          zone: context.currentZone,
+          visibleAgents: context.visibleAgents.map(a => ({
+            id: a.id,
+            name: a.name,
+            distance: a.distance
+          })),
+          assignedTasks: context.assignedTasks.map(t => ({
+            taskType: t.taskType,
+            room: t.room,
+            isCompleted: t.isCompleted
+          })),
+          taskProgress: {
+            completed: context.assignedTasks.filter(t => t.isCompleted).length,
+            total: context.assignedTasks.length
+          }
+        },
+        agentPositions: this.currentAgentPositions,
+        durationMs: Date.now() - startTime,
+        success: true
+      });
+      
+      return decision;
     } catch (error) {
       // Silently fallback on timeout/queue errors (expected under load)
       const isExpectedError = error instanceof Error && 
@@ -480,7 +584,9 @@ export class AIDecisionService {
     const systemPrompt = buildThoughtPrompt(context, trigger);
     const userPrompt = this.buildThoughtUserPrompt(context, trigger);
 
+    const startTime = Date.now();
     let thought: string;
+    let usedFallback = false;
     try {
       thought = await this.aiClient.getDecision(systemPrompt, userPrompt, {
         temperature: 0.9,
@@ -492,7 +598,42 @@ export class AIDecisionService {
     } catch {
       // Fallback thought
       thought = this.fallbackThought(context, trigger);
+      usedFallback = true;
     }
+
+    // Emit trace event for thought generation
+    this.emitTraceEvent({
+      id: this.generateTraceId(),
+      timestamp: Date.now(),
+      agentId: context.agentId,
+      agentName: context.agentName,
+      agentColor: this.getAgentColor(context.agentId),
+      agentRole: context.role,
+      requestType: 'thought',
+      systemPrompt,
+      userPrompt,
+      rawResponse: thought,
+      context: {
+        zone: context.currentZone,
+        visibleAgents: context.visibleAgents.map(a => ({
+          id: a.id,
+          name: a.name,
+          distance: a.distance
+        })),
+        assignedTasks: context.assignedTasks.map(t => ({
+          taskType: t.taskType,
+          room: t.room,
+          isCompleted: t.isCompleted
+        })),
+        taskProgress: {
+          completed: context.assignedTasks.filter(t => t.isCompleted).length,
+          total: context.assignedTasks.length
+        }
+      },
+      agentPositions: this.currentAgentPositions,
+      durationMs: Date.now() - startTime,
+      success: !usedFallback
+    });
 
     const event: ThoughtEvent = {
       id: `thought_${++this.thoughtIdCounter}`,
@@ -511,7 +652,7 @@ export class AIDecisionService {
    * Generate speech for the agent
    */
   private async generateSpeech(
-    context: AIContext, 
+    context: AIContext,
     currentThought: string | undefined,
     timestamp: number
   ): Promise<SpeechEvent | null> {
@@ -525,7 +666,10 @@ Nearby agents (NOT you): ${othersNearby.join(', ') || 'None'}
 Remember: You are ${context.agentName}. Don't talk about yourself in third person.
 What do you say out loud? Keep it brief and natural (1-2 sentences).`;
 
+    const startTime = Date.now();
     let message: string;
+    let usedFallback = false;
+    let silent = false;
     try {
       message = await this.aiClient.getDecision(systemPrompt, userPrompt, {
         temperature: 0.9,
@@ -536,7 +680,7 @@ What do you say out loud? Keep it brief and natural (1-2 sentences).`;
 
       // Clean up self-references (talking about yourself in third person)
       message = cleanSelfReferences(message, context.agentName);
-      
+
       // Check for invalid mentions (agents not nearby)
       const invalidMentions = findInvalidMentions(message, context.agentName, othersNearby);
       if (invalidMentions.length > 0) {
@@ -546,14 +690,16 @@ What do you say out loud? Keep it brief and natural (1-2 sentences).`;
       }
     } catch (error) {
       // On timeout/queue errors, don't generate fallback speech - just stay quiet
-      const isTimeoutOrQueue = error instanceof Error && 
-        (error.name === 'AbortError' || 
+      const isTimeoutOrQueue = error instanceof Error &&
+        (error.name === 'AbortError' ||
          error.message.includes('timed out') ||
          error.message.includes('Queue cleared'));
       if (isTimeoutOrQueue) {
-        return null; // Stay silent on timeout/queue issues
+        silent = true;
+        message = ''; // Stay silent on timeout/queue issues
       } else {
         message = this.fallbackSpeech(context);
+        usedFallback = true;
       }
     }
 
@@ -561,6 +707,40 @@ What do you say out loud? Keep it brief and natural (1-2 sentences).`;
     if (!message || message.trim() === '') {
       return null;
     }
+
+    // Emit trace event for speech generation
+    this.emitTraceEvent({
+      id: this.generateTraceId(),
+      timestamp: Date.now(),
+      agentId: context.agentId,
+      agentName: context.agentName,
+      agentColor: this.getAgentColor(context.agentId),
+      agentRole: context.role,
+      requestType: 'speech',
+      systemPrompt,
+      userPrompt,
+      rawResponse: message,
+      context: {
+        zone: context.currentZone,
+        visibleAgents: context.visibleAgents.map(a => ({
+          id: a.id,
+          name: a.name,
+          distance: a.distance
+        })),
+        assignedTasks: context.assignedTasks.map(t => ({
+          taskType: t.taskType,
+          room: t.room,
+          isCompleted: t.isCompleted
+        })),
+        taskProgress: {
+          completed: context.assignedTasks.filter(t => t.isCompleted).length,
+          total: context.assignedTasks.length
+        }
+      },
+      agentPositions: this.currentAgentPositions,
+      durationMs: Date.now() - startTime,
+      success: !usedFallback && !silent
+    });
 
     const event: SpeechEvent = {
       id: `speech_${++this.speechIdCounter}`,

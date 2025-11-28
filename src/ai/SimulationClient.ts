@@ -1,15 +1,18 @@
 import type { ServerMessage, WorldDelta } from '@shared/types/protocol.types.ts';
 import type { AgentSnapshot, WorldSnapshot } from '@shared/types/simulation.types.ts';
+import type { LLMTraceEvent } from '@shared/types/llm-trace.types.ts';
 
 type WorldListener = (snapshot: WorldSnapshot) => void;
 type ConnectionState = 'connecting' | 'connected' | 'disconnected' | 'stale' | 'reconnecting';
 type ConnectionListener = (state: ConnectionState) => void;
+type LLMTraceListener = (trace: LLMTraceEvent) => void;
 
 export class SimulationClient {
   private socket: WebSocket | null = null;
   private world: WorldSnapshot | null = null;
   private listeners = new Set<WorldListener>();
   private connectionListeners = new Set<ConnectionListener>();
+  private llmTraceListeners = new Set<LLMTraceListener>();
   private state: ConnectionState = 'disconnected';
   private lastHeartbeatAt: number = 0;
   private heartbeatMonitorId: number | null = null;
@@ -191,6 +194,15 @@ export class SimulationClient {
     };
   }
 
+  onLLMTrace(listener: LLMTraceListener): () => void {
+    this.llmTraceListeners.add(listener);
+    console.debug('[simulation] registered LLM trace listener', { count: this.llmTraceListeners.size });
+    return () => {
+      this.llmTraceListeners.delete(listener);
+      console.debug('[simulation] removed LLM trace listener', { count: this.llmTraceListeners.size });
+    };
+  }
+
   getWorld(): WorldSnapshot | null {
     return this.world;
   }
@@ -247,6 +259,17 @@ export class SimulationClient {
       }
       case 'error': {
         console.error('Simulation server error:', message.payload);
+        break;
+      }
+      case 'llm-trace': {
+        console.debug('[simulation] received LLM trace', { 
+          agentName: message.payload.agentName, 
+          requestType: message.payload.requestType,
+          goalType: message.payload.parsedDecision?.goalType
+        });
+        for (const listener of this.llmTraceListeners) {
+          listener(message.payload);
+        }
         break;
       }
       default:

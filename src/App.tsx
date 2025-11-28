@@ -7,7 +7,12 @@ import { AIAgentVisualRenderer } from './rendering/AIAgentVisualRenderer';
 import { getSimulationClient } from './ai/SimulationClient';
 import type { WorldSnapshot, SpeechEvent, GameTimerSnapshot } from '@shared/types/simulation.types.ts';
 import type { LLMQueueStats } from '@shared/types/protocol.types.ts';
+import type { LLMTraceEvent } from '@shared/types/llm-trace.types.ts';
 import { AgentInfoPanel, type AgentSummary } from './components/AgentInfoPanel';
+import { LLMTimelinePanel } from './components/LLMTimelinePanel';
+
+// Maximum number of LLM trace events to keep in the timeline
+const MAX_TRACE_EVENTS = 50;
 
 // Vision distance in pixels (matches agent visionRadius config)
 const AGENT_VISION_DISTANCE = 150;
@@ -40,6 +45,8 @@ function App() {
   const [showThinkingBubbles, setShowThinkingBubbles] = useState(true);
   const [showSpeechBubbles, setShowSpeechBubbles] = useState(true);
   const [lightsOn, setLightsOn] = useState(true);
+  const [llmTraceEvents, setLlmTraceEvents] = useState<LLMTraceEvent[]>([]);
+  const [leftPanelWidth, setLeftPanelWidth] = useState(340);
 
   useEffect(() => {
     // Prevent double initialization during React Strict Mode or HMR
@@ -187,6 +194,16 @@ function App() {
       }
     });
 
+    // Subscribe to LLM trace events for the timeline panel
+    const unsubscribeLLMTrace = simulationClient.onLLMTrace((trace) => {
+      console.debug('[App] LLM trace event received:', trace.id, trace.agentName);
+      setLlmTraceEvents((prev) => {
+        const updated = [trace, ...prev];
+        // Keep only the most recent MAX_TRACE_EVENTS
+        return updated.slice(0, MAX_TRACE_EVENTS);
+      });
+    });
+
     // Only connect if not already connected (singleton may already be connected)
     if (!simulationClient.isConnected()) {
       simulationClient.connect();
@@ -196,6 +213,7 @@ function App() {
       disposedRef.current = true;
       unsubscribeWorld();
       unsubscribeConnection();
+      unsubscribeLLMTrace();
       // DON'T disconnect the singleton - it should persist across HMR
       // simulationClient.disconnect();
 
@@ -497,6 +515,10 @@ function App() {
 
   return (
     <div className="app-shell">
+      <LLMTimelinePanel 
+        width={leftPanelWidth}
+        events={llmTraceEvents}
+      />
       <div className="map-wrapper">
         <div className="controls-panel">
           <button className="control-btn" onClick={handleCenterMap} title="Center & fit map">

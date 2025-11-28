@@ -86,12 +86,18 @@ export interface ErrorMessage {
   };
 }
 
+export interface LLMTraceMessage {
+  type: 'llm-trace';
+  payload: import('./llm-trace.types.ts').LLMTraceEvent;
+}
+
 export type ServerMessage =
   | ({ type: 'handshake'; payload: HandshakePayload })
   | SnapshotMessage
   | StateDeltaMessage
   | HeartbeatMessage
-  | ErrorMessage;
+  | ErrorMessage
+  | LLMTraceMessage;
 
 export interface WorldDelta {
   tick: number;

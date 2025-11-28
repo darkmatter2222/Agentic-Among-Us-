@@ -220,6 +220,21 @@ export class GameSimulation {
 
     if (deltaSeconds > 0) {
       this.manager.update(deltaSeconds);
+      
+      // Update AI service with current agent positions for trace capture
+      if (this.aiService) {
+        const agents = this.manager.getAgents();
+        const positions = agents.map(a => ({
+          id: a.getId(),
+          name: a.getName(),
+          color: a.getColor(),
+          position: a.getPosition(),
+          zone: a.getCurrentZone(),
+          activityState: a.getStateMachine().getActivityState() as string,
+          currentGoal: a.getCurrentGoal(),
+        }));
+        this.aiService.updateAgentPositions(positions);
+      }
     }
 
     // Collect AI events
@@ -267,6 +282,10 @@ export class GameSimulation {
 
   getAgentManager(): AIAgentManager {
     return this.manager;
+  }
+  
+  getAIService(): AIDecisionService | null {
+    return this.aiService;
   }
   
   getGamePhase(): string {
