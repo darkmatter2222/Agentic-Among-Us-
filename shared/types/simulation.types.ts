@@ -90,6 +90,7 @@ export interface AgentSnapshot {
   
   // Perception (who this agent can see)
   visibleAgentIds?: string[];
+  visibleAgentNames?: string[]; // Color names of visible agents for UI
   
   // Social/Trust (suspicion levels toward other agents)
   suspicionLevels?: Record<string, number>; // agentId -> 0-100

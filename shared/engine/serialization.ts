@@ -74,6 +74,7 @@ export function serializeAgent(agent: AIAgent, timestamp: number): AgentSnapshot
     
     // Perception
     visibleAgentIds: agent.getVisibleAgentIds(),
+    visibleAgentNames: agent.getVisibleAgentNames(),
     suspicionLevels: agent.getSuspicionLevels(),
     
     // Memory context for UI

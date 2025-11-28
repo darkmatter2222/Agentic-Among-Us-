@@ -190,9 +190,13 @@ function ExpandedAgentCard({ agent, onClose }: ExpandedAgentCardProps) {
             </div>
             
             <div className="expanded-card__section">
-              <div className="section-label">Visible Agents ({agent.visibleAgentIds?.length ?? 0})</div>
+              <div className="section-label">Visible Agents ({agent.visibleAgentNames?.length ?? agent.visibleAgentIds?.length ?? 0})</div>
               <div className="visible-agents-list">
-                {agent.visibleAgentIds && agent.visibleAgentIds.length > 0 ? (
+                {agent.visibleAgentNames && agent.visibleAgentNames.length > 0 ? (
+                  agent.visibleAgentNames.map((name, idx) => (
+                    <span key={idx} className="visible-agent-tag" style={{ color: name.toLowerCase() }}>{name}</span>
+                  ))
+                ) : agent.visibleAgentIds && agent.visibleAgentIds.length > 0 ? (
                   agent.visibleAgentIds.map(id => (
                     <span key={id} className="visible-agent-tag">{id.replace('agent_', '#')}</span>
                   ))
@@ -276,7 +280,9 @@ function ExpandedAgentCard({ agent, onClose }: ExpandedAgentCardProps) {
   );
 }
 
-// LLM Queue Statistics Panel
+// LLM Queue Statistics Panel - Capacity-aware monitoring
+type TimeInterval = '1min' | '5min';
+
 function LLMQueuePanel({ stats, isCollapsed, onToggle, height, onHeightChange }: {
   stats?: LLMQueueStats;
   isCollapsed: boolean;
@@ -286,23 +292,37 @@ function LLMQueuePanel({ stats, isCollapsed, onToggle, height, onHeightChange }:
 }) {
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
   const [isResizing, setIsResizing] = useState(false);
+  const [_timeInterval, setTimeInterval] = useState<TimeInterval>('1min');
 
-  const getHealthColor = (avgTime: number, queueDepth: number) => {
-    if (queueDepth > 10 || avgTime > 800) return '#e74c3c'; // Red - unhealthy
-    if (queueDepth > 5 || avgTime > 500) return '#f39c12'; // Orange - warning
-    return '#2ecc71'; // Green - healthy
+  const getHealthColor = (utilization: number, queueDepth: number) => {
+    if (queueDepth > 10 || utilization > 0.9) return '#e74c3c';
+    if (queueDepth > 5 || utilization > 0.7) return '#f39c12';
+    return '#2ecc71';
   };
 
-const handleCopyStats = useCallback(async (e: React.MouseEvent) => {
-    e.stopPropagation(); // Prevent panel collapse
-    if (!stats) return;
+  const getCapacityColor = (utilization: number) => {
+    if (utilization > 0.9) return '#e74c3c';
+    if (utilization > 0.7) return '#f39c12';
+    if (utilization > 0.5) return '#f1c40f';
+    return '#2ecc71';
+  };
 
+  const getThinkingCoeffColor = (coeff: number) => {
+    if (coeff >= 1.3) return '#2ecc71';
+    if (coeff >= 1.0) return '#4caf50';
+    if (coeff >= 0.5) return '#f39c12';
+    return '#e74c3c';
+  };
+
+  const handleCopyStats = useCallback(async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!stats) return;
     const jsonStr = JSON.stringify(stats, null, 2);
     try {
       await navigator.clipboard.writeText(jsonStr);
       setCopyFeedback('Copied!');
       setTimeout(() => setCopyFeedback(null), 2000);
-    } catch (err) {
+    } catch {
       setCopyFeedback('Failed');
       setTimeout(() => setCopyFeedback(null), 2000);
     }
@@ -314,31 +334,27 @@ const handleCopyStats = useCallback(async (e: React.MouseEvent) => {
     setIsResizing(true);
     const startY = e.clientY;
     const startHeight = height || 300;
-
     const handleMouseMove = (e: MouseEvent) => {
-      const deltaY = startY - e.clientY; // Dragging up increases height
-      const newHeight = Math.max(100, Math.min(600, startHeight + deltaY));
+      const deltaY = startY - e.clientY;
+      const newHeight = Math.max(100, Math.min(700, startHeight + deltaY));
       onHeightChange?.(newHeight);
     };
-
     const handleMouseUp = () => {
       setIsResizing(false);
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
     };
-
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
-  }, [height, onHeightChange]);  const healthColor = stats
-    ? getHealthColor(stats.avgProcessingTimeMs1Min, stats.queueDepth)
-    : '#666';
+  }, [height, onHeightChange]);
+
+  const healthColor = stats ? getHealthColor(stats.capacityUtilization || 0, stats.queueDepth) : '#666';
 
   return (
-    <div 
+    <div
       className={`collapsible-panel llm-queue-panel ${isCollapsed ? 'collapsed' : ''} ${isResizing ? 'resizing' : ''}`}
       style={!isCollapsed && height ? { height: `${height}px`, maxHeight: `${height}px` } : undefined}
     >
-      {/* Resize Handle */}
       {!isCollapsed && (
         <div className="llm-resize-handle" onMouseDown={handleResizeStart} title="Drag to resize">
           <div className="resize-grip" />
@@ -346,164 +362,143 @@ const handleCopyStats = useCallback(async (e: React.MouseEvent) => {
       )}
       <header className="panel-header" onClick={onToggle}>
         <div className="panel-header__left">
-          <span className={`collapse-icon ${isCollapsed ? '' : 'expanded'}`}>▶</span>
-          <h3>LLM Queue</h3>
+          <span className={`collapse-icon ${isCollapsed ? '' : 'expanded'}`}></span>
+          <h3>LLM Capacity</h3>
           <span className="health-indicator" style={{ backgroundColor: healthColor }} />
         </div>
         <div className="panel-header__right">
           {stats && <span className="queue-depth-badge">{stats.queueDepth} queued</span>}
           {stats && (
             <button className="copy-stats-btn" onClick={handleCopyStats} title="Copy stats as JSON">
-              {copyFeedback || '📋'}
+              {copyFeedback || ''}
             </button>
           )}
         </div>
       </header>
 
       {!isCollapsed && stats && (
-        <div className="panel-content">
-          {/* Queue Depth Visualization */}
-          <div className="llm-stat-row">
-            <span className="stat-label">Queue Depth</span>
-            <div className="queue-depth-bar">
-              <div
-                className="queue-depth-fill"
-                style={{
+        <div className="panel-content llm-panel-content">
+          {/* Time Interval Selector */}
+          <div className="interval-selector">
+            <button className={`interval-btn ${_timeInterval === '1min' ? 'active' : ''}`}
+              onClick={(e) => { e.stopPropagation(); setTimeInterval('1min'); }}>1m</button>
+            <button className={`interval-btn ${_timeInterval === '5min' ? 'active' : ''}`}
+              onClick={(e) => { e.stopPropagation(); setTimeInterval('5min'); }}>5m</button>
+          </div>
+
+          {/* Capacity Utilization - Main KPI */}
+          <div className="capacity-section">
+            <div className="capacity-header">
+              <span className="capacity-label">Capacity</span>
+              <span className="capacity-percent" style={{ color: getCapacityColor(stats.capacityUtilization || 0) }}>
+                {Math.round((stats.capacityUtilization || 0) * 100)}%
+              </span>
+            </div>
+            <div className="capacity-bar">
+              <div className="capacity-fill" style={{ 
+                width: `${Math.min(100, (stats.capacityUtilization || 0) * 100)}%`,
+                backgroundColor: getCapacityColor(stats.capacityUtilization || 0)
+              }} />
+              <div className="capacity-target" style={{ left: `${(stats.capacityConfig?.targetUtilization || 0.7) * 100}%` }} />
+            </div>
+            <div className="capacity-details">
+              <span className="capacity-used">{stats.tokensPerSecondTotal || 0} tok/s</span>
+              <span className="capacity-max">/ {stats.capacityConfig?.maxTokensPerSecond || 500} max</span>
+            </div>
+          </div>
+
+          {/* Thinking Coefficient */}
+          <div className="thinking-coeff-section">
+            <div className="llm-stat-row">
+              <span className="stat-label">Agent Think Rate</span>
+              <span className="thinking-coeff-value" style={{ color: getThinkingCoeffColor(stats.thinkingCoefficient || 1) }}>
+                {((stats.thinkingCoefficient || 1) * 100).toFixed(0)}%
+                {(stats.thinkingCoefficient || 1) > 1.2 && ' '}
+                {(stats.thinkingCoefficient || 1) < 0.5 && ' '}
+              </span>
+            </div>
+            <div className="thinking-bar">
+              <div className="thinking-fill" style={{ 
+                width: `${Math.min(100, ((stats.thinkingCoefficient || 1) / 1.5) * 100)}%`,
+                backgroundColor: getThinkingCoeffColor(stats.thinkingCoefficient || 1)
+              }} />
+            </div>
+          </div>
+
+          {/* Available Capacity */}
+          <div className="llm-stat-row highlight-row">
+            <span className="stat-label">Available</span>
+            <span className="stat-value available-value">+{stats.availableCapacity || 0} tok/s</span>
+          </div>
+
+          <div className="stats-divider" />
+
+          {/* Token Throughput */}
+          <div className="throughput-section">
+            <div className="section-title">Token Throughput</div>
+            <div className="throughput-grid">
+              <div className="throughput-item"><span className="throughput-label">In/sec</span><span className="throughput-value">{stats.tokensPerSecondIn || 0}</span></div>
+              <div className="throughput-item"><span className="throughput-label">Out/sec</span><span className="throughput-value">{stats.tokensPerSecondOut || 0}</span></div>
+              <div className="throughput-item"><span className="throughput-label">In/min</span><span className="throughput-value">{stats.tokensPerMinuteIn?.toLocaleString() || 0}</span></div>
+              <div className="throughput-item"><span className="throughput-label">Out/min</span><span className="throughput-value">{stats.tokensPerMinuteOut?.toLocaleString() || 0}</span></div>
+            </div>
+          </div>
+
+          {/* Avg Per Request */}
+          <div className="avg-section">
+            <div className="section-title">Avg Per Request</div>
+            <div className="avg-grid">
+              <div className="avg-item"><span className="avg-label">Tokens In</span><span className="avg-value">{stats.avgTokensIn || 0}</span></div>
+              <div className="avg-item"><span className="avg-label">Tokens Out</span><span className="avg-value">{stats.avgTokensOut || 0}</span></div>
+              <div className="avg-item"><span className="avg-label">Time</span><span className="avg-value">{stats.avgProcessingTimeMs || 0}ms</span></div>
+              <div className="avg-item"><span className="avg-label">Rate</span><span className="avg-value">{stats.processedPerSecond?.toFixed(2) || 0}/s</span></div>
+            </div>
+          </div>
+
+          <div className="stats-divider" />
+
+          {/* Queue Status */}
+          <div className="queue-status-section">
+            <div className="llm-stat-row">
+              <span className="stat-label">Queue</span>
+              <div className="queue-depth-bar">
+                <div className="queue-depth-fill" style={{
                   width: `${Math.min(100, stats.queueDepth * 10)}%`,
                   backgroundColor: stats.queueDepth > 5 ? '#f39c12' : '#4caf50'
-                }}
-              />
+                }} />
+              </div>
+              <span className="stat-value">{stats.queueDepth}</span>
             </div>
-            <span className="stat-value">{stats.queueDepth}</span>
-          </div>
-
-          {/* Processed Per Second KPI */}
-          <div className="llm-stat-row kpi-row">
-            <span className="stat-label">Processed/sec</span>
-            <div className="kpi-values">
-              <span className="kpi-value" title="Last 1 minute">
-                <span className="kpi-number">{stats.processedPerSecond1Min.toFixed(2)}</span>
-                <span className="kpi-period">1m</span>
-              </span>
-              <span className="kpi-divider">|</span>
-              <span className="kpi-value" title="Last 5 minutes">
-                <span className="kpi-number">{stats.processedPerSecond5Min.toFixed(2)}</span>
-                <span className="kpi-period">5m</span>
-              </span>
-            </div>
-          </div>
-
-          {/* Processing indicator */}
-          <div className="llm-stat-row">
-            <span className="stat-label">Processing</span>
-            <span className={`processing-indicator ${stats.processingCount > 0 ? 'active' : ''}`}>
-              {stats.processingCount > 0 ? '⚡ Active' : '○ Idle'}
-            </span>
-          </div>          {/* Avg Processing Time - 1 Min */}
-          <div className="llm-stat-row">
-            <span className="stat-label">Avg Time (1m)</span>
-            <div className="time-bar">
-              <div 
-                className="time-fill"
-                style={{ 
-                  width: `${Math.min(100, stats.avgProcessingTimeMs1Min / 10)}%`,
-                  backgroundColor: stats.avgProcessingTimeMs1Min > 500 ? '#f39c12' : '#4caf50'
-                }}
-              />
-            </div>
-            <span className="stat-value">{stats.avgProcessingTimeMs1Min}ms</span>
-          </div>
-          
-          {/* Avg Processing Time - 5 Min */}
-          <div className="llm-stat-row">
-            <span className="stat-label">Avg Time (5m)</span>
-            <div className="time-bar">
-              <div 
-                className="time-fill"
-                style={{ 
-                  width: `${Math.min(100, stats.avgProcessingTimeMs5Min / 10)}%`,
-                  backgroundColor: stats.avgProcessingTimeMs5Min > 500 ? '#f39c12' : '#4caf50'
-                }}
-              />
-            </div>
-            <span className="stat-value">{stats.avgProcessingTimeMs5Min}ms</span>
-          </div>
-          
-          {/* Token Throughput */}
-          <div className="llm-stat-row kpi-row">
-            <span className="stat-label">Tokens/sec</span>
-            <div className="kpi-values">
-              <span className="kpi-value" title="Completion tokens per second (1 min)">
-                <span className="kpi-number">{stats.tokensPerSecond1Min?.toFixed(1) || '0'}</span>
-                <span className="kpi-period">out</span>
-              </span>
-            </div>
-          </div>
-
-          <div className="llm-stat-row kpi-row">
-            <span className="stat-label">Tokens/min</span>
-            <div className="kpi-values">
-              <span className="kpi-value" title="Total tokens per minute">
-                <span className="kpi-number">{stats.tokensPerMinute1Min?.toFixed(0) || '0'}</span>
-                <span className="kpi-period">1m</span>
-              </span>
-            </div>
-          </div>
-
-          {/* Avg Tokens Per Request */}
-          <div className="llm-stat-row kpi-row">
-            <span className="stat-label">Avg Tokens</span>
-            <div className="kpi-values">
-              <span className="kpi-value" title="Avg prompt tokens per request">
-                <span className="kpi-number">{stats.avgPromptTokens1Min?.toFixed(0) || '0'}</span>
-                <span className="kpi-period">in</span>
-              </span>
-              <span className="kpi-divider">|</span>
-              <span className="kpi-value" title="Avg completion tokens per request">
-                <span className="kpi-number">{stats.avgCompletionTokens1Min?.toFixed(0) || '0'}</span>
-                <span className="kpi-period">out</span>
+            <div className="llm-stat-row">
+              <span className="stat-label">Status</span>
+              <span className={`processing-indicator ${stats.processingCount > 0 ? 'active' : ''}`}>
+                {stats.processingCount > 0 ? ' Processing' : ' Idle'}
               </span>
             </div>
           </div>
 
           {/* Totals */}
           <div className="llm-totals">
-            <div className="total-item">
-              <span className="total-label">Processed</span>
-              <span className="total-value success">{stats.totalProcessed}</span>
-            </div>
-            <div className="total-item">
-              <span className="total-label">Timeouts</span>
-              <span className="total-value warning">{stats.totalTimedOut}</span>
-            </div>
-            <div className="total-item">
-              <span className="total-label">Failed</span>
-              <span className="total-value error">{stats.totalFailed}</span>
-            </div>
+            <div className="total-item"><span className="total-label">Processed</span><span className="total-value success">{stats.totalProcessed?.toLocaleString()}</span></div>
+            <div className="total-item"><span className="total-label">Timeouts</span><span className="total-value warning">{stats.totalTimedOut}</span></div>
+            <div className="total-item"><span className="total-label">Failed</span><span className="total-value error">{stats.totalFailed}</span></div>
           </div>
 
-          {/* Total Tokens */}
+          {/* Lifetime Tokens */}
           <div className="llm-totals token-totals">
-            <div className="total-item">
-              <span className="total-label">Total In</span>
-              <span className="total-value info">{(stats.totalPromptTokens || 0).toLocaleString()}</span>
-            </div>
-            <div className="total-item">
-              <span className="total-label">Total Out</span>
-              <span className="total-value info">{(stats.totalCompletionTokens || 0).toLocaleString()}</span>
-            </div>
+            <div className="total-item"><span className="total-label">Total In</span><span className="total-value info">{(stats.totalPromptTokens || 0).toLocaleString()}</span></div>
+            <div className="total-item"><span className="total-label">Total Out</span><span className="total-value info">{(stats.totalCompletionTokens || 0).toLocaleString()}</span></div>
           </div>
 
           {/* Recent Requests Timeline */}
-          {stats.recentRequests.length > 0 && (
+          {stats.recentRequests && stats.recentRequests.length > 0 && (
             <div className="recent-requests">
-              <div className="recent-header">Recent Requests</div>
+              <div className="recent-header">Recent ({stats.recentRequests.length})</div>
               <div className="request-timeline">
                 {stats.recentRequests.slice(-10).map((req, idx) => (
-                  <div
-                    key={idx}
+                  <div key={idx}
                     className={`request-dot ${req.success ? 'success' : req.timedOut ? 'timeout' : 'failed'}`}
-                    title={`${req.durationMs}ms - ${req.promptTokens || 0} in / ${req.completionTokens || 0} out - ${req.success ? 'Success' : req.timedOut ? 'Timeout' : 'Failed'}`}
+                    title={`${req.durationMs}ms - ${req.promptTokens || 0} in / ${req.completionTokens || 0} out`}
                   />
                 ))}
               </div>
@@ -514,7 +509,6 @@ const handleCopyStats = useCallback(async (e: React.MouseEvent) => {
     </div>
   );
 }
-
 export function AgentInfoPanel({ agents, width = 380, taskProgress = 0, selectedAgentId, onAgentSelect, llmQueueStats }: AgentInfoPanelProps) {
   const [expandedAgentId, setExpandedAgentId] = useState<string | null>(null);
   const [columnWidths, setColumnWidths] = useState<number[]>([90, 80, 70, 80]); // Agent, Zone, Status, Tasks
@@ -523,7 +517,7 @@ export function AgentInfoPanel({ agents, width = 380, taskProgress = 0, selected
   // Collapse states for panels
   const [agentsPanelCollapsed, setAgentsPanelCollapsed] = useState(false);
   const [llmPanelCollapsed, setLlmPanelCollapsed] = useState(false);
-  const [llmPanelHeight, setLlmPanelHeight] = useState<number>(280);
+  const [llmPanelHeight, setLlmPanelHeight] = useState<number>(420);
   
   // Sync expanded agent with selected agent from parent
   useEffect(() => {

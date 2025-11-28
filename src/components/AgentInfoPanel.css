@@ -503,23 +503,27 @@
 
 /* Scrollbar Styling */
 .agent-panel__content::-webkit-scrollbar,
-.task-list::-webkit-scrollbar {
+.task-list::-webkit-scrollbar,
+.llm-panel-content::-webkit-scrollbar {
   width: 6px;
 }
 
 .agent-panel__content::-webkit-scrollbar-track,
-.task-list::-webkit-scrollbar-track {
+.task-list::-webkit-scrollbar-track,
+.llm-panel-content::-webkit-scrollbar-track {
   background: rgba(0, 0, 0, 0.2);
 }
 
 .agent-panel__content::-webkit-scrollbar-thumb,
-.task-list::-webkit-scrollbar-thumb {
+.task-list::-webkit-scrollbar-thumb,
+.llm-panel-content::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.2);
   border-radius: 3px;
 }
 
 .agent-panel__content::-webkit-scrollbar-thumb:hover,
-.task-list::-webkit-scrollbar-thumb:hover {
+.task-list::-webkit-scrollbar-thumb:hover,
+.llm-panel-content::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.3);
 }
 
@@ -1073,4 +1077,212 @@
 .kpi-divider {
   color: rgba(255, 255, 255, 0.2);
   font-size: 0.8rem;
+}
+
+/* =================== LLM Capacity Panel - Enhanced Styles =================== */
+
+/* Interval Selector */
+.interval-selector {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.interval-btn {
+  flex: 1;
+  padding: 6px 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 0.7rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.interval-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.interval-btn.active {
+  background: rgba(76, 175, 80, 0.2);
+  border-color: #4caf50;
+  color: #4caf50;
+}
+
+/* Capacity Section */
+.capacity-section {
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+
+.capacity-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.capacity-label {
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.6);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.capacity-percent {
+  font-size: 1.4rem;
+  font-weight: 700;
+  font-family: monospace;
+}
+
+.capacity-bar {
+  position: relative;
+  height: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  overflow: visible;
+}
+
+.capacity-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s ease, background-color 0.3s ease;
+}
+
+.capacity-target {
+  position: absolute;
+  top: -2px;
+  width: 2px;
+  height: 12px;
+  background: rgba(255, 255, 255, 0.5);
+  border-radius: 1px;
+}
+
+.capacity-details {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  font-size: 0.7rem;
+}
+
+.capacity-used {
+  color: rgba(255, 255, 255, 0.8);
+  font-family: monospace;
+}
+
+.capacity-max {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+/* Thinking Coefficient Section */
+.thinking-coeff-section {
+  margin-bottom: 10px;
+}
+
+.thinking-coeff-value {
+  font-size: 0.9rem;
+  font-weight: 600;
+  font-family: monospace;
+  margin-left: auto;
+}
+
+.thinking-bar {
+  height: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+  margin-top: 6px;
+  overflow: hidden;
+}
+
+.thinking-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s ease, background-color 0.3s ease;
+}
+
+/* Highlight Row */
+.llm-stat-row.highlight-row {
+  background: rgba(76, 175, 80, 0.1);
+  border: 1px solid rgba(76, 175, 80, 0.2);
+  border-radius: 4px;
+  padding: 6px 10px;
+  margin: 8px 0;
+}
+
+.available-value {
+  color: #4caf50 !important;
+  font-weight: 600;
+}
+
+/* Stats Divider */
+.stats-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.08);
+  margin: 12px 0;
+}
+
+/* Section Titles */
+.section-title {
+  font-size: 0.65rem;
+  color: rgba(255, 255, 255, 0.5);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+/* Throughput Grid */
+.throughput-section,
+.avg-section {
+  margin-bottom: 10px;
+}
+
+.throughput-grid,
+.avg-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+}
+
+.throughput-item,
+.avg-item {
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 4px;
+  padding: 6px 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.throughput-label,
+.avg-label {
+  font-size: 0.65rem;
+  color: rgba(255, 255, 255, 0.5);
+  text-transform: uppercase;
+}
+
+.throughput-value,
+.avg-value {
+  font-size: 0.8rem;
+  font-weight: 600;
+  font-family: monospace;
+  color: #8ab4f8;
+}
+
+/* Queue Status Section */
+.queue-status-section {
+  margin-bottom: 10px;
+}
+
+/* Enhanced LLM Panel Content */
+.llm-panel-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }

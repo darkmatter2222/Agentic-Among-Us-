@@ -64,12 +64,11 @@ export interface AIAgentState {
   currentTaskIndex: number | null;
   isDoingTask: boolean;
   taskStartTime: number | null;
-  
+
   // Perception
   visibleAgentIds: string[];
-  agentsInSpeechRange: string[];
-  
-  // Internal state
+  visibleAgentNames: string[];
+  agentsInSpeechRange: string[];  // Internal state
   currentThought: string | null;
   lastThoughtTime: number;
   recentSpeech: string | null;
@@ -108,11 +107,19 @@ export class AIAgent {
   
   // Reference to other agents for visibility checks
   private otherAgents: AIAgent[] = [];
-  
+
   // Speech broadcast callback (set by manager)
   private speechBroadcastCallback: ((speakerId: string, message: string, zone: string | null) => void) | null = null;
-  
-  constructor(
+
+  // Conversation state - tracks pending replies
+  private pendingConversationReply: {
+    speakerId: string;
+    speakerName: string;
+    message: string;
+    zone: string | null;
+    timestamp: number;
+  } | null = null;
+  private shouldRespondToConversation: boolean = false;  constructor(
     config: AIAgentConfig,
     pathfinder: Pathfinder,
     destinationSelector: DestinationSelector,
@@ -137,7 +144,7 @@ export class AIAgent {
       currentGoalType: null,
       targetTaskIndex: null,
       targetAgentId: null,
-      lastTriggerCheckTime: 0,
+      lastTriggerCheckTime: Date.now() - Math.random() * 2000, // Randomize to desync agents
       // Social state
       buddyId: null,
       lastSocialActionTime: 0,
@@ -155,6 +162,7 @@ export class AIAgent {
       isDoingTask: false,
       taskStartTime: null,
       visibleAgentIds: [],
+      visibleAgentNames: [],
       agentsInSpeechRange: [],
       currentThought: null,
       lastThoughtTime: 0,
@@ -205,24 +213,50 @@ export class AIAgent {
     this.speechBroadcastCallback = callback;
   }
   
-  /**
+    /**
    * Receive speech from another agent
+   * This may trigger a conversation response
    */
   hearSpeech(speakerId: string, speakerName: string, message: string, zone: string | null): void {
     // Record in memory
     this.memory.recordHeardSpeech(speakerId, speakerName, message, zone);
-    
+
     // Add to recent events
     this.addRecentEvent(`Heard ${speakerName} say: "${message.substring(0, 50)}${message.length > 50 ? '...' : ''}"`);
-    
-    // Trigger thought/reaction if significant
+
+    // Store the pending conversation for potential reply
+    this.pendingConversationReply = {
+      speakerId,
+      speakerName,
+      message,
+      zone,
+      timestamp: Date.now()
+    };
+
+    // Trigger thought/reaction for important messages
     const lowerMsg = message.toLowerCase();
-    if (lowerMsg.includes(this.config.name.toLowerCase()) || lowerMsg.includes('sus') || lowerMsg.includes('imposter') || lowerMsg.includes('vent')) {
-      // Likely being addressed or something important - trigger thought
-      this.behaviorState.lastTriggerCheckTime = 0; // Force trigger check
+    const isAddressed = lowerMsg.includes(this.config.name.toLowerCase());
+    const isImportant = lowerMsg.includes('sus') || lowerMsg.includes('impostor') || lowerMsg.includes('vent') ||
+                        lowerMsg.includes('where') || lowerMsg.includes('saw') || lowerMsg.includes('help') ||
+                        lowerMsg.includes('?'); // Questions deserve responses
+    
+    if (isAddressed || isImportant) {
+      // Likely being addressed or something important - force immediate trigger check
+      this.behaviorState.lastTriggerCheckTime = 0;
+      
+      // Higher chance to respond when directly addressed
+      if (isAddressed) {
+        this.shouldRespondToConversation = true;
+      } else {
+        // Random chance to join conversation on important topics
+        this.shouldRespondToConversation = Math.random() < 0.6; // 60% chance
+      }
+    } else {
+      // Small talk - lower response chance
+      this.shouldRespondToConversation = Math.random() < 0.35; // 35% chance
     }
   }
-  
+
   // ========== Main Update Loop ==========
   
   /**
@@ -262,7 +296,8 @@ export class AIAgent {
     }
     
     // Process AI triggers (thoughts, speech) - throttled and non-blocking
-    const TRIGGER_CHECK_INTERVAL = 2000;
+    // Use variable interval (1.8-2.2s) to prevent agents from synchronizing over time
+    const TRIGGER_CHECK_INTERVAL = 1800 + Math.random() * 400;
     if (now - this.behaviorState.lastTriggerCheckTime >= TRIGGER_CHECK_INTERVAL) {
       this.behaviorState.lastTriggerCheckTime = now;
       this.processTriggersAsync();
@@ -284,28 +319,33 @@ export class AIAgent {
    */
   private updateVisibility(): void {
     const visibleIds: string[] = [];
-    const speechRangeIds: string[] = [];
+    const visibleNames: string[] = []; // Names (colors) for UI display
+    const speechRangeNames: string[] = []; // Use names (colors) for natural conversation
     const speechRange = 150; // Units for speech hearing
-    
+
     for (const other of this.otherAgents) {
       const otherPos = other.getPosition();
       const distance = this.distanceTo(otherPos);
-      
+
       if (distance <= this.config.visionRadius) {
         visibleIds.push(other.getId());
+        visibleNames.push(other.getName());
       }
-      
+
       if (distance <= speechRange) {
-        speechRangeIds.push(other.getId());
+        speechRangeNames.push(other.getName()); // Use color name for natural speech
       }
-    }
-    
-    // Detect changes for triggers
+    }    // Detect changes for triggers
     const newlyVisible = visibleIds.filter(id => !this.aiState.visibleAgentIds.includes(id));
     const newlyLost = this.aiState.visibleAgentIds.filter(id => !visibleIds.includes(id));
     
     if (newlyVisible.length > 0) {
-      this.addRecentEvent(`Spotted: ${newlyVisible.join(', ')}`);
+      // Convert IDs to names for the event message
+      const newlyVisibleNames = newlyVisible.map(id => {
+        const agent = this.otherAgents.find(a => a.getId() === id);
+        return agent ? agent.getName() : id;
+      });
+      this.addRecentEvent(`Spotted: ${newlyVisibleNames.join(', ')}`);
       // Record observations for newly visible agents
       for (const agentId of newlyVisible) {
         const other = this.otherAgents.find(a => a.getId() === agentId);
@@ -315,7 +355,12 @@ export class AIAgent {
       }
     }
     if (newlyLost.length > 0) {
-      this.addRecentEvent(`Lost sight of: ${newlyLost.join(', ')}`);
+      // Convert IDs to names for the event message
+      const lostNames = newlyLost.map(id => {
+        const agent = this.otherAgents.find(a => a.getId() === id);
+        return agent ? agent.getName() : id;
+      });
+      this.addRecentEvent(`Lost sight of: ${lostNames.join(', ')}`);
       // Check if they were doing a task when we lost sight
       for (const agentId of newlyLost) {
         const other = this.otherAgents.find(a => a.getId() === agentId);
@@ -336,10 +381,11 @@ export class AIAgent {
     
     // Detect if we're being followed
     this.detectFollowers();
-    
+
     this.aiState.visibleAgentIds = visibleIds;
-    this.aiState.agentsInSpeechRange = speechRangeIds;
-    
+    this.aiState.visibleAgentNames = visibleNames;
+    this.aiState.agentsInSpeechRange = speechRangeNames;
+
     // Update suspicion levels from memory
     this.aiState.suspicionLevels = this.memory.getAllSuspicionLevels();
   }
@@ -1129,10 +1175,18 @@ export class AIAgent {
    */
   private async processTriggers(): Promise<void> {
     if (!this.triggerCallback) return;
-    
+
     const context = this.buildAIContext();
-    const result = await this.triggerCallback(context);
     
+    // Include pending conversation reply info for the trigger callback
+    if (this.shouldRespondToConversation && this.pendingConversationReply) {
+      // Pass conversation context to the trigger callback
+      const pendingReply = this.pendingConversationReply;
+      (context as AIContext & { pendingReply?: { speakerId: string; speakerName: string; message: string; zone: string | null; timestamp: number } }).pendingReply = pendingReply;
+    }
+    
+    const result = await this.triggerCallback(context);
+
     if (result.thought) {
       this.aiState.currentThought = result.thought.thought;
       this.aiState.lastThoughtTime = Date.now();
@@ -1140,10 +1194,20 @@ export class AIAgent {
     
     if (result.speech) {
       this.speak(result.speech.message);
+      
+      // If we had a pending conversation, clear it after speaking
+      if (this.shouldRespondToConversation && this.pendingConversationReply) {
+        this.pendingConversationReply = null;
+        this.shouldRespondToConversation = false;
+      }
     }
-  }
-  
-  // ========== Speech ==========
+    
+    // Clear old pending replies (older than 10 seconds)
+    if (this.pendingConversationReply && Date.now() - this.pendingConversationReply.timestamp > 10000) {
+      this.pendingConversationReply = null;
+      this.shouldRespondToConversation = false;
+    }
+  }  // ========== Speech ==========
   
   /**
    * Say something out loud
@@ -1320,7 +1384,11 @@ export class AIAgent {
   getVisibleAgentIds(): string[] {
     return this.aiState.visibleAgentIds;
   }
-  
+
+  getVisibleAgentNames(): string[] {
+    return this.aiState.visibleAgentNames;
+  }
+
   getSuspicionLevels(): Record<string, number> {
     return this.memory.getAllSuspicionLevels();
   }

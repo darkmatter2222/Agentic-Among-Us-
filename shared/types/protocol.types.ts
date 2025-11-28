@@ -2,24 +2,52 @@ import type { AgentSnapshot, AgentSummarySnapshot, WorldSnapshot } from './simul
 
 export const PROTOCOL_VERSION = '0.1.0';
 
+// Capacity configuration for the LLM
+export interface LLMCapacityConfig {
+  maxTokensPerSecond: number;  // Ceiling (e.g., 500 tokens/sec)
+  minThinkingCoefficient: number;  // Minimum thinking rate (0.1 = 10%)
+  maxThinkingCoefficient: number;  // Maximum thinking rate (1.0 = 100%)
+  targetUtilization: number;  // Target capacity utilization (e.g., 0.8 = 80%)
+}
+
 // LLM Queue Statistics for monitoring
 export interface LLMQueueStats {
+  // Queue state
   queueDepth: number;
   processingCount: number;
+  
+  // Totals
   totalProcessed: number;
   totalTimedOut: number;
   totalFailed: number;
-  avgProcessingTimeMs1Min: number;
-  avgProcessingTimeMs5Min: number;
-  processedPerSecond1Min: number;
-  processedPerSecond5Min: number;
-  // Token tracking
+  
+  // Performance metrics (calculated per selected interval)
+  avgProcessingTimeMs: number;
+  processedPerSecond: number;
+  
+  // Token throughput
+  tokensPerSecondIn: number;   // Prompt tokens per second
+  tokensPerSecondOut: number;  // Completion tokens per second
+  tokensPerSecondTotal: number; // Combined throughput
+  tokensPerMinuteIn: number;
+  tokensPerMinuteOut: number;
+  tokensPerMinuteTotal: number;
+  
+  // Average tokens per request
+  avgTokensIn: number;
+  avgTokensOut: number;
+  
+  // Lifetime token counts
   totalPromptTokens: number;
   totalCompletionTokens: number;
-  tokensPerSecond1Min: number;
-  tokensPerMinute1Min: number;
-  avgPromptTokens1Min: number;
-  avgCompletionTokens1Min: number;
+  
+  // Capacity metrics
+  capacityConfig: LLMCapacityConfig;
+  capacityUtilization: number;  // 0-1, current usage vs max capacity
+  thinkingCoefficient: number;  // 0-1, how much agents should think (higher = more thinking)
+  availableCapacity: number;    // tokens/sec still available
+  
+  // Recent request history
   recentRequests: Array<{
     timestamp: number;
     durationMs: number;

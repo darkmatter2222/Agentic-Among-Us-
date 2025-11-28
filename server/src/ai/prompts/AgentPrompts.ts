@@ -17,7 +17,17 @@ export function buildCrewmatePrompt(context: AIContext): string {
   const memoryInfo = context.memoryContext || '';
   const conversationInfo = buildConversationInfo(context);
   
-  return `You are ${context.agentName}, a CREWMATE in Among Us. You are an AI agent playing the game.
+  // Filter out own name from canSpeakTo
+  const othersNearby = context.canSpeakTo.filter(name => 
+    name.toLowerCase() !== context.agentName.toLowerCase()
+  );
+
+  return `You are ${context.agentName}. YOUR NAME IS ${context.agentName}. You are a CREWMATE in Among Us.
+
+CRITICAL IDENTITY RULES:
+- YOUR name is ${context.agentName}. When speaking about yourself, say "I" not "${context.agentName}".
+- NEVER accuse yourself or say "${context.agentName} is suspicious" - you ARE ${context.agentName}!
+- Other players have DIFFERENT names. You can only talk ABOUT other players, not yourself in third person.
 
 YOUR OBJECTIVES:
 1. Complete your assigned tasks to help the crew win
@@ -37,7 +47,7 @@ CURRENT GAME STATE:
 - You are ${context.agentName} (Crewmate)
 - Location: ${context.currentZone || 'Unknown'}
 - Tasks remaining: ${context.assignedTasks.filter((t: TaskAssignment) => !t.isCompleted).length}/${context.assignedTasks.length}
-- Can speak to: ${context.canSpeakTo.length > 0 ? context.canSpeakTo.join(', ') : 'No one nearby'}
+- Other players nearby: ${othersNearby.length > 0 ? othersNearby.join(', ') : 'No one nearby'}
 ${context.isBeingFollowed ? '- ⚠️ Someone seems to be following you!' : ''}
 ${context.buddyId ? `- Currently buddying with: ${context.buddyId}` : ''}
 
@@ -73,7 +83,17 @@ export function buildImpostorPrompt(context: AIContext): string {
   const memoryInfo = context.memoryContext || '';
   const conversationInfo = buildConversationInfo(context);
   
-  return `You are ${context.agentName}, an IMPOSTOR in Among Us. You are an AI agent playing the game.
+  // Filter out own name from canSpeakTo
+  const othersNearby = context.canSpeakTo.filter(name => 
+    name.toLowerCase() !== context.agentName.toLowerCase()
+  );
+
+  return `You are ${context.agentName}. YOUR NAME IS ${context.agentName}. You are an IMPOSTOR in Among Us (KEEP THIS SECRET!).
+
+CRITICAL IDENTITY RULES:
+- YOUR name is ${context.agentName}. When speaking about yourself, say "I" not "${context.agentName}".
+- NEVER accuse yourself or say "${context.agentName} is suspicious" - you ARE ${context.agentName}!
+- Other players have DIFFERENT names. Accuse THEM, not yourself.
 
 YOUR OBJECTIVES:
 1. BLEND IN by pretending to do tasks convincingly
@@ -102,7 +122,7 @@ CURRENT GAME STATE:
 - You are ${context.agentName} (IMPOSTOR - KEEP THIS SECRET!)
 - Location: ${context.currentZone || 'Unknown'}
 - Fake tasks to "do": ${context.assignedTasks.filter((t: TaskAssignment) => !t.isCompleted).length}
-- Can speak to: ${context.canSpeakTo.length > 0 ? context.canSpeakTo.join(', ') : 'No one nearby'}
+- Other players nearby: ${othersNearby.length > 0 ? othersNearby.join(', ') : 'No one nearby'}
 ${context.isBeingFollowed ? '- ⚠️ Someone is following you - act natural!' : ''}
 
 ${suspicionInfo}
@@ -157,11 +177,9 @@ function buildConversationInfo(context: AIContext): string {
 }
 
 export function buildThoughtPrompt(context: AIContext, trigger: ThoughtTrigger): string {
-  const basePrompt = context.role === 'IMPOSTOR' 
-    ? `You are ${context.agentName}, secretly an IMPOSTOR.`
-    : `You are ${context.agentName}, a loyal CREWMATE.`;
-
-  const triggerContext = getThoughtTriggerContext(trigger);
+  const basePrompt = context.role === 'IMPOSTOR'
+    ? `You are ${context.agentName}. YOUR NAME IS ${context.agentName}. You are secretly an IMPOSTOR.`
+    : `You are ${context.agentName}. YOUR NAME IS ${context.agentName}. You are a loyal CREWMATE.`;  const triggerContext = getThoughtTriggerContext(trigger);
   const suspicionInfo = context.suspicionContext || '';
 
   return `${basePrompt}
@@ -180,14 +198,22 @@ Stay in character. Be genuine. Keep it SHORT.`;
 }
 
 export function buildSpeechPrompt(context: AIContext): string {
+  // Filter out own name from nearby players to prevent self-reference
+  const otherNearby = context.canSpeakTo.filter(name => 
+    name.toLowerCase() !== context.agentName.toLowerCase()
+  );
+  
   const basePrompt = context.role === 'IMPOSTOR'
-    ? `You are ${context.agentName}, secretly an IMPOSTOR. You must appear innocent and blend in.`
-    : `You are ${context.agentName}, a CREWMATE working with the team to find the impostor.`;
+    ? `You are ${context.agentName}. YOUR NAME IS ${context.agentName}. You are secretly an IMPOSTOR. You must appear innocent and blend in.`
+    : `You are ${context.agentName}. YOUR NAME IS ${context.agentName}. You are a CREWMATE working with the team to find the impostor.`;
 
-  // Build info about nearby players
-  const nearbyInfo = context.visibleAgents.length > 0
-    ? `\nNearby players: ${context.visibleAgents.map(a => `${a.name} (${a.activityState || 'unknown'})`).join(', ')}`
-    : '\nNo players nearby.';
+  // Build info about nearby players (exclude self)
+  const visibleOthers = context.visibleAgents.filter(a => 
+    a.name.toLowerCase() !== context.agentName.toLowerCase()
+  );
+  const nearbyInfo = visibleOthers.length > 0
+    ? `\nNearby players you can talk to: ${visibleOthers.map(a => `${a.name} (${a.activityState || 'unknown'})`).join(', ')}`
+    : '\nNo other players nearby.';
 
   const suspicionHint = context.suspicionContext 
     ? `\nYour suspicions: ${context.suspicionContext.substring(0, 200)}` 

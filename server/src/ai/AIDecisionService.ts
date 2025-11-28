@@ -6,24 +6,66 @@
 
 import type { Point } from '@shared/data/poly3-map.ts';
 import type { PlayerRole } from '@shared/types/game.types.ts';
-import type { 
-  AIContext, 
-  AIDecision, 
-  TaskAssignment, 
-  ThoughtEvent, 
+import type {
+  AIContext,
+  AIDecision,
+  TaskAssignment,
+  ThoughtEvent,
   SpeechEvent,
-  ThoughtTrigger 
+  ThoughtTrigger
 } from '@shared/types/simulation.types.ts';
-import { 
-  buildCrewmatePrompt, 
-  buildImpostorPrompt, 
+import { COLOR_NAMES } from '@shared/constants/colors.ts';
+import {
+  buildCrewmatePrompt,
+  buildImpostorPrompt,
   buildThoughtPrompt,
   buildSpeechPrompt,
-  parseAIResponse 
+  parseAIResponse
 } from './prompts/AgentPrompts.js';
 import { getLLMQueue, type LLMQueueStats } from './LLMQueue.js';
 
-// ========== AI Model Client (inline for server-side) ==========
+// ========== Speech Validation Helpers ==========
+
+/**
+ * Check if speech mentions agents who aren't nearby
+ * Returns list of mentioned names that aren't in the nearby list
+ */
+function findInvalidMentions(message: string, speakerName: string, nearbyNames: string[]): string[] {
+  const invalidMentions: string[] = [];
+  const lowerNearby = nearbyNames.map(n => n.toLowerCase());
+  const lowerSpeaker = speakerName.toLowerCase();
+  
+  for (const colorName of COLOR_NAMES) {
+    const lowerColor = colorName.toLowerCase();
+    // Skip if it's the speaker's name
+    if (lowerColor === lowerSpeaker) continue;
+    // Skip if they're nearby
+    if (lowerNearby.includes(lowerColor)) continue;
+    
+    // Check if the color is mentioned in the message
+    const regex = new RegExp(`\\b${colorName}\\b`, 'i');
+    if (regex.test(message)) {
+      invalidMentions.push(colorName);
+    }
+  }
+  
+  return invalidMentions;
+}
+
+/**
+ * Clean self-references from speech (e.g., "Orange is" when Orange is speaking)
+ */
+function cleanSelfReferences(message: string, speakerName: string): string {
+  // Replace "Name is/was/did..." with "I am/was/did..."
+  message = message.replace(new RegExp(`\\b${speakerName}\\s+is\\b`, 'gi'), 'I am');
+  message = message.replace(new RegExp(`\\b${speakerName}\\s+was\\b`, 'gi'), 'I was');
+  message = message.replace(new RegExp(`\\b${speakerName}\\s+did\\b`, 'gi'), 'I did');
+  message = message.replace(new RegExp(`\\b${speakerName}\\s+has\\b`, 'gi'), 'I have');
+  message = message.replace(new RegExp(`\\b${speakerName}\\s+had\\b`, 'gi'), 'I had');
+  message = message.replace(new RegExp(`\\b${speakerName}\\s+looks\\b`, 'gi'), 'I look');
+  message = message.replace(new RegExp(`\\b${speakerName}\\s+seems\\b`, 'gi'), 'I seem');
+  return message;
+}// ========== AI Model Client (inline for server-side) ==========
 
 interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
@@ -97,17 +139,17 @@ class AIModelClient {
 // ========== Trigger Configuration ==========
 
 interface TriggerConfig {
-  thoughtCooldownMs: number;      // Min time between thoughts per agent
-  speechCooldownMs: number;       // Min time between speech per agent
-  randomThoughtIntervalMs: [number, number]; // [min, max] for random thoughts
+  baseThoughtCooldownMs: number;      // Base time between thoughts per agent
+  baseSpeechCooldownMs: number;       // Base time between speech per agent
+  baseRandomThoughtIntervalMs: [number, number]; // [min, max] for random thoughts
   speechRange: number;            // Units within which speech is heard
   closePassDistance: number;      // Distance to trigger "passed agent closely"
 }
 
 const DEFAULT_TRIGGER_CONFIG: TriggerConfig = {
-  thoughtCooldownMs: 10000,       // 10 seconds between thoughts
-  speechCooldownMs: 45000,        // 45 seconds between speech (less spammy)
-  randomThoughtIntervalMs: [15000, 45000], // Random thought every 15-45 seconds
+  baseThoughtCooldownMs: 6000,        // 6 seconds base between thoughts (faster thinking)
+  baseSpeechCooldownMs: 12000,        // 12 seconds base between speech (much more chatty!)
+  baseRandomThoughtIntervalMs: [8000, 30000], // Random thought every 8-30 seconds base (more frequent)
   speechRange: 150,               // 150 units hearing range
   closePassDistance: 50           // 50 units = close pass
 };
@@ -124,6 +166,27 @@ interface AgentAIState {
   conversationHistory: ChatMessage[];
 }
 
+// ========== Active Conversation Tracking ==========
+
+interface ActiveConversation {
+  id: string;
+  participants: string[]; // Agent names (colors)
+  participantIds: string[]; // Agent IDs
+  startTime: number;
+  lastActivityTime: number;
+  turns: ConversationTurn[];
+  maxTurns: number; // Random 2-10 turns
+  topic?: 'suspicion' | 'alibi' | 'task_info' | 'small_talk' | 'accusation' | 'defense';
+  isActive: boolean;
+}
+
+interface ConversationTurn {
+  speakerName: string;
+  speakerId: string;
+  message: string;
+  timestamp: number;
+}
+
 // ========== Main Service ==========
 
 export class AIDecisionService {
@@ -134,6 +197,10 @@ export class AIDecisionService {
   private pendingSpeech: SpeechEvent[];
   private thoughtIdCounter: number;
   private speechIdCounter: number;
+  
+  // Active conversations between agents
+  private activeConversations: Map<string, ActiveConversation>;
+  private conversationIdCounter: number;
 
   constructor(aiServerUrl?: string, config?: Partial<TriggerConfig>) {
     this.aiClient = new AIModelClient(aiServerUrl);
@@ -143,6 +210,8 @@ export class AIDecisionService {
     this.pendingSpeech = [];
     this.thoughtIdCounter = 0;
     this.speechIdCounter = 0;
+    this.activeConversations = new Map();
+    this.conversationIdCounter = 0;
   }
 
   /**
@@ -153,14 +222,45 @@ export class AIDecisionService {
   }
 
   /**
+   * Get current thinking coefficient from the queue
+   */
+  getThinkingCoefficient(): number {
+    return getLLMQueue(10000).calculateThinkingCoefficient();
+  }
+
+  /**
+   * Get effective cooldowns based on current capacity
+   * Higher thinking coefficient = shorter cooldowns = more thinking
+   */
+  private getEffectiveCooldowns(): { thoughtCooldown: number; speechCooldown: number; randomInterval: [number, number] } {
+    const coefficient = this.getThinkingCoefficient();
+    
+    // Invert coefficient for cooldowns (higher coefficient = shorter cooldown)
+    const cooldownMultiplier = 1 / coefficient;
+    
+    return {
+      thoughtCooldown: Math.round(this.config.baseThoughtCooldownMs * cooldownMultiplier),
+      speechCooldown: Math.round(this.config.baseSpeechCooldownMs * cooldownMultiplier),
+      randomInterval: [
+        Math.round(this.config.baseRandomThoughtIntervalMs[0] * cooldownMultiplier),
+        Math.round(this.config.baseRandomThoughtIntervalMs[1] * cooldownMultiplier),
+      ] as [number, number],
+    };
+  }
+
+  /**
    * Initialize state tracking for an agent
+   * Each agent gets a randomized starting offset to avoid synchronized thinking
    */
   initializeAgent(agentId: string): void {
     const now = Date.now();
+    // Randomize initial state to desynchronize agents
+    const randomOffset = Math.random() * 15000; // 0-15 second random offset
+    const randomThoughtDelay = Math.random() * 10000; // 0-10 second random initial delay
     this.agentStates.set(agentId, {
-      lastThoughtTime: 0,
-      lastSpeechTime: 0,
-      nextRandomThoughtTime: now + this.randomInterval(),
+      lastThoughtTime: now - this.config.baseThoughtCooldownMs + randomOffset, // Stagger initial cooldowns
+      lastSpeechTime: now - this.config.baseSpeechCooldownMs + (Math.random() * 20000), // Randomize speech timing
+      nextRandomThoughtTime: now + this.randomInterval() + randomThoughtDelay, // Add random delay to first thought
       previouslyVisibleAgents: new Set(),
       lastZone: null,
       recentEvents: [],
@@ -183,6 +283,52 @@ export class AIDecisionService {
     }
 
     const now = Date.now();
+    
+    // Check if there's a pending conversation reply
+    const pendingReply = (context as AIContext & { pendingReply?: { speakerId: string; speakerName: string; message: string; zone: string | null; timestamp: number } }).pendingReply;
+    
+    // Get dynamic cooldowns based on current LLM capacity
+    const cooldowns = this.getEffectiveCooldowns();
+    const canSpeak = now - state.lastSpeechTime >= cooldowns.speechCooldown;
+    
+    // Handle conversation replies with priority
+    if (pendingReply && canSpeak) {
+      // Check if we're already in a conversation with this speaker
+      let conversation = this.getActiveConversationForAgent(context.agentId);
+      
+      if (!conversation) {
+        // Start a new conversation
+        const convId = this.startConversation(
+          pendingReply.speakerId,
+          pendingReply.speakerName,
+          context.agentName,
+          context.agentId,
+          pendingReply.message
+        );
+        conversation = this.activeConversations.get(convId) || null;
+      } else {
+        // Add their message to existing conversation
+        this.addConversationReply(conversation.id, pendingReply.speakerId, pendingReply.speakerName, pendingReply.message);
+      }
+      
+      if (conversation && conversation.isActive) {
+        // Generate our reply
+        const speech = await this.generateConversationReply(context, conversation, now);
+        if (speech) {
+          state.lastSpeechTime = now;
+          
+          // Also generate a thought about the conversation
+          const thought = await this.generateThought(context, 'heard_speech', now);
+          if (thought) {
+            state.lastThoughtTime = now;
+          }
+          
+          return { thought, speech };
+        }
+      }
+    }
+
+    // Normal trigger processing
     const triggers = this.detectTriggers(context, state, now);
 
     // No triggers? No AI call needed
@@ -191,8 +337,7 @@ export class AIDecisionService {
     }
 
     // Check cooldowns
-    const canThink = now - state.lastThoughtTime >= this.config.thoughtCooldownMs;
-    const canSpeak = now - state.lastSpeechTime >= this.config.speechCooldownMs;
+    const canThink = now - state.lastThoughtTime >= cooldowns.thoughtCooldown;
 
     if (!canThink && !canSpeak) {
       return {};
@@ -200,7 +345,7 @@ export class AIDecisionService {
 
     // Pick highest priority trigger
     const trigger = triggers[0];
-    
+
     try {
       // Generate thought
       let thought: ThoughtEvent | undefined;
@@ -213,10 +358,25 @@ export class AIDecisionService {
       // Maybe generate speech (social triggers or random)
       let speech: SpeechEvent | undefined;
       if (canSpeak && context.canSpeakTo.length > 0 && this.shouldSpeak(trigger, context)) {
-        const speechResult = await this.generateSpeech(context, thought?.thought, now);
-        if (speechResult) {
-          speech = speechResult;
-          state.lastSpeechTime = now;
+        // Check if we should start a conversation instead of just broadcasting
+        // Filter out own name to prevent self-talking
+        const nearbyAgents = context.canSpeakTo.filter(name => 
+          name.toLowerCase() !== context.agentName.toLowerCase()
+        );
+        if (nearbyAgents.length > 0 && Math.random() < 0.4) {
+          // 40% chance to initiate a conversation instead of broadcast
+          const targetName = nearbyAgents[Math.floor(Math.random() * nearbyAgents.length)];
+          const speechResult = await this.generateConversationStarter(context, targetName, thought?.thought, now);
+          if (speechResult) {
+            speech = speechResult;
+            state.lastSpeechTime = now;
+          }
+        } else {
+          const speechResult = await this.generateSpeech(context, thought?.thought, now);
+          if (speechResult) {
+            speech = speechResult;
+            state.lastSpeechTime = now;
+          }
         }
       }
 
@@ -233,9 +393,7 @@ export class AIDecisionService {
       console.error(`[AIDecisionService] Error generating AI content for ${context.agentId}:`, error);
       return {};
     }
-  }
-
-  /**
+  }  /**
    * Get a full AI decision for agent behavior (goal selection)
    */
   async getAgentDecision(context: AIContext): Promise<AIDecision> {
@@ -358,8 +516,13 @@ export class AIDecisionService {
     timestamp: number
   ): Promise<SpeechEvent | null> {
     const systemPrompt = buildSpeechPrompt(context);
+    // Filter own name from nearby agents list
+    const othersNearby = context.canSpeakTo.filter(name =>
+      name.toLowerCase() !== context.agentName.toLowerCase()
+    );
     const userPrompt = `Current thought: ${currentThought || 'Nothing in particular'}
-Nearby agents: ${context.canSpeakTo.join(', ') || 'None'}
+Nearby agents (NOT you): ${othersNearby.join(', ') || 'None'}
+Remember: You are ${context.agentName}. Don't talk about yourself in third person.
 What do you say out loud? Keep it brief and natural (1-2 sentences).`;
 
     let message: string;
@@ -370,6 +533,17 @@ What do you say out loud? Keep it brief and natural (1-2 sentences).`;
       });
       message = message.replace(/^["']|["']$/g, '').trim();
       if (message.length > 150) message = message.substring(0, 150);
+
+      // Clean up self-references (talking about yourself in third person)
+      message = cleanSelfReferences(message, context.agentName);
+      
+      // Check for invalid mentions (agents not nearby)
+      const invalidMentions = findInvalidMentions(message, context.agentName, othersNearby);
+      if (invalidMentions.length > 0) {
+        console.warn(`[Speech] ${context.agentName} mentioned agents not nearby: ${invalidMentions.join(', ')} in: "${message}"`);
+        // Don't block the speech, just log for debugging
+        // The agent might be sharing information about someone they saw earlier
+      }
     } catch (error) {
       // On timeout/queue errors, don't generate fallback speech - just stay quiet
       const isTimeoutOrQueue = error instanceof Error && 
@@ -398,6 +572,83 @@ What do you say out loud? Keep it brief and natural (1-2 sentences).`;
     };
 
     this.pendingSpeech.push(event);
+    return event;
+  }
+
+  /**
+   * Generate a conversation-starting speech directed at a specific agent
+   */
+  private async generateConversationStarter(
+    context: AIContext,
+    targetName: string,
+    currentThought: string | undefined,
+    timestamp: number
+  ): Promise<SpeechEvent | null> {
+    const isImpostor = context.role === 'IMPOSTOR';
+    
+    const systemPrompt = isImpostor 
+      ? this.buildImpostorConversationPrompt(context, targetName, 'small_talk')
+      : this.buildCrewmateConversationPrompt(context, targetName, 'small_talk');
+
+    const userPrompt = `You want to start a conversation with ${targetName}.
+Current thought: ${currentThought || 'Nothing in particular'}
+Location: ${context.currentZone || 'hallway'}
+
+Start a conversation naturally. You might:
+- Ask about what they've been up to
+- Share something you observed
+- Ask if they've seen anything suspicious
+- Suggest teaming up
+- Make small talk
+
+Keep it brief (1-2 sentences). Start the conversation!`;
+
+    let message: string;
+    try {
+      message = await this.aiClient.getDecision(systemPrompt, userPrompt, {
+        temperature: 0.9,
+        maxTokens: 80
+      });
+      message = message.replace(/^["']|["']$/g, '').trim();
+      // Clean up any "Name:" prefix
+      if (message.toLowerCase().startsWith(context.agentName.toLowerCase() + ':')) {
+        message = message.substring(context.agentName.length + 1).trim();
+      }
+      if (message.length > 150) message = message.substring(0, 150);
+      
+      // Clean up self-references
+      message = cleanSelfReferences(message, context.agentName);
+    } catch (error) {
+      // Fallback conversation starters
+      const starters = [
+        `Hey ${targetName}, what are you up to?`,
+        `${targetName}, seen anything suspicious?`,
+        `Hey ${targetName}, want to stick together?`,
+        `What's up ${targetName}?`,
+        `${targetName}, where have you been?`
+      ];
+      message = starters[Math.floor(Math.random() * starters.length)];
+    }
+
+    if (!message || message.trim() === '') {
+      return null;
+    }
+
+    // Start the conversation tracking
+    // Note: We don't have the target agent ID here, just the name
+    // The conversation will be created when the target responds
+
+    const event: SpeechEvent = {
+      id: `speech_${++this.speechIdCounter}`,
+      speakerId: context.agentId,
+      timestamp,
+      message,
+      position: context.currentPosition,
+      hearingRadius: this.config.speechRange
+    };
+
+    this.pendingSpeech.push(event);
+    console.log(`[Conversation] ${context.agentName} starting conversation with ${targetName}: "${message.substring(0, 50)}..."`);
     return event;
   }
 
@@ -460,21 +711,34 @@ What are you thinking? (One brief internal thought, stay in character)`;
    * Should this agent speak given the trigger?
    */
   private shouldSpeak(trigger: ThoughtTrigger, context: AIContext): boolean {
-    // Only speak on social triggers with low probability
+    // Filter out own name - can't talk to yourself
+    const othersNearby = context.canSpeakTo.filter(name => 
+      name.toLowerCase() !== context.agentName.toLowerCase()
+    );
+    
+    // Social triggers - high chance to speak when interacting with others
     const socialTriggers: ThoughtTrigger[] = ['agent_spotted', 'passed_agent_closely', 'heard_speech'];
-    if (socialTriggers.includes(trigger)) {
-      return Math.random() < 0.15; // 15% chance on social triggers
+    if (socialTriggers.includes(trigger) && othersNearby.length > 0) {
+      return Math.random() < 0.50; // 50% chance on social triggers - be chatty!
     }
-    // Very low chance on other triggers
-    return Math.random() < 0.02; // 2% chance
+    // Moderate chance on other triggers when others are nearby
+    if (othersNearby.length > 0) {
+      return Math.random() < 0.20; // 20% chance when someone can hear
+    }
+    // Don't talk to yourself
+    return false;
   }
 
   /**
-   * Random interval for idle thoughts
+   * Random interval for idle thoughts - uses dynamic cooldowns
+   * Adds per-call jitter to prevent synchronization
    */
   private randomInterval(): number {
-    const [min, max] = this.config.randomThoughtIntervalMs;
-    return min + Math.random() * (max - min);
+    const cooldowns = this.getEffectiveCooldowns();
+    const [min, max] = cooldowns.randomInterval;
+    // Add extra jitter (±20%) to break any synchronization patterns
+    const jitterFactor = 0.8 + (Math.random() * 0.4); // 0.8 to 1.2
+    return (min + Math.random() * (max - min)) * jitterFactor;
   }
 
   /**
@@ -557,8 +821,339 @@ What are you thinking? (One brief internal thought, stay in character)`;
     if (state) {
       // Reset the random thought timer on significant events
       // This prevents thought spam right after events
-      state.nextRandomThoughtTime = Date.now() + this.config.thoughtCooldownMs;
+      const cooldowns = this.getEffectiveCooldowns();
+      state.nextRandomThoughtTime = Date.now() + cooldowns.thoughtCooldown;
     }
+  }
+
+  // ========== Conversation System ==========
+
+  /**
+   * Start or continue a conversation between agents
+   * Returns the conversation ID if one was started or is active
+   */
+  startConversation(initiatorId: string, initiatorName: string, targetName: string, targetId: string, initialMessage: string): string {
+    // Check if there's already an active conversation between these two
+    const existingConvId = this.findActiveConversation(initiatorId, targetId);
+    if (existingConvId) {
+      return existingConvId;
+    }
+
+    // Create new conversation with random max turns (3-10)
+    const maxTurns = 3 + Math.floor(Math.random() * 8); // 3-10 turns
+    const convId = `conv_${++this.conversationIdCounter}_${Date.now()}`;
+    
+    const conversation: ActiveConversation = {
+      id: convId,
+      participants: [initiatorName, targetName],
+      participantIds: [initiatorId, targetId],
+      startTime: Date.now(),
+      lastActivityTime: Date.now(),
+      turns: [{
+        speakerName: initiatorName,
+        speakerId: initiatorId,
+        message: initialMessage,
+        timestamp: Date.now()
+      }],
+      maxTurns,
+      topic: this.inferConversationTopic(initialMessage),
+      isActive: true
+    };
+
+    this.activeConversations.set(convId, conversation);
+    console.log(`[Conversation] Started: ${initiatorName} → ${targetName} (max ${maxTurns} turns): "${initialMessage.substring(0, 50)}..."`);
+    
+    return convId;
+  }
+
+  /**
+   * Find an existing active conversation between two agents
+   */
+  private findActiveConversation(agentId1: string, agentId2: string): string | null {
+    for (const [convId, conv] of this.activeConversations) {
+      if (conv.isActive && 
+          conv.participantIds.includes(agentId1) && 
+          conv.participantIds.includes(agentId2)) {
+        return convId;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Get active conversation for an agent
+   */
+  getActiveConversationForAgent(agentId: string): ActiveConversation | null {
+    for (const conv of this.activeConversations.values()) {
+      if (conv.isActive && conv.participantIds.includes(agentId)) {
+        return conv;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Check if agent is currently in a conversation
+   */
+  isInConversation(agentId: string): boolean {
+    return this.getActiveConversationForAgent(agentId) !== null;
+  }
+
+  /**
+   * Add a reply to an ongoing conversation
+   */
+  addConversationReply(convId: string, speakerId: string, speakerName: string, message: string): boolean {
+    const conv = this.activeConversations.get(convId);
+    if (!conv || !conv.isActive) return false;
+
+    conv.turns.push({
+      speakerName,
+      speakerId,
+      message,
+      timestamp: Date.now()
+    });
+    conv.lastActivityTime = Date.now();
+
+    console.log(`[Conversation] ${speakerName} (turn ${conv.turns.length}/${conv.maxTurns}): "${message.substring(0, 50)}..."`);
+
+    // Check if conversation should end
+    if (conv.turns.length >= conv.maxTurns) {
+      this.endConversation(convId, 'max_turns_reached');
+    }
+
+    return true;
+  }
+
+  /**
+   * End a conversation
+   */
+  endConversation(convId: string, reason: string): void {
+    const conv = this.activeConversations.get(convId);
+    if (conv) {
+      conv.isActive = false;
+      console.log(`[Conversation] Ended (${reason}): ${conv.participants.join(' & ')} after ${conv.turns.length} turns`);
+      
+      // Clean up old conversations (keep for 30 seconds for reference)
+      setTimeout(() => {
+        this.activeConversations.delete(convId);
+      }, 30000);
+    }
+  }
+
+  /**
+   * Generate a conversational response for an agent
+   * This is called when an agent needs to reply in an ongoing conversation
+   */
+  async generateConversationReply(
+    context: AIContext,
+    conversation: ActiveConversation,
+    timestamp: number
+  ): Promise<SpeechEvent | null> {
+    const isImpostor = context.role === 'IMPOSTOR';
+    const otherParticipant = conversation.participants.find(p => p !== context.agentName) || 'someone';
+    
+    // Build conversation history for context
+    const conversationHistory = conversation.turns
+      .map(t => `${t.speakerName}: "${t.message}"`)
+      .join('\n');
+
+    const turnNumber = conversation.turns.length + 1;
+    const isLastTurn = turnNumber >= conversation.maxTurns;
+
+    const systemPrompt = isImpostor 
+      ? this.buildImpostorConversationPrompt(context, otherParticipant, conversation.topic)
+      : this.buildCrewmateConversationPrompt(context, otherParticipant, conversation.topic);
+
+    const userPrompt = `ONGOING CONVERSATION with ${otherParticipant}:
+${conversationHistory}
+
+This is turn ${turnNumber} of ${conversation.maxTurns}.${isLastTurn ? ' This is your last reply - wrap up naturally.' : ''}
+
+How do you respond? Keep it natural and brief (1-2 sentences). Stay in character.
+${isImpostor ? 'Remember: Deflect suspicion, blend in, maybe cast doubt on others.' : 'Remember: Share info, ask questions, build trust or express suspicion if warranted.'}`;
+
+    let message: string;
+    try {
+      message = await this.aiClient.getDecision(systemPrompt, userPrompt, {
+        temperature: 0.9,
+        maxTokens: 80
+      });
+      message = message.replace(/^["']|["']$/g, '').trim();
+      // Clean up any "Name:" prefix the LLM might add
+      if (message.toLowerCase().startsWith(context.agentName.toLowerCase() + ':')) {
+        message = message.substring(context.agentName.length + 1).trim();
+      }
+      if (message.length > 150) message = message.substring(0, 150);
+      
+      // Clean up self-references
+      message = cleanSelfReferences(message, context.agentName);
+    } catch (error) {
+      // On errors, use a simple continuation
+      message = this.getFallbackConversationReply(context, conversation.topic, isImpostor);
+    }
+
+    if (!message || message.trim() === '') {
+      return null;
+    }
+
+    // Add to conversation
+    this.addConversationReply(conversation.id, context.agentId, context.agentName, message);
+
+    // Create speech event
+    const event: SpeechEvent = {
+      id: `speech_${++this.speechIdCounter}`,
+      speakerId: context.agentId,
+      timestamp,
+      message,
+      position: context.currentPosition,
+      hearingRadius: this.config.speechRange
+    };
+
+    this.pendingSpeech.push(event);
+    return event;
+  }
+
+  /**
+   * Build conversation prompt for crewmates
+   */
+  private buildCrewmateConversationPrompt(context: AIContext, otherAgent: string, topic?: string): string {
+    return `You are ${context.agentName}. YOUR NAME IS ${context.agentName}. You are a CREWMATE in Among Us.
+You are having a conversation with ${otherAgent}. ${otherAgent} is a DIFFERENT person than you.
+
+IMPORTANT: When you talk about yourself, use "I" or "me". When you talk about ${otherAgent}, use their name or "you".
+NEVER say "${context.agentName} did" or "${context.agentName} is" - use "I did" or "I am" instead.
+
+YOUR GOALS IN THIS CONVERSATION:
+- Share useful information about what you've seen
+- Ask questions to gather information about others
+- Express suspicions if you have them (with reasons)
+- Build alliances with trustworthy players
+- If ${otherAgent} seems suspicious, probe carefully
+
+CONTEXT:
+- Location: ${context.currentZone || 'Unknown'}
+- Your suspicion of ${otherAgent}: ${context.suspicionLevels?.[otherAgent] || 'neutral'}
+- Topic: ${topic || 'general discussion'}
+${context.memoryContext ? `\nYour memories:\n${context.memoryContext}` : ''}
+
+Respond naturally like a real Among Us player would. Be conversational, not robotic.`;
+  }
+
+  /**
+   * Build conversation prompt for impostors
+   */
+  private buildImpostorConversationPrompt(context: AIContext, otherAgent: string, topic?: string): string {
+    return `You are ${context.agentName}. YOUR NAME IS ${context.agentName}. You are secretly an IMPOSTOR in Among Us.
+You are having a conversation with ${otherAgent}. ${otherAgent} is a DIFFERENT person than you.
+
+IMPORTANT: When you talk about yourself, use "I" or "me". When you talk about ${otherAgent}, use their name or "you".
+NEVER say "${context.agentName} did" or "${context.agentName} is" - use "I did" or "I am" instead.
+
+YOUR GOALS IN THIS CONVERSATION:
+- Appear innocent and helpful
+- Deflect any suspicion away from yourself
+- Subtly cast doubt on other crewmates if possible
+- Don't be too eager to accuse (that's suspicious)
+- If accused, defend calmly with plausible alibis
+- Agree with safe consensus opinions
+
+CONTEXT:
+- Location: ${context.currentZone || 'Unknown'}
+- You are secretly an impostor!
+- Topic: ${topic || 'general discussion'}
+
+Be a convincing crewmate. Don't overdo the helpfulness. Act natural and blend in.`;
+  }
+
+  /**
+   * Fallback replies when LLM fails
+   */
+  private getFallbackConversationReply(context: AIContext, topic?: string, isImpostor?: boolean): string {
+    const crewmateReplies = [
+      'Yeah, I agree.',
+      'Hmm, interesting. I\'ll keep an eye out.',
+      'I was just doing my tasks.',
+      'Have you seen anyone acting weird?',
+      'Let\'s stick together.',
+      'Good to know.',
+      'I\'m not sure, to be honest.',
+      'We should be careful.'
+    ];
+
+    const impostorReplies = [
+      'Yeah, totally.',
+      'I\'ve been doing tasks all game.',
+      'I haven\'t seen anything suspicious.',
+      'Maybe we should check on others.',
+      'I was in electrical earlier.',
+      'Good point.',
+      'I think we\'re good here.',
+      'Agreed.'
+    ];
+
+    const options = isImpostor ? impostorReplies : crewmateReplies;
+    return options[Math.floor(Math.random() * options.length)];
+  }
+
+  /**
+   * Infer the topic of a conversation from initial message
+   */
+  private inferConversationTopic(message: string): ActiveConversation['topic'] {
+    const lower = message.toLowerCase();
+    if (lower.includes('sus') || lower.includes('suspicious') || lower.includes('saw') || lower.includes('vent')) {
+      return 'suspicion';
+    }
+    if (lower.includes('where') || lower.includes('what were you') || lower.includes('alibi')) {
+      return 'alibi';
+    }
+    if (lower.includes('task') || lower.includes('working on')) {
+      return 'task_info';
+    }
+    if (lower.includes('accuse') || lower.includes('you\'re the') || lower.includes('it\'s you')) {
+      return 'accusation';
+    }
+    if (lower.includes('wasn\'t me') || lower.includes('i swear') || lower.includes('not me')) {
+      return 'defense';
+    }
+    return 'small_talk';
+  }
+
+  /**
+   * Clean up stale conversations (called periodically)
+   */
+  cleanupStaleConversations(): void {
+    const now = Date.now();
+    const staleTimeout = 30000; // 30 seconds of inactivity
+
+    for (const [convId, conv] of this.activeConversations) {
+      if (conv.isActive && (now - conv.lastActivityTime) > staleTimeout) {
+        this.endConversation(convId, 'inactivity');
+      }
+    }
+  }
+
+  /**
+   * Get conversation statistics for debugging/monitoring
+   */
+  getConversationStats(): { active: number; total: number; avgTurns: number } {
+    let totalTurns = 0;
+    let completedConvs = 0;
+    let activeCount = 0;
+
+    for (const conv of this.activeConversations.values()) {
+      if (conv.isActive) {
+        activeCount++;
+      } else {
+        totalTurns += conv.turns.length;
+        completedConvs++;
+      }
+    }
+
+    return {
+      active: activeCount,
+      total: this.activeConversations.size,
+      avgTurns: completedConvs > 0 ? totalTurns / completedConvs : 0
+    };
   }
 }
 
