@@ -2,6 +2,25 @@ import type { AgentSnapshot, AgentSummarySnapshot, WorldSnapshot } from './simul
 
 export const PROTOCOL_VERSION = '0.1.0';
 
+// LLM Queue Statistics for monitoring
+export interface LLMQueueStats {
+  queueDepth: number;
+  processingCount: number;
+  totalProcessed: number;
+  totalTimedOut: number;
+  totalFailed: number;
+  avgProcessingTimeMs1Min: number;
+  avgProcessingTimeMs5Min: number;
+  processedPerSecond1Min: number;
+  processedPerSecond5Min: number;
+  recentRequests: Array<{
+    timestamp: number;
+    durationMs: number;
+    success: boolean;
+    timedOut: boolean;
+  }>;
+}
+
 export interface HandshakePayload {
   protocolVersion: string;
   serverTime: number;
@@ -47,6 +66,8 @@ export interface WorldDelta {
   gamePhase?: 'INITIALIZING' | 'PLAYING' | 'MEETING' | 'GAME_OVER';
   recentThoughts?: import('./simulation.types.ts').ThoughtEvent[];
   recentSpeech?: import('./simulation.types.ts').SpeechEvent[];
+  // LLM Queue stats for monitoring
+  llmQueueStats?: LLMQueueStats;
 }
 
 export interface AgentDelta {

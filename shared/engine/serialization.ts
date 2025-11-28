@@ -101,6 +101,7 @@ export interface SerializeWorldOptions {
   taskProgress?: number;
   recentThoughts?: ThoughtEvent[];
   recentSpeech?: SpeechEvent[];
+  llmQueueStats?: import('../types/protocol.types.ts').LLMQueueStats;
 }
 
 export function serializeWorld(
@@ -117,5 +118,6 @@ export function serializeWorld(
     recentThoughts: options.recentThoughts ?? [],
     recentSpeech: options.recentSpeech ?? [],
     taskProgress: options.taskProgress ?? 0,
+    llmQueueStats: options.llmQueueStats,
   };
 }

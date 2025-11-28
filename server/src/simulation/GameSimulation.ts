@@ -123,6 +123,7 @@ export class GameSimulation {
       taskProgress: this.manager.getTaskProgress(),
       recentThoughts: this.recentThoughts,
       recentSpeech: this.recentSpeech,
+      llmQueueStats: this.aiService?.getQueueStats(),
     };
     
     return serializeWorld(this.manager.getAgents(), this.tick, timestamp, options);

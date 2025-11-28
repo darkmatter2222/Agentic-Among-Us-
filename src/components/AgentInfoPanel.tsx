@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import './AgentInfoPanel.css';
 import type { TaskAssignment } from '@shared/types/simulation.types.ts';
 import type { PlayerRole } from '@shared/types/game.types.ts';
+import type { LLMQueueStats } from '@shared/types/protocol.types.ts';
 import { getColorName } from '@shared/constants/colors.ts';
 
 export interface AgentSummary {
@@ -48,6 +49,7 @@ interface AgentInfoPanelProps {
   taskProgress?: number;
   selectedAgentId?: string | null;
   onAgentSelect?: (agentId: string) => void;
+  llmQueueStats?: LLMQueueStats;
 }
 
 interface ExpandedAgentCardProps {
@@ -274,10 +276,171 @@ function ExpandedAgentCard({ agent, onClose }: ExpandedAgentCardProps) {
   );
 }
 
-export function AgentInfoPanel({ agents, width = 380, taskProgress = 0, selectedAgentId, onAgentSelect }: AgentInfoPanelProps) {
+// LLM Queue Statistics Panel
+function LLMQueuePanel({ stats, isCollapsed, onToggle }: {
+  stats?: LLMQueueStats;
+  isCollapsed: boolean;
+  onToggle: () => void;
+}) {
+  const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
+
+  const getHealthColor = (avgTime: number, queueDepth: number) => {
+    if (queueDepth > 10 || avgTime > 800) return '#e74c3c'; // Red - unhealthy
+    if (queueDepth > 5 || avgTime > 500) return '#f39c12'; // Orange - warning
+    return '#2ecc71'; // Green - healthy
+  };
+
+  const handleCopyStats = useCallback(async (e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent panel collapse
+    if (!stats) return;
+    
+    const jsonStr = JSON.stringify(stats, null, 2);
+    try {
+      await navigator.clipboard.writeText(jsonStr);
+      setCopyFeedback('Copied!');
+      setTimeout(() => setCopyFeedback(null), 2000);
+    } catch (err) {
+      setCopyFeedback('Failed');
+      setTimeout(() => setCopyFeedback(null), 2000);
+    }
+  }, [stats]);
+
+  const healthColor = stats
+    ? getHealthColor(stats.avgProcessingTimeMs1Min, stats.queueDepth)
+    : '#666';
+
+  return (
+    <div className={`collapsible-panel llm-queue-panel ${isCollapsed ? 'collapsed' : ''}`}>
+      <header className="panel-header" onClick={onToggle}>
+        <div className="panel-header__left">
+          <span className={`collapse-icon ${isCollapsed ? '' : 'expanded'}`}>▶</span>
+          <h3>LLM Queue</h3>
+          <span className="health-indicator" style={{ backgroundColor: healthColor }} />
+        </div>
+        <div className="panel-header__right">
+          {stats && <span className="queue-depth-badge">{stats.queueDepth} queued</span>}
+          {stats && (
+            <button className="copy-stats-btn" onClick={handleCopyStats} title="Copy stats as JSON">
+              {copyFeedback || '📋'}
+            </button>
+          )}
+        </div>
+      </header>
+
+      {!isCollapsed && stats && (
+        <div className="panel-content">
+          {/* Queue Depth Visualization */}
+          <div className="llm-stat-row">
+            <span className="stat-label">Queue Depth</span>
+            <div className="queue-depth-bar">
+              <div
+                className="queue-depth-fill"
+                style={{
+                  width: `${Math.min(100, stats.queueDepth * 10)}%`,
+                  backgroundColor: stats.queueDepth > 5 ? '#f39c12' : '#4caf50'
+                }}
+              />
+            </div>
+            <span className="stat-value">{stats.queueDepth}</span>
+          </div>
+
+          {/* Processed Per Second KPI */}
+          <div className="llm-stat-row kpi-row">
+            <span className="stat-label">Processed/sec</span>
+            <div className="kpi-values">
+              <span className="kpi-value" title="Last 1 minute">
+                <span className="kpi-number">{stats.processedPerSecond1Min.toFixed(2)}</span>
+                <span className="kpi-period">1m</span>
+              </span>
+              <span className="kpi-divider">|</span>
+              <span className="kpi-value" title="Last 5 minutes">
+                <span className="kpi-number">{stats.processedPerSecond5Min.toFixed(2)}</span>
+                <span className="kpi-period">5m</span>
+              </span>
+            </div>
+          </div>
+
+          {/* Processing indicator */}
+          <div className="llm-stat-row">
+            <span className="stat-label">Processing</span>
+            <span className={`processing-indicator ${stats.processingCount > 0 ? 'active' : ''}`}>
+              {stats.processingCount > 0 ? '⚡ Active' : '○ Idle'}
+            </span>
+          </div>          {/* Avg Processing Time - 1 Min */}
+          <div className="llm-stat-row">
+            <span className="stat-label">Avg Time (1m)</span>
+            <div className="time-bar">
+              <div 
+                className="time-fill"
+                style={{ 
+                  width: `${Math.min(100, stats.avgProcessingTimeMs1Min / 10)}%`,
+                  backgroundColor: stats.avgProcessingTimeMs1Min > 500 ? '#f39c12' : '#4caf50'
+                }}
+              />
+            </div>
+            <span className="stat-value">{stats.avgProcessingTimeMs1Min}ms</span>
+          </div>
+          
+          {/* Avg Processing Time - 5 Min */}
+          <div className="llm-stat-row">
+            <span className="stat-label">Avg Time (5m)</span>
+            <div className="time-bar">
+              <div 
+                className="time-fill"
+                style={{ 
+                  width: `${Math.min(100, stats.avgProcessingTimeMs5Min / 10)}%`,
+                  backgroundColor: stats.avgProcessingTimeMs5Min > 500 ? '#f39c12' : '#4caf50'
+                }}
+              />
+            </div>
+            <span className="stat-value">{stats.avgProcessingTimeMs5Min}ms</span>
+          </div>
+          
+          {/* Totals */}
+          <div className="llm-totals">
+            <div className="total-item">
+              <span className="total-label">Processed</span>
+              <span className="total-value success">{stats.totalProcessed}</span>
+            </div>
+            <div className="total-item">
+              <span className="total-label">Timeouts</span>
+              <span className="total-value warning">{stats.totalTimedOut}</span>
+            </div>
+            <div className="total-item">
+              <span className="total-label">Failed</span>
+              <span className="total-value error">{stats.totalFailed}</span>
+            </div>
+          </div>
+          
+          {/* Recent Requests Timeline */}
+          {stats.recentRequests.length > 0 && (
+            <div className="recent-requests">
+              <div className="recent-header">Recent Requests</div>
+              <div className="request-timeline">
+                {stats.recentRequests.slice(-10).map((req, idx) => (
+                  <div 
+                    key={idx}
+                    className={`request-dot ${req.success ? 'success' : req.timedOut ? 'timeout' : 'failed'}`}
+                    title={`${req.durationMs}ms - ${req.success ? 'Success' : req.timedOut ? 'Timeout' : 'Failed'}`}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function AgentInfoPanel({ agents, width = 380, taskProgress = 0, selectedAgentId, onAgentSelect, llmQueueStats }: AgentInfoPanelProps) {
   const [expandedAgentId, setExpandedAgentId] = useState<string | null>(null);
   const [columnWidths, setColumnWidths] = useState<number[]>([90, 80, 70, 80]); // Agent, Zone, Status, Tasks
   const resizingRef = useRef<{ index: number; startX: number; startWidth: number } | null>(null);
+  
+  // Collapse states for panels
+  const [agentsPanelCollapsed, setAgentsPanelCollapsed] = useState(false);
+  const [llmPanelCollapsed, setLlmPanelCollapsed] = useState(false);
   
   // Sync expanded agent with selected agent from parent
   useEffect(() => {
@@ -319,103 +482,118 @@ export function AgentInfoPanel({ agents, width = 380, taskProgress = 0, selected
   
   return (
     <aside className="agent-panel" style={{ width }}>
-      <header className="agent-panel__header">
-        <h2>Agents</h2>
-        <div className="agent-panel__counts">
-          <span className="count-badge crew">{crewmateCount} Crew</span>
-          <span className="count-badge imp">{impostorCount} Imp</span>
-        </div>
-      </header>
-      
-      {/* Global Task Progress */}
-      <div className="global-task-progress">
-        <div className="global-progress-label">
-          <span>Crew Task Progress</span>
-          <span className="progress-percent">{Math.round(taskProgress)}%</span>
-        </div>
-        <div className="global-progress-bar">
-          <div 
-            className="global-progress-fill" 
-            style={{ width: `${taskProgress}%` }}
-          />
-        </div>
-      </div>
-      
-      <div className="agent-panel__content">
-        {expandedAgent ? (
-          <ExpandedAgentCard 
-            agent={expandedAgent} 
-            onClose={() => setExpandedAgentId(null)} 
-          />
-        ) : (
-          <table className="agent-table">
-            <thead>
-              <tr>
-                <th style={{ width: columnWidths[0] }}>
-                  Agent
-                  <span className="resize-handle" onMouseDown={(e) => handleMouseDown(0, e)} />
-                </th>
-                <th style={{ width: columnWidths[1] }}>
-                  Zone
-                  <span className="resize-handle" onMouseDown={(e) => handleMouseDown(1, e)} />
-                </th>
-                <th style={{ width: columnWidths[2] }}>
-                  Status
-                  <span className="resize-handle" onMouseDown={(e) => handleMouseDown(2, e)} />
-                </th>
-                <th style={{ width: columnWidths[3] }}>
-                  Tasks
-                  <span className="resize-handle" onMouseDown={(e) => handleMouseDown(3, e)} />
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-            {agents.map(agent => {
-              const role = getRoleBadge(agent.role);
-              const totalTasks = agent.assignedTasks?.length ?? 0;
-              const completed = agent.tasksCompleted ?? 0;
-              const colorName = getColorName(agent.color);
-              
-              return (
-                <tr
-                  key={agent.id}
-                  className="agent-row clickable"
-                  onClick={() => {
-                    setExpandedAgentId(agent.id);
-                    onAgentSelect?.(agent.id);
-                  }}
-                >
-                  <td className="agent-row__id" style={{ width: columnWidths[0] }}>
-                    <span className="agent-color-dot" style={{ backgroundColor: hexColor(agent.color) }} />
-                    <span className={`agent-num ${agent.role === 'IMPOSTOR' ? 'impostor-name' : 'crewmate-name'}`}>{colorName}</span>
-                    <span className={`role-badge mini ${role.className}`}>{role.label}</span>
-                  </td>
-                  <td className="agent-row__zone" style={{ width: columnWidths[1] }} title={agent.currentZone ?? 'Unknown'}>
-                    {agent.currentZone?.replace(' (ROOM)', '').replace(' (HALLWAY)', '') ?? '?'}
-                  </td>
-                  <td className="agent-row__status" style={{ width: columnWidths[2] }}>
-                    <span className={`status-badge status-badge--${agent.activityState.toLowerCase()}`}>
-                      {agent.activityState}
-                    </span>
-                  </td>
-                  <td className="agent-row__tasks" style={{ width: columnWidths[3] }}>
-                    <div className="mini-progress">
-                      <div className="mini-progress-bar">
-                        <div 
-                          className="mini-progress-fill"
-                          style={{ width: totalTasks > 0 ? `${(completed / totalTasks) * 100}%` : '0%' }}
-                        />
-                      </div>
-                      <span className="mini-progress-text">{completed}/{totalTasks}</span>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-            </tbody>
-          </table>
+      {/* Agents Collapsible Panel */}
+      <div className={`collapsible-panel agents-panel ${agentsPanelCollapsed ? 'collapsed' : ''}`}>
+        <header className="panel-header" onClick={() => setAgentsPanelCollapsed(!agentsPanelCollapsed)}>
+          <div className="panel-header__left">
+            <span className={`collapse-icon ${agentsPanelCollapsed ? '' : 'expanded'}`}>▶</span>
+            <h3>Agents</h3>
+          </div>
+          <div className="panel-header__right">
+            <span className="count-badge crew">{crewmateCount} Crew</span>
+            <span className="count-badge imp">{impostorCount} Imp</span>
+          </div>
+        </header>
+        
+        {!agentsPanelCollapsed && (
+          <div className="panel-content">
+            {/* Global Task Progress */}
+            <div className="global-task-progress">
+              <div className="global-progress-label">
+                <span>Crew Task Progress</span>
+                <span className="progress-percent">{Math.round(taskProgress)}%</span>
+              </div>
+              <div className="global-progress-bar">
+                <div 
+                  className="global-progress-fill" 
+                  style={{ width: `${taskProgress}%` }}
+                />
+              </div>
+            </div>
+            
+            <div className="agent-panel__content">
+              {expandedAgent ? (
+                <ExpandedAgentCard 
+                  agent={expandedAgent} 
+                  onClose={() => setExpandedAgentId(null)} 
+                />
+              ) : (
+                <table className="agent-table">
+                  <thead>
+                    <tr>
+                      <th style={{ width: columnWidths[0] }}>
+                        Agent
+                        <span className="resize-handle" onMouseDown={(e) => handleMouseDown(0, e)} />
+                      </th>
+                      <th style={{ width: columnWidths[1] }}>
+                        Zone
+                        <span className="resize-handle" onMouseDown={(e) => handleMouseDown(1, e)} />
+                      </th>
+                      <th style={{ width: columnWidths[2] }}>
+                        Status
+                        <span className="resize-handle" onMouseDown={(e) => handleMouseDown(2, e)} />
+                      </th>
+                      <th style={{ width: columnWidths[3] }}>
+                        Tasks
+                        <span className="resize-handle" onMouseDown={(e) => handleMouseDown(3, e)} />
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                  {agents.map(agent => {
+                    const totalTasks = agent.assignedTasks?.length ?? 0;
+                    const completed = agent.tasksCompleted ?? 0;
+                    const colorName = getColorName(agent.color);
+                    
+                    return (
+                      <tr
+                        key={agent.id}
+                        className="agent-row clickable"
+                        onClick={() => {
+                          setExpandedAgentId(agent.id);
+                          onAgentSelect?.(agent.id);
+                        }}
+                      >
+                        <td className="agent-row__id" style={{ width: columnWidths[0] }}>
+                          <span className="agent-color-dot" style={{ backgroundColor: hexColor(agent.color) }} />
+                          <span className={`agent-num ${agent.role === 'IMPOSTOR' ? 'impostor-name' : 'crewmate-name'}`}>{colorName}</span>
+                        </td>
+                        <td className="agent-row__zone" style={{ width: columnWidths[1] }} title={agent.currentZone ?? 'Unknown'}>
+                          {agent.currentZone?.replace(' (ROOM)', '').replace(' (HALLWAY)', '') ?? '?'}
+                        </td>
+                        <td className="agent-row__status" style={{ width: columnWidths[2] }}>
+                          <span className={`status-badge status-badge--${agent.activityState.toLowerCase()}`}>
+                            {agent.activityState}
+                          </span>
+                        </td>
+                        <td className="agent-row__tasks" style={{ width: columnWidths[3] }}>
+                          <div className="mini-progress">
+                            <div className="mini-progress-bar">
+                              <div 
+                                className="mini-progress-fill"
+                                style={{ width: totalTasks > 0 ? `${(completed / totalTasks) * 100}%` : '0%' }}
+                              />
+                            </div>
+                            <span className="mini-progress-text">{completed}/{totalTasks}</span>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
         )}
       </div>
+      
+      {/* LLM Queue Stats Panel */}
+      <LLMQueuePanel 
+        stats={llmQueueStats} 
+        isCollapsed={llmPanelCollapsed}
+        onToggle={() => setLlmPanelCollapsed(!llmPanelCollapsed)}
+      />
     </aside>
   );
 }

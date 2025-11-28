@@ -1,6 +1,7 @@
 /**
  * AI Decision Service
  * Orchestrates LLM inference for agent decision-making with trigger-based activation
+ * Uses LLMQueue to serialize requests and prevent GPU overload
  */
 
 import type { Point } from '@shared/data/poly3-map.ts';
@@ -20,6 +21,7 @@ import {
   buildSpeechPrompt,
   parseAIResponse 
 } from './prompts/AgentPrompts.js';
+import { getLLMQueue, type LLMQueueStats } from './LLMQueue.js';
 
 // ========== AI Model Client (inline for server-side) ==========
 
@@ -35,14 +37,15 @@ interface AIModelOptions {
 
 class AIModelClient {
   private baseUrl: string;
-  private timeout: number;
 
-  constructor(baseUrl: string = 'http://192.168.86.48:8080', timeout: number = 3000) {
+  constructor(baseUrl: string = 'http://192.168.86.48:8080') {
     this.baseUrl = baseUrl.replace(/\/$/, '');
-    this.timeout = timeout;
   }
 
-  async getDecision(systemPrompt: string, userPrompt: string, options?: AIModelOptions): Promise<string> {
+  /**
+   * Make a raw LLM request (without queue - used internally by queued methods)
+   */
+  private async makeRequest(systemPrompt: string, userPrompt: string, options?: AIModelOptions): Promise<string> {
     const messages: ChatMessage[] = [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt }
@@ -55,31 +58,26 @@ class AIModelClient {
       stream: false
     };
 
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+    const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
 
-      const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-        signal: controller.signal
-      });
-
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        throw new Error(`AI API error: ${response.status}`);
-      }
-
-      const result = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
-      return result.choices?.[0]?.message?.content || '';
-    } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') {
-        console.warn('AI request timed out');
-      }
-      throw error;
+    if (!response.ok) {
+      throw new Error(`AI API error: ${response.status}`);
     }
+
+    const result = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
+    return result.choices?.[0]?.message?.content || '';
+  }
+
+  /**
+   * Get a decision through the LLM queue (serialized, with timeout)
+   */
+  async getDecision(systemPrompt: string, userPrompt: string, options?: AIModelOptions): Promise<string> {
+    const queue = getLLMQueue();
+    return queue.enqueue(() => this.makeRequest(systemPrompt, userPrompt, options));
   }
 }
 
@@ -132,6 +130,13 @@ export class AIDecisionService {
     this.pendingSpeech = [];
     this.thoughtIdCounter = 0;
     this.speechIdCounter = 0;
+  }
+
+  /**
+   * Get LLM queue statistics for monitoring
+   */
+  getQueueStats(): LLMQueueStats {
+    return getLLMQueue().getStats();
   }
 
   /**
@@ -235,9 +240,12 @@ export class AIDecisionService {
 
       return parseAIResponse(response, context);
     } catch (error) {
-      // Silently fallback on timeout/abort errors (expected when AI server is down)
+      // Silently fallback on timeout/queue errors (expected under load)
       const isExpectedError = error instanceof Error && 
-        (error.name === 'AbortError' || error.message.includes('ECONNREFUSED'));
+        (error.name === 'AbortError' || 
+         error.message.includes('ECONNREFUSED') ||
+         error.message.includes('timed out') ||
+         error.message.includes('Queue cleared'));
       if (!isExpectedError) {
         console.error(`[AIDecisionService] Decision error for ${context.agentId}:`, error);
       }
@@ -350,12 +358,13 @@ What do you say out loud? Keep it brief and natural (1-2 sentences).`;
       message = message.replace(/^["']|["']$/g, '').trim();
       if (message.length > 150) message = message.substring(0, 150);
     } catch (error) {
-      // On timeout/abort, don't generate fallback speech - just stay quiet
-      const isTimeout = error instanceof Error && 
-        (error.name === 'AbortError' || error.message.includes('timeout'));
-      if (isTimeout) {
-        console.log('AI request timed out');
-        return null; // Stay silent on timeout
+      // On timeout/queue errors, don't generate fallback speech - just stay quiet
+      const isTimeoutOrQueue = error instanceof Error && 
+        (error.name === 'AbortError' || 
+         error.message.includes('timed out') ||
+         error.message.includes('Queue cleared'));
+      if (isTimeoutOrQueue) {
+        return null; // Stay silent on timeout/queue issues
       } else {
         message = this.fallbackSpeech(context);
       }

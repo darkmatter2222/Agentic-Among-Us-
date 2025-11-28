@@ -343,6 +343,7 @@ export class SimulationClient {
       gamePhase: delta.gamePhase ?? this.world?.gamePhase ?? 'PLAYING',
       recentThoughts: delta.recentThoughts ?? this.world?.recentThoughts ?? [],
       recentSpeech: delta.recentSpeech ?? this.world?.recentSpeech ?? [],
+      llmQueueStats: delta.llmQueueStats ?? this.world?.llmQueueStats,
     };
     console.debug('[simulation] world updated to tick', delta.tick, 'agent count', updatedAgents.length, 'taskProgress', this.world.taskProgress);
 

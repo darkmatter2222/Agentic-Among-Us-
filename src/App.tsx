@@ -6,6 +6,7 @@ import { RoomLightingRenderer } from './rendering/RoomLightingRenderer';
 import { AIAgentVisualRenderer } from './rendering/AIAgentVisualRenderer';
 import { getSimulationClient } from './ai/SimulationClient';
 import type { WorldSnapshot, SpeechEvent } from '@shared/types/simulation.types.ts';
+import type { LLMQueueStats } from '@shared/types/protocol.types.ts';
 import { AgentInfoPanel, type AgentSummary } from './components/AgentInfoPanel';
 
 // Vision distance in pixels (matches agent visionRadius config)
@@ -24,6 +25,7 @@ function App() {
   const initializingRef = useRef<boolean>(false);
   const [agentSummaries, setAgentSummaries] = useState<AgentSummary[]>([]);
   const [taskProgress, setTaskProgress] = useState(0);
+  const [llmQueueStats, setLlmQueueStats] = useState<LLMQueueStats | undefined>(undefined);
   const [panelWidth, setPanelWidth] = useState(380);
   const [isDraggingPanel, setIsDraggingPanel] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
@@ -166,6 +168,7 @@ function App() {
           }))
         );
         setTaskProgress(snapshot.taskProgress ?? 0);
+        setLlmQueueStats(snapshot.llmQueueStats);
         lastSummaryAt = now;
       }
     });
@@ -563,6 +566,7 @@ function App() {
         taskProgress={taskProgress}
         selectedAgentId={selectedAgentId}
         onAgentSelect={handleAgentSelect}
+        llmQueueStats={llmQueueStats}
       />
     </div>
   );

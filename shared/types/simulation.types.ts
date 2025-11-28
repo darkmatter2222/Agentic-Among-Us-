@@ -124,6 +124,7 @@ export interface WorldSnapshot {
   recentThoughts?: ThoughtEvent[];
   recentSpeech?: SpeechEvent[];
   taskProgress?: number; // 0-100 percentage of total tasks completed
+  llmQueueStats?: import('./protocol.types.ts').LLMQueueStats; // LLM queue monitoring
 }
 
 // ========== AI Decision Types ==========
