@@ -1,6 +1,7 @@
 import type { AIAgent } from './AIAgent.ts';
 import type { MovementState } from './MovementController.ts';
 import type { PlayerStateMachineState } from './PlayerStateMachine.ts';
+import type { DeadBody, KillEvent } from './KillSystem.ts';
 import type {
   AgentSnapshot,
   AgentSummarySnapshot,
@@ -8,6 +9,8 @@ import type {
   WorldSnapshot,
   ThoughtEvent,
   SpeechEvent,
+  BodySnapshot,
+  KillEventSnapshot,
 } from '../types/simulation.types.ts';
 
 function serializeMovementState(state: MovementState): MovementSnapshot {
@@ -30,7 +33,7 @@ function serializeStateMachineState(state: PlayerStateMachineState, timestamp: n
   };
 }
 
-export function serializeAgent(agent: AIAgent, timestamp: number): AgentSnapshot {
+export function serializeAgent(agent: AIAgent, timestamp: number, killStatus?: KillStatusInfo): AgentSnapshot {
   const movementState = agent.getMovementController().getState();
   const playerState = agent.getStateMachine().getState();
 
@@ -83,6 +86,9 @@ export function serializeAgent(agent: AIAgent, timestamp: number): AgentSnapshot
     recentConversations,
     isBeingFollowed: typeof agent.isBeingFollowed === 'function' ? agent.isBeingFollowed() : false,
     buddyId: agent.getBuddyId ? agent.getBuddyId() : null,
+    
+    // Kill status (impostors only)
+    killStatus: killStatus,
   };
 }
 
@@ -97,12 +103,47 @@ export function serializeAgentSummary(agent: AIAgent): AgentSummarySnapshot {
   };
 }
 
+export interface KillStatusInfo {
+  cooldownRemaining: number;
+  canKill: boolean;
+  hasTargetInRange: boolean;
+  killCount: number;
+}
+
 export interface SerializeWorldOptions {
   gamePhase?: 'INITIALIZING' | 'PLAYING' | 'MEETING' | 'GAME_OVER';
   taskProgress?: number;
   recentThoughts?: ThoughtEvent[];
   recentSpeech?: SpeechEvent[];
   llmQueueStats?: import('../types/protocol.types.ts').LLMQueueStats;
+  bodies?: DeadBody[];
+  recentKills?: KillEvent[];
+  gameTimer?: import('../types/simulation.types.ts').GameTimerSnapshot;
+  killStatusMap?: Map<string, KillStatusInfo>;
+}
+
+function serializeBody(body: DeadBody): BodySnapshot {
+  return {
+    id: body.id,
+    victimId: body.victimId,
+    victimName: body.victimName,
+    victimColor: body.victimColor,
+    position: { x: body.position.x, y: body.position.y },
+    killedAt: body.killedAt,
+    zone: body.zone,
+    isReported: body.isReported,
+  };
+}
+
+function serializeKillEvent(event: KillEvent): KillEventSnapshot {
+  return {
+    id: event.id,
+    killerName: event.killerName,
+    victimName: event.victimName,
+    zone: event.zone,
+    timestamp: event.timestamp,
+    witnessCount: event.witnesses.length,
+  };
 }
 
 export function serializeWorld(
@@ -115,7 +156,13 @@ export function serializeWorld(
     tick,
     timestamp,
     gamePhase: options.gamePhase ?? 'PLAYING',
-    agents: agents.map(agent => serializeAgent(agent, timestamp)),
+    gameTimer: options.gameTimer,
+    agents: agents.map(agent => {
+      const killStatus = options.killStatusMap?.get(agent.getId());
+      return serializeAgent(agent, timestamp, killStatus);
+    }),
+    bodies: options.bodies?.map(serializeBody) ?? [],
+    recentKills: options.recentKills?.map(serializeKillEvent) ?? [],
     recentThoughts: options.recentThoughts ?? [],
     recentSpeech: options.recentSpeech ?? [],
     taskProgress: options.taskProgress ?? 0,

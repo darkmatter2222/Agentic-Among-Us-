@@ -180,6 +180,49 @@
   color: #ef5350 !important;
 }
 
+/* Kill Status Icons for Impostors */
+.kill-status-icon {
+  margin-left: 4px;
+  font-size: 0.8rem;
+  transition: all 0.3s ease;
+}
+
+.kill-status-icon.ready {
+  opacity: 0.7;
+  filter: saturate(70%);
+  text-shadow: 0 0 3px rgba(139, 0, 0, 0.5);
+}
+
+.kill-status-icon.ready-target {
+  opacity: 1;
+  filter: saturate(150%);
+  animation: kill-ready-pulse 0.6s ease-in-out infinite;
+  text-shadow: 0 0 8px rgba(255, 0, 0, 0.8);
+}
+
+/* Countdown timer for cooldown */
+.kill-status-timer {
+  margin-left: 6px;
+  font-size: 0.65rem;
+  font-weight: bold;
+  color: #888;
+  background: rgba(100, 100, 100, 0.3);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-family: 'Consolas', 'Monaco', monospace;
+}
+
+@keyframes kill-ready-pulse {
+  0%, 100% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+  50% {
+    transform: scale(1.15);
+    filter: brightness(1.3);
+  }
+}
+
 .agent-color-dot {
   width: 10px;
   height: 10px;

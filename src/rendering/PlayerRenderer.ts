@@ -91,9 +91,12 @@ class PlayerSprite {
   private walkSpeed: number = 0; // current movement speed for animation intensity
   
   // Idle animation (disabled - no bounce when standing still)
-  private idleBobTime: number = 0;
-  private idleBobSpeed: number = 2; // seconds per cycle
-  private idleBobAmount: number = 0; // NO idle bob - completely still when not walking
+  // @ts-expect-error Reserved for future use
+  private _idleBobTime: number = 0;
+  // @ts-expect-error Reserved for future use
+  private _idleBobSpeed: number = 2; // seconds per cycle
+  // @ts-expect-error Reserved for future use
+  private _idleBobAmount: number = 0; // NO idle bob - completely still when not walking
 
   // Player color mapping
   private static readonly COLORS: Record<string, number> = {

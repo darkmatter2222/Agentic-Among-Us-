@@ -182,3 +182,60 @@ canvas {
   background: rgba(100, 150, 255, 0.3);
 }
 
+/* Game Timer Display */
+.game-timer {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 12px;
+  background: rgba(20, 28, 45, 0.95);
+  box-shadow: 0 2px 16px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  font-family: 'Consolas', 'Monaco', monospace;
+}
+
+.game-timer .timer-icon {
+  font-size: 18px;
+}
+
+.game-timer .timer-value {
+  font-size: 24px;
+  font-weight: bold;
+  color: #4caf50;
+  min-width: 60px;
+  text-align: center;
+  letter-spacing: 1px;
+}
+
+.game-timer.warning .timer-value {
+  color: #ff9800;
+}
+
+.game-timer.urgent .timer-value {
+  color: #f44336;
+  animation: pulse-urgent 0.5s ease-in-out infinite alternate;
+}
+
+.game-timer.urgent {
+  border-color: rgba(244, 67, 54, 0.5);
+  box-shadow: 0 2px 16px rgba(244, 67, 54, 0.3);
+}
+
+@keyframes pulse-urgent {
+  from {
+    opacity: 1;
+    text-shadow: 0 0 4px rgba(244, 67, 54, 0.5);
+  }
+  to {
+    opacity: 0.7;
+    text-shadow: 0 0 12px rgba(244, 67, 54, 0.8);
+  }
+}
+

@@ -664,6 +664,29 @@ Keep it brief (1-2 sentences). Start the conversation!`;
       .map((a: { name: string; zone: string | null; distance: number }) => `- ${a.name} in ${a.zone || 'hallway'} (${Math.round(a.distance)} units away)`)
       .join('\n') || 'No one visible';
 
+    // Build impostor-specific kill context if applicable
+    let impostorKillContext = '';
+    if (context.role === 'IMPOSTOR' && context.impostorContext) {
+      const imp = context.impostorContext;
+      if (imp.canKill && imp.targetsInKillRange.length > 0) {
+        const isolatedTargets = imp.targetsInKillRange.filter(t => t.isIsolated);
+        if (isolatedTargets.length > 0) {
+          impostorKillContext = `\n\n🔪🔪🔪 KILL OPPORTUNITY! ${isolatedTargets[0].name} is ISOLATED and in range!
+OUTPUT: GOAL: KILL
+TARGET: ${isolatedTargets[0].name}`;
+        } else {
+          impostorKillContext = `\n\nTargets in kill range: ${imp.targetsInKillRange.map(t => t.name).join(', ')} (but have witnesses)`;
+        }
+      } else if (imp.killCooldownRemaining > 0) {
+        impostorKillContext = `\n\n⏱️ Kill on cooldown: ${imp.killCooldownRemaining.toFixed(0)}s remaining`;
+      }
+    }
+
+    // Different response format for impostors vs crewmates
+    const goalOptions = context.role === 'IMPOSTOR'
+      ? 'KILL/HUNT/GO_TO_TASK/WANDER/FOLLOW_AGENT/AVOID_AGENT/IDLE/SPEAK'
+      : 'GO_TO_TASK/WANDER/FOLLOW_AGENT/AVOID_AGENT/IDLE/SPEAK';
+
     return `CURRENT SITUATION:
 Location: ${context.currentZone || 'Hallway'}
 Position: (${Math.round(context.currentPosition.x)}, ${Math.round(context.currentPosition.y)})
@@ -673,10 +696,10 @@ ${taskStatus}
 Current task: ${context.currentTaskIndex !== null ? context.assignedTasks[context.currentTaskIndex]?.taskType : 'None selected'}
 
 VISIBLE AGENTS:
-${visibleInfo}
+${visibleInfo}${impostorKillContext}
 
 What should I do next? Respond with your decision in this format:
-GOAL: [GO_TO_TASK/WANDER/FOLLOW_AGENT/AVOID_AGENT/IDLE/SPEAK]
+GOAL: [${goalOptions}]
 TARGET: [task number, agent name, or "none"]
 REASONING: [brief explanation]
 THOUGHT: [your internal thought, 1 sentence]`;

@@ -105,6 +105,14 @@ export interface AgentSnapshot {
   }>;
   isBeingFollowed?: boolean;
   buddyId?: string | null;
+  
+  // Impostor kill status (only for impostors, for UI display)
+  killStatus?: {
+    cooldownRemaining: number;  // seconds remaining on cooldown
+    canKill: boolean;           // cooldown is ready AND target in range
+    hasTargetInRange: boolean;  // target in kill range (regardless of cooldown)
+    killCount: number;          // total kills this game
+  };
 }
 
 export interface AgentSummarySnapshot {
@@ -115,13 +123,49 @@ export interface AgentSummarySnapshot {
   currentGoal: string | null;
 }
 
+// ========== Body Snapshot (for dead bodies on the map) ==========
+
+export interface BodySnapshot {
+  id: string;
+  victimId: string;
+  victimName: string;
+  victimColor: number;
+  position: Point;
+  killedAt: number;
+  zone: string | null;
+  isReported: boolean;
+}
+
+// ========== Kill Event Snapshot (for UI notification) ==========
+
+export interface KillEventSnapshot {
+  id: string;
+  killerName: string;
+  victimName: string;
+  zone: string | null;
+  timestamp: number;
+  witnessCount: number;
+}
+
 // ========== World Snapshot ==========
+
+// ========== Game Timer ==========
+
+export interface GameTimerSnapshot {
+  durationMs: number;        // Total game duration (e.g., 600000 for 10 minutes)
+  elapsedMs: number;         // Time elapsed since game start
+  remainingMs: number;       // Time remaining until reset
+  startedAt: number;         // Unix timestamp when game started
+}
 
 export interface WorldSnapshot {
   tick: number;
   timestamp: number;
   gamePhase?: 'INITIALIZING' | 'PLAYING' | 'MEETING' | 'GAME_OVER';
+  gameTimer?: GameTimerSnapshot; // Game timer info for UI and agents
   agents: AgentSnapshot[];
+  bodies?: BodySnapshot[]; // Dead bodies on the map
+  recentKills?: KillEventSnapshot[]; // Recent kill events for UI
   recentThoughts?: ThoughtEvent[];
   recentSpeech?: SpeechEvent[];
   taskProgress?: number; // 0-100 percentage of total tasks completed
@@ -130,8 +174,26 @@ export interface WorldSnapshot {
 
 // ========== AI Decision Types ==========
 
+export type AIGoalType = 
+  | 'GO_TO_TASK' 
+  | 'WANDER' 
+  | 'FOLLOW_AGENT' 
+  | 'AVOID_AGENT' 
+  | 'IDLE' 
+  | 'SPEAK' 
+  | 'BUDDY_UP' 
+  | 'CONFRONT' 
+  | 'SPREAD_RUMOR' 
+  | 'DEFEND_SELF'
+  // Impostor-only actions
+  | 'KILL'
+  | 'HUNT'           // Actively seek isolated targets
+  | 'SELF_REPORT'    // Report own kill
+  | 'FLEE_BODY'      // Get away from body
+  | 'CREATE_ALIBI';  // Position near witnesses/tasks after kill
+
 export interface AIDecision {
-  goalType: 'GO_TO_TASK' | 'WANDER' | 'FOLLOW_AGENT' | 'AVOID_AGENT' | 'IDLE' | 'SPEAK' | 'BUDDY_UP' | 'CONFRONT' | 'SPREAD_RUMOR' | 'DEFEND_SELF';
+  goalType: AIGoalType;
   targetTaskIndex?: number;
   targetAgentId?: string;
   targetPosition?: Point;
@@ -142,6 +204,8 @@ export interface AIDecision {
   accusation?: string; // For CONFRONT - what to accuse
   rumor?: string; // For SPREAD_RUMOR - what to spread
   defense?: string; // For DEFEND_SELF - alibi/defense statement
+  // Kill context (impostor only)
+  killTarget?: string; // Agent ID to kill
 }
 
 export interface AIContext {
@@ -158,6 +222,8 @@ export interface AIContext {
     zone: string | null;
     distance: number;
     activityState?: string;
+    role?: PlayerRole; // Only visible to impostor for fellow impostors
+    isAlive?: boolean;
   }>;
   suspicionLevels: Record<string, number>;
   recentEvents: string[];
@@ -172,4 +238,53 @@ export interface AIContext {
   }>;
   isBeingFollowed?: boolean;
   buddyId?: string | null;
+  
+  // ===== Game Timer Context (for urgency-aware decisions) =====
+  gameTimer?: {
+    remainingMs: number;         // Time remaining in the round
+    elapsedMs: number;           // Time elapsed since round start
+    timeSinceLastDecisionMs: number; // Time since this agent's last decision
+  };
+  
+  // ===== Impostor-specific context (only provided when role is IMPOSTOR) =====
+  impostorContext?: {
+    killCooldownRemaining: number; // seconds
+    canKill: boolean;
+    targetsInKillRange: Array<{
+      id: string;
+      name: string;
+      distance: number;
+      isIsolated: boolean; // No other witnesses nearby
+      zone: string | null;
+    }>;
+    recentKillTime: number | null; // timestamp of last kill
+    killCount: number;
+    fellowImpostors: Array<{ id: string; name: string }>; // Other impostors (ID and color name)
+    nearbyBodies: Array<{
+      id: string;
+      victimName: string;
+      distance: number;
+      zone: string | null;
+    }>;
+  };
+  
+  // ===== Body/witness context (for both roles) =====
+  visibleBodies?: Array<{
+    id: string;
+    victimName: string;
+    victimColor: number;
+    position: Point;
+    distance: number;
+    zone: string | null;
+  }>;
+  
+  // Witness memory - what this agent saw related to kills
+  witnessMemory?: {
+    sawKill: boolean;
+    sawBody: boolean;
+    suspectedKillerColor: number | null;
+    colorConfidence: number;
+    location: string | null;
+    timestamp: number;
+  } | null;
 }

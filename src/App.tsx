@@ -5,7 +5,7 @@ import { Poly3MapRenderer } from './rendering/Poly3MapRenderer';
 import { RoomLightingRenderer } from './rendering/RoomLightingRenderer';
 import { AIAgentVisualRenderer } from './rendering/AIAgentVisualRenderer';
 import { getSimulationClient } from './ai/SimulationClient';
-import type { WorldSnapshot, SpeechEvent } from '@shared/types/simulation.types.ts';
+import type { WorldSnapshot, SpeechEvent, GameTimerSnapshot } from '@shared/types/simulation.types.ts';
 import type { LLMQueueStats } from '@shared/types/protocol.types.ts';
 import { AgentInfoPanel, type AgentSummary } from './components/AgentInfoPanel';
 
@@ -26,6 +26,7 @@ function App() {
   const [agentSummaries, setAgentSummaries] = useState<AgentSummary[]>([]);
   const [taskProgress, setTaskProgress] = useState(0);
   const [llmQueueStats, setLlmQueueStats] = useState<LLMQueueStats | undefined>(undefined);
+  const [gameTimer, setGameTimer] = useState<GameTimerSnapshot | undefined>(undefined);
   const [panelWidth, setPanelWidth] = useState(380);
   const [isDraggingPanel, setIsDraggingPanel] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
@@ -165,10 +166,13 @@ function App() {
             recentConversations: agent.recentConversations,
             isBeingFollowed: agent.isBeingFollowed,
             buddyId: agent.buddyId,
+            // Kill status (impostors only)
+            killStatus: agent.killStatus,
           }))
         );
         setTaskProgress(snapshot.taskProgress ?? 0);
         setLlmQueueStats(snapshot.llmQueueStats);
+        setGameTimer(snapshot.gameTimer);
         lastSummaryAt = now;
       }
     });
@@ -536,6 +540,15 @@ function App() {
             💬
           </button>
         </div>
+        {/* Game Timer Display */}
+        {gameTimer && (
+          <div className={`game-timer ${gameTimer.remainingMs < 120000 ? 'urgent' : gameTimer.remainingMs < 300000 ? 'warning' : ''}`}>
+            <span className="timer-icon">⏱️</span>
+            <span className="timer-value">
+              {Math.floor(gameTimer.remainingMs / 60000)}:{String(Math.floor((gameTimer.remainingMs % 60000) / 1000)).padStart(2, '0')}
+            </span>
+          </div>
+        )}
         {followingAgentId && (
           <button 
             className="stop-following-btn" 

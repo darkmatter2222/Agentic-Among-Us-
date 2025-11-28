@@ -13,6 +13,7 @@ import { COLOR_NAMES, AGENT_COLORS } from '../constants/colors.ts';
 import type { WalkableZone, LabeledZone, Task } from '../data/poly3-map.ts';
 import type { PlayerRole } from '../types/game.types.ts';
 import type { TaskAssignment, AIContext, AIDecision } from '../types/simulation.types.ts';
+import { KillSystem, type KillSystemConfig, type DeadBody, type KillEvent, type WitnessRecord } from './KillSystem.ts';
 
 // ========== Configuration ==========
 
@@ -24,6 +25,7 @@ export interface AgentManagerConfig {
   numImpostors?: number;
   tasksPerAgent?: number;
   aiServerUrl?: string;
+  killSystemConfig?: Partial<KillSystemConfig>;
 }
 
 // ========== Task Duration Lookup ==========
@@ -63,6 +65,7 @@ export class AIAgentManager {
   private destinationSelector: DestinationSelector;
   private availableTasks: Task[];
   private impostorIds: Set<string>;
+  private killSystem: KillSystem;
   
   // AI Decision callbacks (can be set externally for LLM integration)
   private decisionCallback: AIDecisionCallback | null = null;
@@ -90,6 +93,9 @@ export class AIAgentManager {
     this.availableTasks = config.tasks;
     this.impostorIds = new Set();
     
+    // Initialize kill system with config or defaults
+    this.killSystem = new KillSystem(config.killSystemConfig || {});
+    
     // Create agents with roles and tasks
     this.agents = [];
     const numImpostors = config.numImpostors ?? 2;
@@ -104,9 +110,19 @@ export class AIAgentManager {
       agent.setSpeechBroadcastCallback((speakerId, message, zone) => {
         this.broadcastSpeech(speakerId, message, zone);
       });
+      // Set up kill request callback for impostors
+      agent.setKillRequestCallback((killerId, targetId) => {
+        return this.handleKillRequest(killerId, targetId);
+      });
+    }
+    
+    // Initialize kill system with impostor IDs
+    for (const impostorId of this.impostorIds) {
+      this.killSystem.initializeImpostor(impostorId);
     }
     
     console.log(`Created ${this.agents.length} AI agents (${numImpostors} impostors)`);
+    console.log(`Kill system initialized with ${this.impostorIds.size} impostors`);
   }
   
   /**
@@ -178,8 +194,8 @@ export class AIAgentManager {
         zones
       );
       
-      // Assign role and tasks
-      const assignedTasks = this.assignTasksToAgent(tasksPerAgent, role);
+      // Assign role and tasks (impostors don't get tasks - they can only fake)
+      const assignedTasks = role === 'CREWMATE' ? this.assignTasksToAgent(tasksPerAgent) : [];
       const roleConfig: AIAgentRoleConfig = {
         role,
         assignedTasks
@@ -198,9 +214,9 @@ export class AIAgentManager {
   }
   
   /**
-   * Assign random tasks to an agent
+   * Assign random tasks to a crewmate agent
    */
-  private assignTasksToAgent(count: number, role: PlayerRole): TaskAssignment[] {
+  private assignTasksToAgent(count: number): TaskAssignment[] {
     const assignments: TaskAssignment[] = [];
     const shuffledTasks = [...this.availableTasks];
     this.shuffleArray(shuffledTasks);
@@ -212,7 +228,7 @@ export class AIAgentManager {
         room: task.room,
         position: { x: task.position.x, y: task.position.y },
         isCompleted: false,
-        isFaking: role === 'IMPOSTOR', // Impostors fake all tasks
+        isFaking: false,
         duration: getTaskDuration(task.type)
       });
     }
@@ -234,8 +250,62 @@ export class AIAgentManager {
    * Update all agents (call every frame) - NON-BLOCKING
    */
   update(deltaTime: number): void {
+    const currentTime = Date.now();
+    
+    // Update kill system (cooldowns, animations)
+    this.killSystem.update(deltaTime);
+    
+    // Collect all agent data for kill system target updates
+    const agentDataForKillSystem: Array<{
+      id: string;
+      position: Point;
+      role: PlayerRole;
+      state: import('../types/game.types.ts').PlayerState;
+    }> = [];
+    
+    // Collect agent data for witness detection
+    const agentDataForWitness: Array<{
+      id: string;
+      position: Point;
+      isDead: boolean;
+      facingDirection: number;
+      visionRadius: number;
+    }> = [];
+    
+    for (const agent of this.agents) {
+      agentDataForKillSystem.push({
+        id: agent.getId(),
+        position: agent.getPosition(),
+        role: agent.getRole(),
+        state: agent.getPlayerState()
+      });
+      
+      agentDataForWitness.push({
+        id: agent.getId(),
+        position: agent.getPosition(),
+        isDead: agent.getPlayerState() === 'DEAD',
+        facingDirection: agent.getFacing(),
+        visionRadius: agent.getVisionRadius()
+      });
+    }
+    
+    // Update targets in range for each impostor
+    for (const impostorId of this.impostorIds) {
+      const impostor = this.getAgent(impostorId);
+      if (!impostor || impostor.getPlayerState() === 'DEAD') continue;
+      
+      this.killSystem.updateTargetsInRange(
+        impostorId,
+        impostor.getPosition(),
+        agentDataForKillSystem
+      );
+    }
+    
     // Update all agents synchronously (they no longer block on AI)
     for (const agent of this.agents) {
+      // Skip dead agents' AI (they don't move or make decisions)
+      if (agent.getPlayerState() === 'DEAD') continue;
+      
       // Update agent AI and movement (non-blocking now)
       agent.update(deltaTime);
       
@@ -246,7 +316,216 @@ export class AIAgentManager {
       if (zoneEvent) {
         agent.getStateMachine().updateLocation(zoneEvent.toZone, zoneEvent.zoneType);
       }
+      
+      // Update visible bodies for crewmates
+      if (agent.getRole() === 'CREWMATE') {
+        const bodies = this.killSystem.getBodies();
+        agent.updateVisibleBodies(bodies);
+      }
     }
+  }
+  
+  /**
+   * Attempt a kill from an impostor
+   * Returns the kill event if successful, null if failed
+   */
+  attemptKill(impostorId: string, targetId: string): KillEvent | null {
+    const impostor = this.getAgent(impostorId);
+    const target = this.getAgent(targetId);
+    
+    if (!impostor || !target) {
+      console.warn(`Kill attempt failed: Invalid agents (impostor: ${impostorId}, target: ${targetId})`);
+      return null;
+    }
+    
+    if (target.getPlayerState() !== 'ALIVE') {
+      console.warn(`Kill attempt failed: Target ${targetId} is already dead`);
+      return null;
+    }
+    
+    // Get zone for the kill location
+    const zone = this.zoneDetector.getZoneAtPosition(target.getPosition());
+    
+    // Collect nearby agents for witness detection
+    const nearbyAgents: Array<{
+      id: string;
+      name: string;
+      position: Point;
+      facing: number;
+      visionRadius: number;
+    }> = [];
+    
+    for (const agent of this.agents) {
+      if (agent.getId() === impostorId || agent.getId() === targetId) continue;
+      if (agent.getPlayerState() !== 'ALIVE') continue;
+      
+      nearbyAgents.push({
+        id: agent.getId(),
+        name: agent.getName(),
+        position: agent.getPosition(),
+        facing: agent.getFacing(),
+        visionRadius: agent.getVisionRadius()
+      });
+    }
+    
+    // Attempt the kill through the kill system
+    const killAttempt = this.killSystem.attemptKill(
+      impostorId,
+      impostor.getName(),
+      impostor.getPosition(),
+      targetId,
+      target.getName(),
+      target.getColor(),
+      target.getPosition(),
+      zone?.name || null,
+      nearbyAgents
+    );
+    
+    if (!killAttempt.success || !killAttempt.body) {
+      console.log(`Kill attempt failed: ${killAttempt.reason}`);
+      return null;
+    }
+    
+    // Kill succeeded! Update the target agent
+    target.setPlayerState('DEAD');
+    
+    // Create the kill event to return
+    const killEvent: KillEvent = {
+      id: `kill_${Date.now()}`,
+      killerId: impostorId,
+      killerName: impostor.getName(),
+      victimId: targetId,
+      victimName: target.getName(),
+      position: killAttempt.body.position,
+      zone: zone?.name || null,
+      timestamp: Date.now(),
+      witnesses: killAttempt.witnesses || [],
+      bodyId: killAttempt.body.id
+    };
+    
+    // Notify the impostor agent of successful kill
+    impostor.onKillSuccess(
+      targetId,
+      target.getName(),
+      killAttempt.body.position
+    );
+    
+    // Notify witnesses
+    for (const witness of (killAttempt.witnesses || [])) {
+      const witnessAgent = this.getAgent(witness.witnessId);
+      if (witnessAgent) {
+        // Determine if witness saw directly
+        const sawDirectly = witness.sawKill === true;
+        
+        witnessAgent.witnessKill(
+          targetId,
+          target.getName(),
+          witness.perceivedKillerColor ?? null,
+          witness.sawKill ? 1.0 : 0.5, // High confidence if saw kill, medium otherwise
+          sawDirectly
+        );
+      }
+    }
+    
+    console.log(`[KILL] ${impostor.getName()} killed ${target.getName()} in ${zone?.name || 'Unknown'}`);
+    if ((killAttempt.witnesses || []).length > 0) {
+      console.log(`[KILL] Witnesses: ${killAttempt.witnesses!.map(w => w.witnessId).join(', ')}`);
+    }
+    
+    return killEvent;
+  }
+  
+  /**
+   * Check if an impostor can kill a specific target
+   */
+  canKill(impostorId: string, targetId: string): boolean {
+    const impostor = this.getAgent(impostorId);
+    const target = this.getAgent(targetId);
+    
+    if (!impostor || !target) return false;
+    if (target.getPlayerState() !== 'ALIVE') return false;
+    
+    // Check if kill is ready (cooldown, not in animation)
+    const killCheck = this.killSystem.canKill(impostorId);
+    if (!killCheck.canKill) return false;
+    
+    // Check if target is in range
+    const targetsInRange = this.killSystem.getTargetsInRange(impostorId);
+    return targetsInRange.includes(targetId);
+  }
+  
+  /**
+   * Get targets in kill range for an impostor
+   */
+  getTargetsInRange(impostorId: string): string[] {
+    return this.killSystem.getTargetsInRange(impostorId);
+  }
+  
+  /**
+   * Get all dead bodies
+   */
+  getBodies(): DeadBody[] {
+    return this.killSystem.getBodies();
+  }
+  
+  /**
+   * Check if an impostor is currently in kill animation
+   */
+  isInKillAnimation(impostorId: string): boolean {
+    return this.killSystem.isInKillAnimation(impostorId);
+  }
+  
+  /**
+   * Get kill cooldown remaining for an impostor
+   */
+  getKillCooldown(impostorId: string): number {
+    return this.killSystem.getCooldownRemaining(impostorId);
+  }
+  
+  /**
+   * Get kill status for an impostor (for UI display)
+   */
+  getKillStatus(impostorId: string): { cooldownRemaining: number; canKill: boolean; hasTargetInRange: boolean; killCount: number } | null {
+    if (!this.impostorIds.has(impostorId)) {
+      return null; // Not an impostor
+    }
+    
+    const cooldownRemaining = this.killSystem.getCooldownRemaining(impostorId);
+    const targetsInRange = this.killSystem.getTargetsInRange(impostorId);
+    const hasTargetInRange = targetsInRange.length > 0;
+    const cooldownReady = cooldownRemaining <= 0;
+    const canKill = cooldownReady && hasTargetInRange && !this.killSystem.isInKillAnimation(impostorId);
+    const killCount = this.killSystem.getKillCount(impostorId);
+    
+    return {
+      cooldownRemaining,
+      canKill,
+      hasTargetInRange,
+      killCount,
+    };
+  }
+  
+  /**
+   * Get the kill system instance (for advanced usage)
+   */
+  getKillSystem(): KillSystem {
+    return this.killSystem;
+  }
+  
+  /**
+   * Handle a kill request from an AI agent
+   * Returns true if the kill was executed successfully
+   */
+  private handleKillRequest(killerId: string, targetId: string): boolean {
+    // Only impostors can request kills
+    if (!this.impostorIds.has(killerId)) {
+      console.warn(`Kill request denied: ${killerId} is not an impostor`);
+      return false;
+    }
+    
+    // Attempt the kill
+    const killEvent = this.attemptKill(killerId, targetId);
+    return killEvent !== null;
   }
   
   /**

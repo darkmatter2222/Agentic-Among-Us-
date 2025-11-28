@@ -30,6 +30,13 @@ export interface AgentSummary {
   }>;
   isBeingFollowed?: boolean;
   buddyId?: string | null;
+  // Kill status (impostors only)
+  killStatus?: {
+    cooldownRemaining: number;
+    canKill: boolean;
+    hasTargetInRange: boolean;
+    killCount: number;
+  };
 }
 
 function hexColor(num: number): string {
@@ -41,6 +48,42 @@ function getRoleBadge(role?: PlayerRole): { label: string; className: string } {
     return { label: 'IMP', className: 'role-badge--impostor' };
   }
   return { label: 'CREW', className: 'role-badge--crewmate' };
+}
+
+// Kill status indicator for impostors
+function KillStatusIcon({ killStatus }: { killStatus?: AgentSummary['killStatus'] }) {
+  if (!killStatus) return null;
+  
+  // If on cooldown, show countdown timer
+  if (killStatus.cooldownRemaining > 0) {
+    const seconds = Math.ceil(killStatus.cooldownRemaining / 1000);
+    return (
+      <span className="kill-status-timer" title={`Kill cooldown: ${seconds}s`}>
+        {seconds}s
+      </span>
+    );
+  }
+  
+  // Ready to kill - show skull with appropriate color
+  let className = 'kill-status-icon ready';
+  let title = 'Kill ready - no target in range';
+  
+  if (killStatus.hasTargetInRange) {
+    // Ready AND target in range - bright red (kill opportunity!)
+    className = 'kill-status-icon ready-target';
+    title = 'KILL READY - Target in range!';
+  }
+  
+  // Add kill count to title
+  if (killStatus.killCount > 0) {
+    title += ` (${killStatus.killCount} kill${killStatus.killCount !== 1 ? 's' : ''})`;
+  }
+  
+  return (
+    <span className={className} title={title}>
+      ☠️
+    </span>
+  );
 }
 
 interface AgentInfoPanelProps {
@@ -190,14 +233,10 @@ function ExpandedAgentCard({ agent, onClose }: ExpandedAgentCardProps) {
             </div>
             
             <div className="expanded-card__section">
-              <div className="section-label">Visible Agents ({agent.visibleAgentNames?.length ?? agent.visibleAgentIds?.length ?? 0})</div>
+              <div className="section-label">Visible Agents ({agent.visibleAgentIds?.length ?? 0})</div>
               <div className="visible-agents-list">
-                {agent.visibleAgentNames && agent.visibleAgentNames.length > 0 ? (
-                  agent.visibleAgentNames.map((name, idx) => (
-                    <span key={idx} className="visible-agent-tag" style={{ color: name.toLowerCase() }}>{name}</span>
-                  ))
-                ) : agent.visibleAgentIds && agent.visibleAgentIds.length > 0 ? (
-                  agent.visibleAgentIds.map(id => (
+                {agent.visibleAgentIds && agent.visibleAgentIds.length > 0 ? (
+                  agent.visibleAgentIds.map((id: string) => (
                     <span key={id} className="visible-agent-tag">{id.replace('agent_', '#')}</span>
                   ))
                 ) : (
@@ -634,6 +673,7 @@ export function AgentInfoPanel({ agents, width = 380, taskProgress = 0, selected
                         <td className="agent-row__id" style={{ width: columnWidths[0] }}>
                           <span className="agent-color-dot" style={{ backgroundColor: hexColor(agent.color) }} />
                           <span className={`agent-num ${agent.role === 'IMPOSTOR' ? 'impostor-name' : 'crewmate-name'}`}>{colorName}</span>
+                          {agent.role === 'IMPOSTOR' && <KillStatusIcon killStatus={agent.killStatus} />}
                         </td>
                         <td className="agent-row__zone" style={{ width: columnWidths[1] }} title={agent.currentZone ?? 'Unknown'}>
                           {agent.currentZone?.replace(' (ROOM)', '').replace(' (HALLWAY)', '') ?? '?'}

@@ -98,7 +98,7 @@ export interface SuspicionReason {
   timestamp: number;
   reason: string;
   delta: number; // How much this changed suspicion
-  category: 'task_behavior' | 'movement' | 'speech' | 'accusation' | 'vouched' | 'caught_lying' | 'vent' | 'near_body' | 'following' | 'avoiding';
+  category: 'task_behavior' | 'movement' | 'speech' | 'accusation' | 'vouched' | 'caught_lying' | 'vent' | 'near_body' | 'following' | 'avoiding' | 'witnessed_kill';
 }
 
 // ========== Main Memory Class ==========

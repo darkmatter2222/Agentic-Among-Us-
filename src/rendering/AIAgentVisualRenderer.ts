@@ -24,6 +24,10 @@ export interface AgentVisuals {
   visionBox: VisionBoxRenderer;
   actionRadius: ActionRadiusRenderer;
   pathLine: PathLineRenderer;
+  // Task progress bar elements
+  taskProgressBar: PIXI.Graphics;
+  taskProgressBackground: PIXI.Graphics;
+  taskCheckmark: PIXI.Graphics;
 }
 
 interface AgentVisualState {
@@ -38,6 +42,10 @@ interface AgentVisualState {
   // Animation state
   walkTime: number;
   isWalking: boolean;
+  // Task progress state
+  taskProgress: number;           // 0-1 progress
+  showTaskProgress: boolean;      // Whether to show progress bar
+  taskCompleteAnimation: number;  // Animation timer for checkmark pop (0 = not animating)
 }
 
 export class AIAgentVisualRenderer {
@@ -111,6 +119,34 @@ export class AIAgentVisualRenderer {
       state.targetPath = snapshot.movement.path.map(point => ({ ...point }));
       state.pathDirty = true;
       state.isThinking = snapshot.isThinking ?? false;
+
+      // Track task progress
+      const isDoingTask = snapshot.activityState === 'DOING_TASK';
+      const wasShowingProgress = state.showTaskProgress;
+      const previousProgress = state.taskProgress;
+      
+      if (isDoingTask && snapshot.currentTaskIndex !== undefined && snapshot.currentTaskIndex !== null && snapshot.assignedTasks) {
+        const currentTask = snapshot.assignedTasks[snapshot.currentTaskIndex];
+        if (currentTask && currentTask.duration > 0) {
+          const progress = Math.min(1, snapshot.timeInStateMs / currentTask.duration);
+          state.taskProgress = progress;
+          state.showTaskProgress = true;
+          
+          // If progress just completed (hit 100%), trigger checkmark animation
+          if (progress >= 1 && !state.taskCompleteAnimation) {
+            state.taskCompleteAnimation = 0.001; // Start animation
+          }
+        }
+      } else {
+        // Not doing task - hide progress bar
+        // But check if task just completed (was showing progress at high level)
+        if (wasShowingProgress && previousProgress >= 0.9 && !state.taskCompleteAnimation) {
+          // Task just completed - start checkmark animation
+          state.taskCompleteAnimation = 0.001;
+        }
+        state.showTaskProgress = false;
+        state.taskProgress = 0;
+      }
 
       // Adjust dynamic radii if they change (should be rare but keeps parity with server).
       state.visuals.visionBox.updateConfig({ size: snapshot.visionRadius * 1.4, color: snapshot.color });
@@ -250,6 +286,110 @@ export class AIAgentVisualRenderer {
       // Track which agents are thinking
       if (state.isThinking) {
         thinkingAgents.add(agentId);
+      }
+
+      // ===== TASK PROGRESS BAR ANIMATION =====
+      if (visuals.taskProgressBar && visuals.taskProgressBackground && visuals.taskCheckmark) {
+        const sizeMultiplier = AIAgentVisualRenderer.SIZE_MULTIPLIER;
+        const progressBarWidth = 30 * sizeMultiplier;
+        const progressBarHeight = 4 * sizeMultiplier;
+        const bodyY = -14 * sizeMultiplier;
+        const bodyHeight = 22 * sizeMultiplier;
+        const progressBarY = bodyY + bodyHeight + 8 * sizeMultiplier;
+        
+        if (state.showTaskProgress) {
+          // Show and update progress bar
+          visuals.taskProgressBackground.visible = true;
+          visuals.taskProgressBar.visible = true;
+          
+          // Redraw progress bar fill
+          visuals.taskProgressBar.clear();
+          visuals.taskProgressBar.beginFill(0x00FF00, 0.9); // Green
+          const fillWidth = progressBarWidth * state.taskProgress;
+          visuals.taskProgressBar.drawRoundedRect(
+            -progressBarWidth / 2, 
+            progressBarY, 
+            fillWidth, 
+            progressBarHeight, 
+            2
+          );
+          visuals.taskProgressBar.endFill();
+        } else {
+          // Hide progress bar (unless animating completion)
+          if (!state.taskCompleteAnimation) {
+            visuals.taskProgressBackground.visible = false;
+            visuals.taskProgressBar.visible = false;
+          }
+        }
+        
+        // ===== CHECKMARK COMPLETION ANIMATION =====
+        if (state.taskCompleteAnimation && state.taskCompleteAnimation > 0) {
+          state.taskCompleteAnimation += deltaTime * 2.5; // Animation speed
+          
+          const animPhase = state.taskCompleteAnimation;
+          
+          // Animation phases:
+          // 0-0.3: Progress bar fills to 100% and holds
+          // 0.3-0.5: Progress bar fades out, checkmark scales up (pop in)
+          // 0.5-1.2: Checkmark stays visible
+          // 1.2-1.5: Checkmark scales down and fades (pop out)
+          // 1.5+: Animation complete
+          
+          if (animPhase < 0.3) {
+            // Keep progress bar visible at full
+            visuals.taskProgressBackground.visible = true;
+            visuals.taskProgressBar.visible = true;
+            visuals.taskProgressBar.clear();
+            visuals.taskProgressBar.beginFill(0x00FF00, 0.9);
+            visuals.taskProgressBar.drawRoundedRect(
+              -progressBarWidth / 2, 
+              progressBarY, 
+              progressBarWidth, 
+              progressBarHeight, 
+              2
+            );
+            visuals.taskProgressBar.endFill();
+          } else if (animPhase < 0.5) {
+            // Fade out progress bar, scale in checkmark
+            const fadeProgress = (animPhase - 0.3) / 0.2;
+            visuals.taskProgressBackground.alpha = 1 - fadeProgress;
+            visuals.taskProgressBar.alpha = 1 - fadeProgress;
+            
+            // Draw and animate checkmark
+            visuals.taskCheckmark.visible = true;
+            const checkScale = fadeProgress * 1.2; // Overshoot slightly
+            visuals.taskCheckmark.alpha = fadeProgress;
+            
+            // Draw checkmark
+            this.drawCheckmark(visuals.taskCheckmark, progressBarY + progressBarHeight / 2, sizeMultiplier, checkScale);
+          } else if (animPhase < 1.2) {
+            // Hold checkmark visible
+            visuals.taskProgressBackground.visible = false;
+            visuals.taskProgressBar.visible = false;
+            visuals.taskCheckmark.visible = true;
+            visuals.taskCheckmark.alpha = 1;
+            
+            // Settle from overshoot
+            const settleProgress = Math.min(1, (animPhase - 0.5) / 0.1);
+            const checkScale = 1.2 - 0.2 * settleProgress;
+            this.drawCheckmark(visuals.taskCheckmark, progressBarY + progressBarHeight / 2, sizeMultiplier, checkScale);
+          } else if (animPhase < 1.5) {
+            // Fade out checkmark
+            const fadeOutProgress = (animPhase - 1.2) / 0.3;
+            visuals.taskCheckmark.alpha = 1 - fadeOutProgress;
+            const checkScale = 1 - fadeOutProgress * 0.3;
+            this.drawCheckmark(visuals.taskCheckmark, progressBarY + progressBarHeight / 2, sizeMultiplier, checkScale);
+          } else {
+            // Animation complete
+            state.taskCompleteAnimation = 0;
+            visuals.taskProgressBackground.visible = false;
+            visuals.taskProgressBar.visible = false;
+            visuals.taskCheckmark.visible = false;
+            visuals.taskProgressBackground.alpha = 1;
+            visuals.taskProgressBar.alpha = 1;
+            visuals.taskCheckmark.alpha = 0;
+          }
+        }
       }
 
       if (this.showVisionBoxes) {
@@ -515,7 +655,44 @@ export class AIAgentVisualRenderer {
         legGraphics.fill(color);
       }
     }
-  }destroy(): void {
+  }
+
+  /**
+   * Draw a checkmark icon for task completion animation.
+   * @param graphics - The PIXI Graphics object to draw on
+   * @param centerY - Y position for the checkmark center
+   * @param sizeMultiplier - Scale multiplier
+   * @param scale - Animation scale (1 = normal)
+   */
+  private drawCheckmark(graphics: PIXI.Graphics, centerY: number, sizeMultiplier: number, scale: number): void {
+    graphics.clear();
+    
+    const size = 8 * sizeMultiplier * scale;
+    const lineWidth = 2 * sizeMultiplier * scale;
+    
+    // Green circle background
+    graphics.beginFill(0x00CC00, 0.9);
+    graphics.drawCircle(0, centerY, size);
+    graphics.endFill();
+    
+    // White checkmark
+    graphics.lineStyle(lineWidth, 0xFFFFFF, 1);
+    // Start from left-middle of checkmark
+    const startX = -size * 0.4;
+    const startY = centerY;
+    // Middle point (bottom of check)
+    const midX = -size * 0.1;
+    const midY = centerY + size * 0.3;
+    // End point (top right of check)
+    const endX = size * 0.45;
+    const endY = centerY - size * 0.35;
+    
+    graphics.moveTo(startX, startY);
+    graphics.lineTo(midX, midY);
+    graphics.lineTo(endX, endY);
+  }
+
+  destroy(): void {
     for (const state of this.agentVisuals.values()) {
       state.visuals.spriteContainer.destroy({ children: true });
       state.visuals.visionBox.destroy();
@@ -678,13 +855,38 @@ export class AIAgentVisualRenderer {
       gapLength: 4
     });
 
+    // Task progress bar (positioned below player)
+    const taskProgressBackground = new PIXI.Graphics();
+    taskProgressBackground.zIndex = 25;
+    taskProgressBackground.visible = false;
+    // Background bar (dark gray)
+    const progressBarWidth = 30 * sizeMultiplier;
+    const progressBarHeight = 4 * sizeMultiplier;
+    const progressBarY = bodyY + bodyHeight + 8 * sizeMultiplier;
+    taskProgressBackground.beginFill(0x333333, 0.8);
+    taskProgressBackground.drawRoundedRect(-progressBarWidth / 2, progressBarY, progressBarWidth, progressBarHeight, 2);
+    taskProgressBackground.endFill();
+    spriteContainer.addChild(taskProgressBackground);
+
+    const taskProgressBar = new PIXI.Graphics();
+    taskProgressBar.zIndex = 26;
+    taskProgressBar.visible = false;
+    spriteContainer.addChild(taskProgressBar);
+
+    // Task completion checkmark
+    const taskCheckmark = new PIXI.Graphics();
+    taskCheckmark.zIndex = 27;
+    taskCheckmark.visible = false;
+    taskCheckmark.alpha = 0;
+    spriteContainer.addChild(taskCheckmark);
+
     this.container.addChild(visionBox.getContainer());
     this.container.addChild(pathLine.getContainer());
     this.container.addChild(actionRadius.getContainer());
     this.container.addChild(spriteContainer);
 
     const state: AgentVisualState = {
-      visuals: { spriteContainer, bodyGraphics, leftLeg, rightLeg, shadow, darknessOverlay, bodyColor, visionBox, actionRadius, pathLine },
+      visuals: { spriteContainer, bodyGraphics, leftLeg, rightLeg, shadow, darknessOverlay, bodyColor, visionBox, actionRadius, pathLine, taskProgressBar, taskProgressBackground, taskCheckmark },
       targetPosition: { ...snapshot.movement.position },
       previousPosition: { ...snapshot.movement.position },
       targetFacing: snapshot.movement.facing,
@@ -694,6 +896,9 @@ export class AIAgentVisualRenderer {
       isThinking: snapshot.isThinking ?? false,
       walkTime: 0,
       isWalking: false,
+      taskProgress: 0,
+      showTaskProgress: false,
+      taskCompleteAnimation: 0,
     };
 
     spriteContainer.position.set(snapshot.movement.position.x, snapshot.movement.position.y);

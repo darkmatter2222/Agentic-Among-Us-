@@ -10,12 +10,43 @@ import { COLOR_NAMES } from '@shared/constants/colors.ts';
 // Re-export for backward compatibility
 export const AGENT_NAMES = COLOR_NAMES;
 
+// ========== Timer Info Helper ==========
+
+function buildTimerInfo(context: AIContext): string {
+  if (!context.gameTimer) {
+    return '';
+  }
+  
+  const { remainingMs, elapsedMs } = context.gameTimer;
+  const remainingMinutes = Math.floor(remainingMs / 60000);
+  const remainingSeconds = Math.floor((remainingMs % 60000) / 1000);
+  const elapsedMinutes = Math.floor(elapsedMs / 60000);
+  const elapsedSeconds = Math.floor((elapsedMs % 60000) / 1000);
+  
+  // Format as MM:SS
+  const remainingStr = `${remainingMinutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+  const elapsedStr = `${elapsedMinutes}:${elapsedSeconds.toString().padStart(2, '0')}`;
+  
+  // Add urgency indicators
+  let urgencyNote = '';
+  if (remainingMinutes < 2) {
+    urgencyNote = ' ⚠️ TIME IS RUNNING OUT!';
+  } else if (remainingMinutes < 5) {
+    urgencyNote = ' ⏰ Halfway through!';
+  }
+  
+  return `\n⏱️ ROUND TIME:
+- Time elapsed: ${elapsedStr}
+- Time remaining: ${remainingStr}${urgencyNote}`;
+}
+
 // ========== System Prompts ==========
 
 export function buildCrewmatePrompt(context: AIContext): string {
   const suspicionInfo = buildSuspicionInfo(context);
   const memoryInfo = context.memoryContext || '';
   const conversationInfo = buildConversationInfo(context);
+  const timerInfo = buildTimerInfo(context);
   
   // Filter out own name from canSpeakTo
   const othersNearby = context.canSpeakTo.filter(name => 
@@ -50,6 +81,7 @@ CURRENT GAME STATE:
 - Other players nearby: ${othersNearby.length > 0 ? othersNearby.join(', ') : 'No one nearby'}
 ${context.isBeingFollowed ? '- ⚠️ Someone seems to be following you!' : ''}
 ${context.buddyId ? `- Currently buddying with: ${context.buddyId}` : ''}
+${timerInfo}
 
 ${suspicionInfo}
 ${memoryInfo}
@@ -82,11 +114,18 @@ export function buildImpostorPrompt(context: AIContext): string {
   const suspicionInfo = buildSuspicionInfo(context);
   const memoryInfo = context.memoryContext || '';
   const conversationInfo = buildConversationInfo(context);
+  const timerInfo = buildTimerInfo(context);
   
   // Filter out own name from canSpeakTo
   const othersNearby = context.canSpeakTo.filter(name => 
     name.toLowerCase() !== context.agentName.toLowerCase()
   );
+
+  // Build impostor-specific context if available
+  const impostorInfo = buildImpostorKillInfo(context);
+  
+  // Calculate time-based urgency for impostors
+  const urgencyLevel = getImpostorUrgency(context);
 
   return `You are ${context.agentName}. YOUR NAME IS ${context.agentName}. You are an IMPOSTOR in Among Us (KEEP THIS SECRET!).
 
@@ -96,11 +135,26 @@ CRITICAL IDENTITY RULES:
 - Other players have DIFFERENT names. Accuse THEM, not yourself.
 
 YOUR OBJECTIVES:
-1. BLEND IN by pretending to do tasks convincingly
-2. Build trust with crewmates through conversation
-3. Subtly cast suspicion on innocent crewmates
-4. Maintain a consistent alibi and story
-5. For now, focus on appearing innocent (kills not active yet)
+1. ELIMINATE CREWMATES - Kill isolated targets when safe!
+2. BLEND IN by pretending to do tasks convincingly
+3. Build trust with crewmates through conversation
+4. Subtly cast suspicion on innocent crewmates
+5. Maintain a consistent alibi and story
+
+${impostorInfo}
+${urgencyLevel}
+
+KILL STRATEGY:
+- ONLY kill when target is ISOLATED (no other players nearby!)
+- Check your kill cooldown before attempting
+- After killing: IMMEDIATELY leave the area or create an alibi
+- Self-report sometimes to look innocent (but not too often!)
+- Watch out for witnesses - they might not have seen you clearly
+
+POST-KILL OPTIONS:
+- FLEE_BODY - Get away fast, create distance
+- SELF_REPORT - Report your own kill to seem innocent
+- CREATE_ALIBI - Go to a populated area or task immediately
 
 DECEPTION STRATEGIES:
 - Fake tasks for realistic durations (not too fast or slow!)
@@ -116,23 +170,29 @@ PERSONALITY:
 - You participate in conversations naturally
 - You occasionally point fingers at others subtly
 - You create false alibis and fake task claims
-- You might "buddy up" with someone to appear trustworthy
+- You might "buddy up" with someone to appear trustworthy (then kill them!)
 
 CURRENT GAME STATE:
 - You are ${context.agentName} (IMPOSTOR - KEEP THIS SECRET!)
 - Location: ${context.currentZone || 'Unknown'}
 - Fake tasks to "do": ${context.assignedTasks.filter((t: TaskAssignment) => !t.isCompleted).length}
-- Other players nearby: ${othersNearby.length > 0 ? othersNearby.join(', ') : 'No one nearby'}
-${context.isBeingFollowed ? '- ⚠️ Someone is following you - act natural!' : ''}
+- Other players nearby: ${othersNearby.length > 0 ? othersNearby.join(', ') : 'No one nearby - OPPORTUNITY!'}
+${context.isBeingFollowed ? '- ⚠️ Someone is following you - act natural, DO NOT KILL!' : ''}
+${timerInfo}
 
 ${suspicionInfo}
 ${memoryInfo}
 ${conversationInfo}
 
 AVAILABLE ACTIONS:
+- KILL [target_name] - ELIMINATE a crewmate (if in range and cooldown ready!)
+- HUNT - Actively search for an isolated target to kill
+- SELF_REPORT - Report your own kill to appear innocent
+- FLEE_BODY - Get away from a body quickly
+- CREATE_ALIBI - Go to populated area/task after kill
 - GO_TO_TASK [task#] - FAKE working on a task (wait appropriate time!)
 - WANDER - Explore and look for opportunities
-- FOLLOW_AGENT [name] - Stick close to build trust (not too creepy)
+- FOLLOW_AGENT [name] - Stick close to build trust (or stalk victim)
 - AVOID_AGENT [name] - Stay away from someone suspicious of you
 - BUDDY_UP [name] - Appear friendly and trustworthy
 - CONFRONT [name] - Accuse an innocent to deflect suspicion
@@ -141,7 +201,43 @@ AVAILABLE ACTIONS:
 - SPEAK - Chat naturally with nearby players
 - IDLE - Wait and observe
 
-IMPORTANT: Act natural! Don't be too eager to accuse or too quiet. Participate in conversations like an innocent player would.`;
+IMPORTANT: When you see someone ALONE, consider if it's safe to KILL!`;
+}
+
+function getImpostorUrgency(context: AIContext): string {
+  if (!context.gameTimer) {
+    return '';
+  }
+  
+  const { remainingMs, elapsedMs } = context.gameTimer;
+  const remainingMinutes = remainingMs / 60000;
+  const killCount = context.impostorContext?.killCount ?? 0;
+  
+  // Calculate urgency based on time remaining and kill count
+  if (remainingMinutes < 2) {
+    if (killCount === 0) {
+      return `\n🚨 CRITICAL URGENCY: Less than 2 minutes left and NO KILLS!
+You MUST kill someone NOW or the round ends with crewmates winning!
+Take risks - being caught is better than losing to the timer!`;
+    }
+    return `\n⚠️ HIGH URGENCY: Less than 2 minutes remaining!
+Consider aggressive plays - time is running out!`;
+  } else if (remainingMinutes < 5) {
+    if (killCount === 0) {
+      return `\n⏰ MODERATE URGENCY: 5 minutes left and no kills yet.
+You need to start hunting for isolated targets more actively!
+Follow crewmates to dead-end rooms like Electrical or MedBay.`;
+    }
+    return `\n⏰ Time pressure: About halfway through the round.
+Look for more kill opportunities while blending in.`;
+  } else if (elapsedMs > 2 * 60 * 1000 && killCount === 0) {
+    // More than 2 minutes in with no kills
+    return `\n💡 TIP: You've been playing safe for a while with no kills.
+Start following crewmates to isolated areas.
+Good hunting spots: Electrical, MedBay, Reactor, Engine rooms.`;
+  }
+  
+  return '';
 }
 
 function buildSuspicionInfo(context: AIContext): string {
@@ -174,6 +270,69 @@ function buildConversationInfo(context: AIContext): string {
   );
   
   return `\nRECENT CONVERSATIONS:\n${lines.join('\n')}`;
+}
+
+function buildImpostorKillInfo(context: AIContext): string {
+  // Check if impostor context is available
+  const imp = context.impostorContext;
+  if (!imp) {
+    return `KILL STATUS: Information unavailable`;
+  }
+  
+  const lines: string[] = [];
+  
+  // Cooldown status
+  if (imp.killCooldownRemaining > 0) {
+    lines.push(`⏱️ Kill cooldown: ${imp.killCooldownRemaining.toFixed(1)}s remaining - CANNOT KILL YET`);
+  } else {
+    lines.push(`✅ Kill READY - You can kill now!`);
+  }
+  
+  // Targets in range
+  if (imp.targetsInKillRange.length > 0) {
+    const targetInfo = imp.targetsInKillRange.map(t => {
+      const isolated = t.isIsolated ? ' (ISOLATED!)' : ' (has witnesses)';
+      return `${t.name}${isolated}`;
+    }).join(', ');
+    lines.push(`🎯 Targets in kill range: ${targetInfo}`);
+    
+    // Highlight isolated targets
+    const isolatedTargets = imp.targetsInKillRange.filter(t => t.isIsolated);
+    if (isolatedTargets.length > 0 && imp.canKill) {
+      lines.push(`💀 OPPORTUNITY: ${isolatedTargets.map(t => t.name).join(', ')} - alone and vulnerable!`);
+    }
+  } else {
+    lines.push(`❌ No targets in range - move closer to a crewmate`);
+  }
+  
+  // Kill count
+  lines.push(`☠️ Kills so far: ${imp.killCount}`);
+  
+  // Fellow impostors - IMPORTANT: show names so AI doesn't try to kill them
+  if (imp.fellowImpostors && imp.fellowImpostors.length > 0) {
+    const fellowNames = imp.fellowImpostors.map(f => f.name).join(', ');
+    lines.push(`🤝 YOUR TEAMMATES (IMPOSTORS): ${fellowNames} - DO NOT KILL THEM!`);
+  }
+  
+  // Nearby bodies warning
+  if (imp.nearbyBodies.length > 0) {
+    lines.push(`⚠️ DANGER - Bodies nearby: ${imp.nearbyBodies.map(b => b.victimName).join(', ')} - GET AWAY!`);
+  }
+  
+  // Summary - make kill recommendation more explicit
+  if (imp.canKill && imp.targetsInKillRange.some(t => t.isIsolated)) {
+    const isolatedTarget = imp.targetsInKillRange.find(t => t.isIsolated)!;
+    lines.push(`\n🔪🔪🔪 KILL NOW! Use: GOAL: KILL and TARGET: ${isolatedTarget.name}`);
+    lines.push(`${isolatedTarget.name} is ISOLATED - this is your chance!`);
+  } else if (!imp.canKill && imp.killCooldownRemaining > 0) {
+    lines.push(`\n⏳ Kill on cooldown (${imp.killCooldownRemaining.toFixed(0)}s). Fake tasks or wander.`);
+  } else if (imp.targetsInKillRange.length > 0 && !imp.targetsInKillRange.some(t => t.isIsolated)) {
+    lines.push(`\n👀 Targets nearby but NOT isolated - wait for them to separate!`);
+  } else {
+    lines.push(`\n🔍 No targets in range. HUNT: follow a crewmate to a dead-end room.`);
+  }
+  
+  return `KILL STATUS:\n${lines.join('\n')}`; 
 }
 
 export function buildThoughtPrompt(context: AIContext, trigger: ThoughtTrigger): string {
@@ -269,8 +428,8 @@ function getThoughtTriggerContext(trigger: ThoughtTrigger): string {
 // ========== Response Parser ==========
 
 export function parseAIResponse(response: string, context: AIContext): AIDecision {
-  // Try to parse structured response
-  const goalMatch = response.match(/GOAL:\s*(GO_TO_TASK|WANDER|FOLLOW_AGENT|AVOID_AGENT|IDLE|SPEAK|BUDDY_UP|CONFRONT|SPREAD_RUMOR|DEFEND_SELF)/i);
+  // Try to parse structured response - include impostor actions
+  const goalMatch = response.match(/GOAL:\s*(GO_TO_TASK|WANDER|FOLLOW_AGENT|AVOID_AGENT|IDLE|SPEAK|BUDDY_UP|CONFRONT|SPREAD_RUMOR|DEFEND_SELF|KILL|HUNT|SELF_REPORT|FLEE_BODY|CREATE_ALIBI)/i);
   const targetMatch = response.match(/TARGET:\s*(.+?)(?:\n|$)/i);
   const reasoningMatch = response.match(/REASONING:\s*(.+?)(?:\n|$)/i);
   const thoughtMatch = response.match(/THOUGHT:\s*(.+?)(?:\n|$)/i);
@@ -278,10 +437,28 @@ export function parseAIResponse(response: string, context: AIContext): AIDecisio
   const accusationMatch = response.match(/ACCUSATION:\s*(.+?)(?:\n|$)/i);
   const rumorMatch = response.match(/RUMOR:\s*(.+?)(?:\n|$)/i);
   const defenseMatch = response.match(/DEFENSE:\s*(.+?)(?:\n|$)/i);
+  const killTargetMatch = response.match(/KILL_TARGET:\s*(.+?)(?:\n|$)/i) || response.match(/KILL\s+(\w+)/i);
+
+  // ALWAYS log impostor state for debugging
+  if (context.role === 'IMPOSTOR') {
+    const imp = context.impostorContext;
+    if (imp) {
+      const targetsStr = imp.targetsInKillRange.map(t => `${t.name}(${t.isIsolated ? 'ISOLATED' : 'witnesses'})`).join(', ');
+      console.log(`[IMPOSTOR-STATE] ${context.agentName}: canKill=${imp.canKill}, cooldown=${imp.killCooldownRemaining.toFixed(1)}s, targets=[${targetsStr}], visible=[${context.visibleAgents.map(a => a.name).join(',')}]`);
+      
+      if (imp.canKill && imp.targetsInKillRange.length > 0) {
+        console.log(`[IMPOSTOR-DECISION] ${context.agentName} has targets in range. AI response: ${response.substring(0, 200)}`);
+        console.log(`[IMPOSTOR-DECISION] goalMatch: ${goalMatch?.[1] || 'none'}, killTargetMatch: ${killTargetMatch?.[1] || 'none'}`);
+      }
+    } else {
+      console.log(`[IMPOSTOR-STATE] ${context.agentName}: NO impostorContext!`);
+    }
+  }
 
   let goalType: AIDecision['goalType'] = 'GO_TO_TASK';
   let targetTaskIndex: number | undefined;
   let targetAgentId: string | undefined;
+  let killTarget: string | undefined;
   let reasoning = 'Continuing tasks';
   let thought: string | undefined;
   let speech: string | undefined;
@@ -335,6 +512,45 @@ export function parseAIResponse(response: string, context: AIContext): AIDecisio
     defense = defenseMatch[1].trim();
   }
 
+  // Handle kill target extraction (for impostors)
+  if (goalType === 'KILL') {
+    // Try to extract kill target from various patterns
+    if (killTargetMatch) {
+      const targetName = killTargetMatch[1].trim().toLowerCase();
+      // Match against visible agents or impostor context targets
+      const matchedTarget = context.visibleAgents.find(
+        (a: { id: string; name: string }) => 
+          a.name.toLowerCase() === targetName || 
+          a.id.toLowerCase() === targetName
+      );
+      if (matchedTarget) {
+        killTarget = matchedTarget.id;
+      }
+    }
+    // Also check targetMatch for kill target
+    if (!killTarget && targetMatch) {
+      const target = targetMatch[1].trim().toLowerCase();
+      const matchedTarget = context.visibleAgents.find(
+        (a: { id: string; name: string }) => 
+          a.name.toLowerCase() === target || 
+          a.id.toLowerCase() === target
+      );
+      if (matchedTarget) {
+        killTarget = matchedTarget.id;
+      }
+    }
+    // If still no target, try to get first isolated target from impostor context
+    if (!killTarget && context.impostorContext?.targetsInKillRange) {
+      const isolatedTarget = context.impostorContext.targetsInKillRange.find(t => t.isIsolated);
+      if (isolatedTarget) {
+        killTarget = isolatedTarget.id;
+      } else if (context.impostorContext.targetsInKillRange.length > 0) {
+        // Just use first target in range
+        killTarget = context.impostorContext.targetsInKillRange[0].id;
+      }
+    }
+  }
+
   // Fallback: if no clear goal, default to next task
   if (!goalMatch && context.assignedTasks.some((t: TaskAssignment) => !t.isCompleted)) {
     goalType = 'GO_TO_TASK';
@@ -355,6 +571,7 @@ export function parseAIResponse(response: string, context: AIContext): AIDecisio
     goalType,
     targetTaskIndex,
     targetAgentId,
+    killTarget,
     reasoning,
     thought,
     speech,

@@ -53,6 +53,11 @@ export interface AIBehaviorState {
   confrontationTarget: string | null; // Who we're confronting
   isBeingFollowed: boolean; // Detect if someone is following us
   followersIds: string[]; // Who's been following us
+  // Kill tracking (impostor only)
+  lastKillPosition: Point | null; // Where the last kill happened
+  recentKillTimestamp: number | null; // When the last kill happened
+  isInKillAnimation: boolean; // Currently in kill animation
+  killAnimationEndTime: number; // When kill animation ends
 }
 
 // ========== AI State (Thoughts, Speech, etc.) ==========
@@ -77,6 +82,25 @@ export interface AIAgentState {
   // Social
   suspicionLevels: Record<string, number>;
   recentEvents: string[];
+  
+  // Witness/Kill memory
+  witnessedKill: {
+    timestamp: number;
+    victimId: string;
+    victimName: string;
+    suspectedKillerColor: number | null;
+    colorConfidence: number;
+    location: string | null;
+    sawKillDirectly: boolean;
+  } | null;
+  visibleBodies: Array<{
+    id: string;
+    victimName: string;
+    victimColor: number;
+    position: Point;
+    distance: number;
+    zone: string | null;
+  }>;
 }
 
 // ========== Decision Callback Type ==========
@@ -110,6 +134,9 @@ export class AIAgent {
 
   // Speech broadcast callback (set by manager)
   private speechBroadcastCallback: ((speakerId: string, message: string, zone: string | null) => void) | null = null;
+
+  // Kill request callback (set by manager) - returns true if kill succeeded
+  private killRequestCallback: ((killerId: string, targetId: string) => boolean) | null = null;
 
   // Conversation state - tracks pending replies
   private pendingConversationReply: {
@@ -151,6 +178,11 @@ export class AIAgent {
       confrontationTarget: null,
       isBeingFollowed: false,
       followersIds: [],
+      // Kill state (impostor only)
+      lastKillPosition: null,
+      recentKillTimestamp: null,
+      isInKillAnimation: false,
+      killAnimationEndTime: 0,
     };
     
     // Initialize AI state with defaults
@@ -169,7 +201,10 @@ export class AIAgent {
       recentSpeech: null,
       lastSpeechTime: 0,
       suspicionLevels: {},
-      recentEvents: []
+      recentEvents: [],
+      // Kill/witness state
+      witnessedKill: null,
+      visibleBodies: [],
     };
   }
   
@@ -211,6 +246,14 @@ export class AIAgent {
    */
   setSpeechBroadcastCallback(callback: (speakerId: string, message: string, zone: string | null) => void): void {
     this.speechBroadcastCallback = callback;
+  }
+  
+  /**
+   * Set callback for requesting kills (impostors only)
+   * Callback returns true if the kill was successful
+   */
+  setKillRequestCallback(callback: (killerId: string, targetId: string) => boolean): void {
+    this.killRequestCallback = callback;
   }
   
     /**
@@ -605,6 +648,49 @@ export class AIAgent {
       case 'DEFEND_SELF':
         this.defendSelf(decision.defense);
         break;
+      
+      // ===== Impostor-only actions =====
+      case 'KILL':
+        // Request the kill through the callback
+        console.log(`[KILL-ACTION] ${this.config.name} attempting KILL on target: ${decision.killTarget || 'none'}, callback set: ${!!this.killRequestCallback}`);
+        if (decision.killTarget && this.killRequestCallback) {
+          const targetId = decision.killTarget;
+          const success = this.killRequestCallback(this.config.id, targetId);
+          console.log(`[KILL-ACTION] ${this.config.name} kill result: ${success ? 'SUCCESS' : 'FAILED'}`);
+          
+          if (success) {
+            // Kill succeeded - the callback should have called onKillSuccess
+            this.behaviorState.currentGoal = `Killed ${targetId}`;
+          } else {
+            // Kill failed - target out of range or on cooldown
+            this.behaviorState.currentGoal = `Kill failed - stalking ${targetId}`;
+            this.behaviorState.targetAgentId = targetId;
+          }
+        } else if (decision.killTarget) {
+          // No callback set, just track intent
+          console.log(`[KILL-ACTION] ${this.config.name} no callback set - tracking intent only`);
+          this.behaviorState.targetAgentId = decision.killTarget;
+          this.behaviorState.currentGoal = `Kill target: ${decision.killTarget}`;
+        } else {
+          console.log(`[KILL-ACTION] ${this.config.name} KILL goal but no target specified!`);
+        }
+        break;
+        
+      case 'HUNT':
+        await this.huntForTarget();
+        break;
+        
+      case 'SELF_REPORT':
+        this.selfReport();
+        break;
+        
+      case 'FLEE_BODY':
+        await this.fleeFromBody();
+        break;
+        
+      case 'CREATE_ALIBI':
+        await this.createAlibi();
+        break;
         
       case 'IDLE':
       default:
@@ -922,6 +1008,308 @@ export class AIAgent {
     this.behaviorState.nextDecisionTime = Date.now() + 2000;
   }
   
+  // ========== Kill Actions (Impostor Only) ==========
+  
+  /**
+   * Attempt to kill a target (called by KillSystem via callback)
+   * This method handles the impostor's state during and after a kill
+   */
+  onKillSuccess(victimId: string, victimName: string, position: Point): void {
+    if (this.aiState.role !== 'IMPOSTOR') return;
+    
+    const now = Date.now();
+    
+    // Update behavior state
+    this.behaviorState.isInKillAnimation = true;
+    this.behaviorState.killAnimationEndTime = now + 500; // 0.5s animation
+    this.behaviorState.lastKillPosition = { ...position };
+    this.behaviorState.recentKillTimestamp = now;
+    
+    // Stop movement during kill animation
+    this.movementController.stop();
+    this.stateMachine.transitionTo(PlayerActivityState.IDLE, 'Kill animation');
+    
+    // Add to memory/events
+    this.addRecentEvent(`Killed ${victimName}`);
+    this.memory.recordMyLie(`I wasn't near ${victimName}`); // Pre-record potential alibi lie
+    
+    console.log(`[${this.config.id}] Kill animation started for ${victimName}`);
+    
+    // Force immediate decision after kill animation
+    this.behaviorState.nextDecisionTime = now + 600;
+  }
+  
+  /**
+   * Check if currently in kill animation
+   */
+  isInKillAnimation(): boolean {
+    if (!this.behaviorState.isInKillAnimation) return false;
+    
+    // Check if animation time has passed
+    if (Date.now() >= this.behaviorState.killAnimationEndTime) {
+      this.behaviorState.isInKillAnimation = false;
+      return false;
+    }
+    
+    return true;
+  }
+  
+  /**
+   * Hunt for isolated targets (impostor AI action)
+   */
+  private async huntForTarget(): Promise<void> {
+    // Find isolated targets
+    const myPos = this.getPosition();
+    const isolatedTargets: Array<{ id: string; name: string; distance: number; witnessRisk: number }> = [];
+    
+    for (const other of this.otherAgents) {
+      if (other.getRole() === 'IMPOSTOR') continue;
+      if (other.getPlayerState() !== 'ALIVE') continue;
+      
+      const otherPos = other.getPosition();
+      const distance = this.distanceTo(otherPos);
+      
+      // Calculate witness risk - how many others can see this location
+      let witnessRisk = 0;
+      for (const witness of this.otherAgents) {
+        if (witness.getId() === other.getId() || witness.getId() === this.config.id) continue;
+        if (witness.getPlayerState() !== 'ALIVE') continue;
+        
+        const witnessDistance = Math.sqrt(
+          Math.pow(witness.getPosition().x - otherPos.x, 2) +
+          Math.pow(witness.getPosition().y - otherPos.y, 2)
+        );
+        
+        if (witnessDistance < witness.getVisionRadius()) {
+          witnessRisk += 1;
+        }
+      }
+      
+      isolatedTargets.push({
+        id: other.getId(),
+        name: other.getName(),
+        distance,
+        witnessRisk,
+      });
+    }
+    
+    // Sort by isolation (lowest witness risk first), then by distance
+    isolatedTargets.sort((a, b) => {
+      if (a.witnessRisk !== b.witnessRisk) return a.witnessRisk - b.witnessRisk;
+      return a.distance - b.distance;
+    });
+    
+    if (isolatedTargets.length > 0 && isolatedTargets[0].witnessRisk < 2) {
+      // Found an isolated target - move toward them
+      const target = this.otherAgents.find(a => a.getId() === isolatedTargets[0].id);
+      if (target) {
+        this.behaviorState.targetAgentId = target.getId();
+        const success = this.navigateTo(target.getPosition());
+        if (success) {
+          this.behaviorState.currentGoal = `Hunting ${target.getName()}`;
+          return;
+        }
+      }
+    }
+    
+    // No good target - wander and look for opportunity
+    this.wanderRandomly();
+  }
+  
+  /**
+   * Flee from the body after a kill
+   */
+  private async fleeFromBody(): Promise<void> {
+    if (!this.behaviorState.lastKillPosition) {
+      this.wanderRandomly();
+      return;
+    }
+    
+    const bodyPos = this.behaviorState.lastKillPosition;
+    const myPos = this.getPosition();
+    
+    // Calculate direction away from body
+    const dx = myPos.x - bodyPos.x;
+    const dy = myPos.y - bodyPos.y;
+    const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+    
+    // Try to move 300 units away
+    const escapePoint: Point = {
+      x: myPos.x + (dx / dist) * 300,
+      y: myPos.y + (dy / dist) * 300,
+    };
+    
+    // Find nearest walkable point in that direction
+    const destination = this.destinationSelector.selectRandomDestination(
+      escapePoint,
+      this.zones,
+      { avoidEdges: true }
+    );
+    
+    if (destination) {
+      const success = this.navigateTo(destination);
+      if (success) {
+        this.behaviorState.currentGoal = 'Getting distance from body';
+        return;
+      }
+    }
+    
+    this.wanderRandomly();
+  }
+  
+  /**
+   * Self-report own kill
+   */
+  private selfReport(): void {
+    // In a real implementation, this would trigger the report system
+    // For now, we just simulate the speech
+    this.speak("BODY! I found a body!");
+    this.behaviorState.currentGoal = 'Self-reporting';
+    this.behaviorState.nextDecisionTime = Date.now() + 3000;
+    
+    // Record the self-report lie
+    this.memory.recordMyLie("I just found this body");
+    
+    this.addRecentEvent('Self-reported the body');
+  }
+  
+  /**
+   * Create alibi after kill - move toward task or witness
+   */
+  private async createAlibi(): Promise<void> {
+    // Find nearest task to look busy
+    const nextTask = this.findNextTask();
+    if (nextTask !== -1) {
+      await this.goToTask(nextTask);
+      this.behaviorState.currentGoal = 'Creating alibi at task';
+      return;
+    }
+    
+    // Or move toward other players
+    if (this.otherAgents.length > 0) {
+      const aliveOthers = this.otherAgents.filter(a => 
+        a.getRole() !== 'IMPOSTOR' && a.getPlayerState() === 'ALIVE'
+      );
+      
+      if (aliveOthers.length > 0) {
+        const target = aliveOthers[Math.floor(Math.random() * aliveOthers.length)];
+        const success = this.navigateTo(target.getPosition());
+        if (success) {
+          this.behaviorState.currentGoal = `Creating alibi with ${target.getName()}`;
+          return;
+        }
+      }
+    }
+    
+    this.wanderRandomly();
+  }
+  
+  // ========== Witness System ==========
+  
+  /**
+   * Record witnessing a kill
+   */
+  witnessKill(
+    victimId: string,
+    victimName: string,
+    suspectedKillerColor: number | null,
+    colorConfidence: number,
+    sawDirectly: boolean
+  ): void {
+    this.aiState.witnessedKill = {
+      timestamp: Date.now(),
+      victimId,
+      victimName,
+      suspectedKillerColor,
+      colorConfidence,
+      location: this.getCurrentZone(),
+      sawKillDirectly: sawDirectly,
+    };
+    
+    // Add to recent events
+    if (sawDirectly) {
+      this.addRecentEvent(`SAW KILL! ${victimName} was murdered!`);
+    } else {
+      this.addRecentEvent(`Heard something... ${victimName} might be in danger`);
+    }
+    
+    // Massive suspicion increase if we saw the killer
+    if (suspectedKillerColor !== null && colorConfidence > 0.5) {
+      // Try to find agent with that color
+      for (const agent of this.otherAgents) {
+        if (agent.getColor() === suspectedKillerColor) {
+          const suspicionIncrease = Math.floor(50 * colorConfidence);
+          this.memory.adjustSuspicion(
+            agent.getId(),
+            agent.getName(),
+            suspicionIncrease,
+            sawDirectly ? 'SAW THEM KILL' : 'Was near the murder',
+            'witnessed_kill'
+          );
+          break;
+        }
+      }
+    }
+    
+    // Force immediate decision - need to react
+    this.behaviorState.nextDecisionTime = Date.now();
+    this.behaviorState.isThinking = false;
+  }
+  
+  /**
+   * Update visible bodies list
+   */
+  updateVisibleBodies(bodies: Array<{
+    id: string;
+    victimName: string;
+    victimColor: number;
+    position: Point;
+    zone: string | null;
+  }>): void {
+    const myPos = this.getPosition();
+    
+    this.aiState.visibleBodies = bodies
+      .filter(body => {
+        const dist = Math.sqrt(
+          Math.pow(body.position.x - myPos.x, 2) +
+          Math.pow(body.position.y - myPos.y, 2)
+        );
+        return dist <= this.config.visionRadius;
+      })
+      .map(body => ({
+        ...body,
+        distance: Math.sqrt(
+          Math.pow(body.position.x - myPos.x, 2) +
+          Math.pow(body.position.y - myPos.y, 2)
+        ),
+      }));
+    
+    // React to seeing a body for the first time
+    if (this.aiState.visibleBodies.length > 0) {
+      const nearestBody = this.aiState.visibleBodies[0];
+      if (!this.aiState.recentEvents.some(e => e.includes(`Found body: ${nearestBody.victimName}`))) {
+        this.addRecentEvent(`Found body: ${nearestBody.victimName}`);
+        // Force reaction
+        this.behaviorState.nextDecisionTime = Date.now();
+      }
+    }
+  }
+  
+  /**
+   * Set player state (ALIVE, DEAD, GHOST)
+   */
+  setPlayerState(state: PlayerState): void {
+    this.aiState.playerState = state;
+    
+    if (state === 'DEAD') {
+      // Stop all activity
+      this.movementController.stop();
+      this.stateMachine.transitionTo(PlayerActivityState.IDLE, 'Dead');
+      this.behaviorState.currentGoal = null;
+      this.aiState.isDoingTask = false;
+    }
+  }
+  
   /**
    * Find the index of the last completed task
    */
@@ -1063,7 +1451,7 @@ export class AIAgent {
     const task = this.aiState.assignedTasks[taskIndex];
     if (!task) return;
     
-    // Impostors fake-complete (mark done but doesn't count toward win)
+    // Mark task as completed
     task.isCompleted = true;
     task.completedAt = Date.now();
     
@@ -1246,7 +1634,10 @@ export class AIAgent {
         name: a.getName(),
         zone: a.getCurrentZone(),
         distance: this.distanceTo(a.getPosition()),
-        activityState: a.getStateMachine().getActivityState(),
+        activityState: a.getStateMachine().getActivityState() as string,
+        // Only show role to fellow impostors
+        role: (this.aiState.role === 'IMPOSTOR' && a.getRole() === 'IMPOSTOR') ? ('IMPOSTOR' as const) : undefined,
+        isAlive: a.getPlayerState() === 'ALIVE',
       }));
     
     // Get recent conversations from memory
@@ -1256,7 +1647,8 @@ export class AIAgent {
       timestamp: c.timestamp,
     }));
     
-    return {
+    // Build base context
+    const context: AIContext = {
       agentId: this.config.id,
       agentName: this.config.name,
       role: this.aiState.role,
@@ -1274,7 +1666,117 @@ export class AIAgent {
       recentConversations: recentConvs,
       isBeingFollowed: this.behaviorState.isBeingFollowed,
       buddyId: this.behaviorState.buddyId,
+      // Visible bodies
+      visibleBodies: this.aiState.visibleBodies,
+      // Witness memory
+      witnessMemory: this.aiState.witnessedKill ? {
+        sawKill: this.aiState.witnessedKill.sawKillDirectly,
+        sawBody: true,
+        suspectedKillerColor: this.aiState.witnessedKill.suspectedKillerColor,
+        colorConfidence: this.aiState.witnessedKill.colorConfidence,
+        location: this.aiState.witnessedKill.location,
+        timestamp: this.aiState.witnessedKill.timestamp,
+      } : null,
     };
+    
+    // Add impostor-specific context
+    if (this.aiState.role === 'IMPOSTOR') {
+      context.impostorContext = this.buildImpostorContext();
+    }
+    
+    return context;
+  }
+  
+  /**
+   * Build impostor-specific context for AI decisions
+   */
+  private buildImpostorContext(): AIContext['impostorContext'] {
+    const killCooldownRemaining = this.getKillCooldownRemaining();
+    // Use the method instead of direct property access - the method properly clears the flag after animation time
+    const canKill = killCooldownRemaining <= 0 && !this.isInKillAnimation();
+    
+    // Find targets in kill range
+    const KILL_RANGE = 90; // Medium kill range
+    const targetsInKillRange = this.otherAgents
+      .filter(a => 
+        a.getRole() !== 'IMPOSTOR' && 
+        a.getPlayerState() === 'ALIVE' &&
+        this.distanceTo(a.getPosition()) <= KILL_RANGE
+      )
+      .map(a => {
+        const distance = this.distanceTo(a.getPosition());
+        
+        // Calculate isolation - how many witnesses could see
+        let witnessCount = 0;
+        for (const witness of this.otherAgents) {
+          if (witness.getId() === a.getId() || witness.getId() === this.config.id) continue;
+          if (witness.getPlayerState() !== 'ALIVE') continue;
+          
+          const witnessDistance = Math.sqrt(
+            Math.pow(witness.getPosition().x - a.getPosition().x, 2) +
+            Math.pow(witness.getPosition().y - a.getPosition().y, 2)
+          );
+          
+          if (witnessDistance < witness.getVisionRadius()) {
+            witnessCount++;
+          }
+        }
+        
+        return {
+          id: a.getId(),
+          name: a.getName(),
+          distance,
+          isIsolated: witnessCount === 0,
+          zone: a.getCurrentZone(),
+        };
+      });
+    
+    // Find fellow impostors (with names for UI display)
+    const fellowImpostors = this.otherAgents
+      .filter(a => a.getRole() === 'IMPOSTOR')
+      .map(a => ({ id: a.getId(), name: a.getName() }));
+    
+    // Find nearby bodies (for self-report consideration)
+    const nearbyBodies = this.aiState.visibleBodies.map(b => ({
+      id: b.id,
+      victimName: b.victimName,
+      distance: b.distance,
+      zone: b.zone,
+    }));
+    
+    return {
+      killCooldownRemaining,
+      canKill,
+      targetsInKillRange,
+      recentKillTime: this.behaviorState.recentKillTimestamp,
+      killCount: this.getKillCount(),
+      fellowImpostors,
+      nearbyBodies,
+    };
+  }
+  
+  /**
+   * Get kill cooldown remaining (placeholder - will be connected to KillSystem)
+   */
+  private getKillCooldownRemaining(): number {
+    // This will be set by the KillSystem via the manager
+    // For now, calculate based on last kill time
+    if (!this.behaviorState.recentKillTimestamp) {
+      return 0; // No kill yet, no cooldown
+    }
+    
+    const KILL_COOLDOWN = 25; // 25 seconds
+    const elapsed = (Date.now() - this.behaviorState.recentKillTimestamp) / 1000;
+    return Math.max(0, KILL_COOLDOWN - elapsed);
+  }
+  
+  /**
+   * Get total kill count (placeholder)
+   */
+  private getKillCount(): number {
+    // This will be tracked by KillSystem
+    // Count kills from recent events as a rough estimate
+    return this.aiState.recentEvents.filter(e => e.startsWith('Killed ')).length;
   }
   
   // ========== Helpers ==========
