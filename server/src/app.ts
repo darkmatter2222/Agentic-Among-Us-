@@ -1,5 +1,6 @@
 import Fastify from 'fastify';
 import websocket from '@fastify/websocket';
+import cors from '@fastify/cors';
 import { WebSocket } from 'ws';
 import { PROTOCOL_VERSION, type ServerMessage } from '@shared/types/protocol.types.ts';
 import type { WorldSnapshot } from '@shared/types/simulation.types.ts';
@@ -27,6 +28,9 @@ export async function buildServer(options: BuildOptions = {}) {
     logger: options.logger ?? true
   });
 
+  // Enable CORS for all origins (allows phone/other devices on LAN)
+  await fastify.register(cors, { origin: true });
+  
   await fastify.register(websocket);
   fastify.log.info('Registered websocket plugin');
 

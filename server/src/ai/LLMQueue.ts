@@ -22,6 +22,13 @@ interface ProcessingRecord {
   durationMs: number;
   success: boolean;
   timedOut: boolean;
+  promptTokens?: number;
+  completionTokens?: number;
+}
+
+interface TokenUsage {
+  promptTokens: number;
+  completionTokens: number;
 }
 
 export class LLMQueue {
@@ -29,14 +36,33 @@ export class LLMQueue {
   private isProcessing = false;
   private requestIdCounter = 0;
   private timeoutMs: number;
-  
+
   // Statistics tracking
   private processingHistory: ProcessingRecord[] = [];
   private totalProcessed = 0;
   private totalTimedOut = 0;
   private totalFailed = 0;
-  
-  // Singleton
+  private totalPromptTokens = 0;
+  private totalCompletionTokens = 0;
+
+  // Pending token info for current request
+  private pendingTokens: TokenUsage | null = null;
+
+  /**
+   * Record token usage from the current LLM request
+   * Call this from within your execute function after getting the LLM response
+   */
+  recordTokenUsage(promptTokens: number, completionTokens: number): void {
+    this.pendingTokens = { promptTokens, completionTokens };
+  }
+
+  private getPendingTokens(): TokenUsage | null {
+    return this.pendingTokens;
+  }
+
+  private clearPendingTokens(): void {
+    this.pendingTokens = null;
+  }// Singleton
   private static instance: LLMQueue | null = null;
 
   constructor(timeoutMs = 1000) {
@@ -82,25 +108,28 @@ export class LLMQueue {
     }
 
     this.isProcessing = true;
+    this.pendingTokens = null; // Reset pending tokens
     const request = this.queue.shift()!;
     const startTime = Date.now();
-    
+
     try {
       // Create a timeout race
       const result = await Promise.race([
         request.execute(),
         this.createTimeout(request.id),
       ]);
-      
+
       const durationMs = Date.now() - startTime;
-      this.recordProcessing(durationMs, true, false);
+      const tokenInfo = this.getPendingTokens();
+      this.clearPendingTokens();
+      this.recordProcessing(durationMs, true, false, tokenInfo?.promptTokens, tokenInfo?.completionTokens);
       this.totalProcessed++;
-      
+
       request.resolve(result);
     } catch (error) {
       const durationMs = Date.now() - startTime;
       const isTimeout = error instanceof Error && error.message.includes('LLM request timed out');
-      
+
       if (isTimeout) {
         this.totalTimedOut++;
         this.recordProcessing(durationMs, false, true);
@@ -134,21 +163,25 @@ export class LLMQueue {
   /**
    * Record processing statistics
    */
-  private recordProcessing(durationMs: number, success: boolean, timedOut: boolean): void {
+  private recordProcessing(durationMs: number, success: boolean, timedOut: boolean, promptTokens?: number, completionTokens?: number): void {
     const now = Date.now();
     this.processingHistory.push({
       timestamp: now,
       durationMs,
       success,
       timedOut,
+      promptTokens,
+      completionTokens,
     });
-    
+
+    // Track total tokens
+    if (promptTokens) this.totalPromptTokens += promptTokens;
+    if (completionTokens) this.totalCompletionTokens += completionTokens;
+
     // Keep only last 5 minutes of history
     const fiveMinutesAgo = now - 5 * 60 * 1000;
     this.processingHistory = this.processingHistory.filter(r => r.timestamp > fiveMinutesAgo);
-  }
-
-  /**
+  }  /**
    * Calculate average processing time for a time window
    */
   private calculateAvgProcessingTime(windowMs: number): number {
@@ -176,12 +209,38 @@ export class LLMQueue {
   }
 
   /**
+   * Calculate tokens per second for a time window
+   */
+  private calculateTokensPerSecond(windowMs: number): number {
+    const now = Date.now();
+    const cutoff = now - windowMs;
+    const recentRecords = this.processingHistory.filter(r => r.timestamp > cutoff && r.success);
+    const windowSeconds = windowMs / 1000;
+    const totalTokens = recentRecords.reduce((sum, r) => sum + (r.completionTokens || 0), 0);
+    return totalTokens / windowSeconds;
+  }
+
+  /**
+   * Calculate average tokens for a time window
+   */
+  private calculateAvgTokens(windowMs: number, type: 'prompt' | 'completion'): number {
+    const now = Date.now();
+    const cutoff = now - windowMs;
+    const recentRecords = this.processingHistory.filter(r => r.timestamp > cutoff && r.success);
+    if (recentRecords.length === 0) return 0;
+    const total = recentRecords.reduce((sum, r) => 
+      sum + (type === 'prompt' ? (r.promptTokens || 0) : (r.completionTokens || 0)), 0);
+    return total / recentRecords.length;
+  }
+
+  /**
    * Get current queue statistics
    */
   getStats(): LLMQueueStats {
     const now = Date.now();
     const oneMinuteAgo = now - 60 * 1000;
-    const fiveMinutesAgo = now - 5 * 60 * 1000;
+
+    const tokensPerSec = this.calculateTokensPerSecond(60 * 1000);
 
     return {
       queueDepth: this.queue.length,
@@ -193,6 +252,13 @@ export class LLMQueue {
       avgProcessingTimeMs5Min: Math.round(this.calculateAvgProcessingTime(5 * 60 * 1000)),
       processedPerSecond1Min: Math.round(this.calculateProcessedPerSecond(60 * 1000) * 100) / 100,
       processedPerSecond5Min: Math.round(this.calculateProcessedPerSecond(5 * 60 * 1000) * 100) / 100,
+      // Token metrics
+      totalPromptTokens: this.totalPromptTokens,
+      totalCompletionTokens: this.totalCompletionTokens,
+      tokensPerSecond1Min: Math.round(tokensPerSec * 10) / 10,
+      tokensPerMinute1Min: Math.round(tokensPerSec * 60),
+      avgPromptTokens1Min: Math.round(this.calculateAvgTokens(60 * 1000, 'prompt')),
+      avgCompletionTokens1Min: Math.round(this.calculateAvgTokens(60 * 1000, 'completion')),
       recentRequests: this.processingHistory
         .filter(r => r.timestamp > oneMinuteAgo)
         .slice(-20) // Last 20 requests in the last minute
@@ -201,6 +267,8 @@ export class LLMQueue {
           durationMs: r.durationMs,
           success: r.success,
           timedOut: r.timedOut,
+          promptTokens: r.promptTokens,
+          completionTokens: r.completionTokens,
         })),
     };
   }  /**

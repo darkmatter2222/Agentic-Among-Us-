@@ -13,11 +13,20 @@ export interface LLMQueueStats {
   avgProcessingTimeMs5Min: number;
   processedPerSecond1Min: number;
   processedPerSecond5Min: number;
+  // Token tracking
+  totalPromptTokens: number;
+  totalCompletionTokens: number;
+  tokensPerSecond1Min: number;
+  tokensPerMinute1Min: number;
+  avgPromptTokens1Min: number;
+  avgCompletionTokens1Min: number;
   recentRequests: Array<{
     timestamp: number;
     durationMs: number;
     success: boolean;
     timedOut: boolean;
+    promptTokens?: number;
+    completionTokens?: number;
   }>;
 }
 

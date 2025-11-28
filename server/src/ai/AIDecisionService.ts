@@ -68,7 +68,20 @@ class AIModelClient {
       throw new Error(`AI API error: ${response.status}`);
     }
 
-    const result = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
+    const result = await response.json() as { 
+      choices?: Array<{ message?: { content?: string } }>;
+      usage?: { prompt_tokens?: number; completion_tokens?: number };
+    };
+    
+    // Record token usage for metrics
+    const queue = getLLMQueue(10000);
+    if (result.usage) {
+      queue.recordTokenUsage(
+        result.usage.prompt_tokens || 0,
+        result.usage.completion_tokens || 0
+      );
+    }
+    
     return result.choices?.[0]?.message?.content || '';
   }
 

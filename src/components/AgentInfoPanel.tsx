@@ -277,12 +277,15 @@ function ExpandedAgentCard({ agent, onClose }: ExpandedAgentCardProps) {
 }
 
 // LLM Queue Statistics Panel
-function LLMQueuePanel({ stats, isCollapsed, onToggle }: {
+function LLMQueuePanel({ stats, isCollapsed, onToggle, height, onHeightChange }: {
   stats?: LLMQueueStats;
   isCollapsed: boolean;
   onToggle: () => void;
+  height?: number;
+  onHeightChange?: (height: number) => void;
 }) {
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
+  const [isResizing, setIsResizing] = useState(false);
 
   const getHealthColor = (avgTime: number, queueDepth: number) => {
     if (queueDepth > 10 || avgTime > 800) return '#e74c3c'; // Red - unhealthy
@@ -290,10 +293,10 @@ function LLMQueuePanel({ stats, isCollapsed, onToggle }: {
     return '#2ecc71'; // Green - healthy
   };
 
-  const handleCopyStats = useCallback(async (e: React.MouseEvent) => {
+const handleCopyStats = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation(); // Prevent panel collapse
     if (!stats) return;
-    
+
     const jsonStr = JSON.stringify(stats, null, 2);
     try {
       await navigator.clipboard.writeText(jsonStr);
@@ -305,12 +308,42 @@ function LLMQueuePanel({ stats, isCollapsed, onToggle }: {
     }
   }, [stats]);
 
-  const healthColor = stats
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsResizing(true);
+    const startY = e.clientY;
+    const startHeight = height || 300;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const deltaY = startY - e.clientY; // Dragging up increases height
+      const newHeight = Math.max(100, Math.min(600, startHeight + deltaY));
+      onHeightChange?.(newHeight);
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  }, [height, onHeightChange]);  const healthColor = stats
     ? getHealthColor(stats.avgProcessingTimeMs1Min, stats.queueDepth)
     : '#666';
 
   return (
-    <div className={`collapsible-panel llm-queue-panel ${isCollapsed ? 'collapsed' : ''}`}>
+    <div 
+      className={`collapsible-panel llm-queue-panel ${isCollapsed ? 'collapsed' : ''} ${isResizing ? 'resizing' : ''}`}
+      style={!isCollapsed && height ? { height: `${height}px`, maxHeight: `${height}px` } : undefined}
+    >
+      {/* Resize Handle */}
+      {!isCollapsed && (
+        <div className="llm-resize-handle" onMouseDown={handleResizeStart} title="Drag to resize">
+          <div className="resize-grip" />
+        </div>
+      )}
       <header className="panel-header" onClick={onToggle}>
         <div className="panel-header__left">
           <span className={`collapse-icon ${isCollapsed ? '' : 'expanded'}`}>▶</span>
@@ -396,6 +429,43 @@ function LLMQueuePanel({ stats, isCollapsed, onToggle }: {
             <span className="stat-value">{stats.avgProcessingTimeMs5Min}ms</span>
           </div>
           
+          {/* Token Throughput */}
+          <div className="llm-stat-row kpi-row">
+            <span className="stat-label">Tokens/sec</span>
+            <div className="kpi-values">
+              <span className="kpi-value" title="Completion tokens per second (1 min)">
+                <span className="kpi-number">{stats.tokensPerSecond1Min?.toFixed(1) || '0'}</span>
+                <span className="kpi-period">out</span>
+              </span>
+            </div>
+          </div>
+
+          <div className="llm-stat-row kpi-row">
+            <span className="stat-label">Tokens/min</span>
+            <div className="kpi-values">
+              <span className="kpi-value" title="Total tokens per minute">
+                <span className="kpi-number">{stats.tokensPerMinute1Min?.toFixed(0) || '0'}</span>
+                <span className="kpi-period">1m</span>
+              </span>
+            </div>
+          </div>
+
+          {/* Avg Tokens Per Request */}
+          <div className="llm-stat-row kpi-row">
+            <span className="stat-label">Avg Tokens</span>
+            <div className="kpi-values">
+              <span className="kpi-value" title="Avg prompt tokens per request">
+                <span className="kpi-number">{stats.avgPromptTokens1Min?.toFixed(0) || '0'}</span>
+                <span className="kpi-period">in</span>
+              </span>
+              <span className="kpi-divider">|</span>
+              <span className="kpi-value" title="Avg completion tokens per request">
+                <span className="kpi-number">{stats.avgCompletionTokens1Min?.toFixed(0) || '0'}</span>
+                <span className="kpi-period">out</span>
+              </span>
+            </div>
+          </div>
+
           {/* Totals */}
           <div className="llm-totals">
             <div className="total-item">
@@ -411,17 +481,29 @@ function LLMQueuePanel({ stats, isCollapsed, onToggle }: {
               <span className="total-value error">{stats.totalFailed}</span>
             </div>
           </div>
-          
+
+          {/* Total Tokens */}
+          <div className="llm-totals token-totals">
+            <div className="total-item">
+              <span className="total-label">Total In</span>
+              <span className="total-value info">{(stats.totalPromptTokens || 0).toLocaleString()}</span>
+            </div>
+            <div className="total-item">
+              <span className="total-label">Total Out</span>
+              <span className="total-value info">{(stats.totalCompletionTokens || 0).toLocaleString()}</span>
+            </div>
+          </div>
+
           {/* Recent Requests Timeline */}
           {stats.recentRequests.length > 0 && (
             <div className="recent-requests">
               <div className="recent-header">Recent Requests</div>
               <div className="request-timeline">
                 {stats.recentRequests.slice(-10).map((req, idx) => (
-                  <div 
+                  <div
                     key={idx}
                     className={`request-dot ${req.success ? 'success' : req.timedOut ? 'timeout' : 'failed'}`}
-                    title={`${req.durationMs}ms - ${req.success ? 'Success' : req.timedOut ? 'Timeout' : 'Failed'}`}
+                    title={`${req.durationMs}ms - ${req.promptTokens || 0} in / ${req.completionTokens || 0} out - ${req.success ? 'Success' : req.timedOut ? 'Timeout' : 'Failed'}`}
                   />
                 ))}
               </div>
@@ -441,6 +523,7 @@ export function AgentInfoPanel({ agents, width = 380, taskProgress = 0, selected
   // Collapse states for panels
   const [agentsPanelCollapsed, setAgentsPanelCollapsed] = useState(false);
   const [llmPanelCollapsed, setLlmPanelCollapsed] = useState(false);
+  const [llmPanelHeight, setLlmPanelHeight] = useState<number>(280);
   
   // Sync expanded agent with selected agent from parent
   useEffect(() => {
@@ -589,10 +672,12 @@ export function AgentInfoPanel({ agents, width = 380, taskProgress = 0, selected
       </div>
       
       {/* LLM Queue Stats Panel */}
-      <LLMQueuePanel 
-        stats={llmQueueStats} 
+      <LLMQueuePanel
+        stats={llmQueueStats}
         isCollapsed={llmPanelCollapsed}
         onToggle={() => setLlmPanelCollapsed(!llmPanelCollapsed)}
+        height={llmPanelHeight}
+        onHeightChange={setLlmPanelHeight}
       />
     </aside>
   );

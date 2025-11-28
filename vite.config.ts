@@ -14,4 +14,8 @@ export default defineConfig({
       '@shared': resolve(__dirname, 'shared')
     }
   },
+  server: {
+    host: '0.0.0.0',  // Bind to all interfaces (accessible via local IP)
+    port: 5173,
+  },
 })
