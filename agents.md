@@ -2,6 +2,14 @@
 
 > **Note**: This document describes the full Among Us game mechanics. See the [Implementation Status](#implementation-status) section at the end for what is currently active in this simulation.
 
+---
+
+## ⚠️ Development Notes
+
+**DO NOT** stop or start the server when making changes to this document or reviewing issues. The simulation runs continuously and server restarts will disrupt live testing.
+
+---
+
 ## Core Game Structure
 
 ### Player Roles

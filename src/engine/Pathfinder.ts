@@ -17,6 +17,16 @@ export interface PathfindingResult {
   success: boolean;
   path: PathNode[];
   totalCost: number;
+  /** Diagnostic info when path fails */
+  failureReason?: string;
+  /** Debug details */
+  debugInfo?: {
+    startWalkable: boolean;
+    endWalkable: boolean;
+    startConnections: number;
+    endConnections: number;
+    nodesExplored: number;
+  };
 }
 
 interface GraphNode {
@@ -48,28 +58,61 @@ export class Pathfinder {
     this.walkableZones = walkableZones;
     this.rebuildVisibilityGraph();
   }
-  
+
   /**
    * Find a path from start to end position using A* algorithm
    */
   findPath(start: Point, end: Point): PathfindingResult {
-    const { nodes, edges, startId, endId, valid } = this.prepareGraphForQuery(start, end);
+    // Check walkability first for better error messages
+    const startWalkable = isPointWalkable(start.x, start.y, this.walkableZones, OBSTACLES);
+    const endWalkable = isPointWalkable(end.x, end.y, this.walkableZones, OBSTACLES);
 
-    if (!valid) {
+    if (!startWalkable) {
       return {
         success: false,
         path: [],
-        totalCost: 0
+        totalCost: 0,
+        failureReason: `Start position (${start.x.toFixed(1)}, ${start.y.toFixed(1)}) is not walkable`,
+        debugInfo: { startWalkable, endWalkable, startConnections: 0, endConnections: 0, nodesExplored: 0 }
       };
     }
 
-    const nodePath = this.astar(nodes, edges, startId, endId);
+    if (!endWalkable) {
+      return {
+        success: false,
+        path: [],
+        totalCost: 0,
+        failureReason: `End position (${end.x.toFixed(1)}, ${end.y.toFixed(1)}) is not walkable`,
+        debugInfo: { startWalkable, endWalkable, startConnections: 0, endConnections: 0, nodesExplored: 0 }
+      };
+    }
+
+    const { nodes, edges, startId, endId, valid, startConnections, endConnections } = this.prepareGraphForQuery(start, end);
+
+    if (!valid) {
+      const reason = startConnections === 0
+        ? `Start position has no visibility connections (isolated at ${start.x.toFixed(1)}, ${start.y.toFixed(1)})`
+        : endConnections === 0
+        ? `End position has no visibility connections (isolated at ${end.x.toFixed(1)}, ${end.y.toFixed(1)})`
+        : `Cannot connect start/end to navigation graph`;
+      return {
+        success: false,
+        path: [],
+        totalCost: 0,
+        failureReason: reason,
+        debugInfo: { startWalkable, endWalkable, startConnections, endConnections, nodesExplored: 0 }
+      };
+    }
+
+    const { path: nodePath, nodesExplored } = this.astarWithStats(nodes, edges, startId, endId);
 
     if (nodePath.length === 0) {
       return {
         success: false,
         path: [],
-        totalCost: 0
+        totalCost: 0,
+        failureReason: `A* found no path after exploring ${nodesExplored} nodes (start: ${startConnections} connections, end: ${endConnections} connections)`,
+        debugInfo: { startWalkable, endWalkable, startConnections, endConnections, nodesExplored }
       };
     }
 
@@ -98,13 +141,51 @@ export class Pathfinder {
       totalCost
     };
   }
-  
-  private astar(
+
+  /**
+   * Find the nearest reachable navigation node from a given position.
+   * Useful for escaping when stuck or finding alternate destinations.
+   */
+  findNearestReachableNode(position: Point): { node: GraphNode; distance: number } | null {
+    const posWalkable = isPointWalkable(position.x, position.y, this.walkableZones, OBSTACLES);
+    
+    let bestNode: GraphNode | null = null;
+    let bestDistance = Infinity;
+
+    for (const [, node] of this.graphNodes.entries()) {
+      const dist = this.calculateDistance(position, node.position);
+      if (dist < bestDistance) {
+        // Check if we can see this node (line of sight)
+        if (posWalkable && this.hasLineOfSight(position, node.position)) {
+          bestDistance = dist;
+          bestNode = node;
+        }
+      }
+    }
+
+    // If no line of sight to any node, just find the closest one spatially
+    if (!bestNode) {
+      for (const [, node] of this.graphNodes.entries()) {
+        const dist = this.calculateDistance(position, node.position);
+        if (dist < bestDistance) {
+          bestDistance = dist;
+          bestNode = node;
+        }
+      }
+    }
+
+    return bestNode ? { node: bestNode, distance: bestDistance } : null;
+  }
+
+  /**
+   * A* with statistics for debugging
+   */
+  private astarWithStats(
     nodes: Map<string, GraphNode>,
     edges: Map<string, GraphEdge[]>,
     startId: string,
     endId: string
-  ): string[] {
+  ): { path: string[]; nodesExplored: number } {
     const openSet = new Set<string>([startId]);
     const closedSet = new Set<string>();
     const searchNodes = new Map<string, AStarNode>();
@@ -123,7 +204,7 @@ export class Pathfinder {
       const currentId = this.getLowestFCostNode(openSet, searchNodes);
 
       if (currentId === endId) {
-        return this.reconstructPath(searchNodes, currentId);
+        return { path: this.reconstructPath(searchNodes, currentId), nodesExplored: closedSet.size };
       }
 
       openSet.delete(currentId);
@@ -161,7 +242,7 @@ export class Pathfinder {
       }
     }
 
-    return [];
+    return { path: [], nodesExplored: closedSet.size };
   }
 
   private prepareGraphForQuery(start: Point, end: Point) {
@@ -195,15 +276,19 @@ export class Pathfinder {
       edges.get(endId)!.push({ targetId: startId, cost });
     }
 
-    const startConnected = this.ensureNodeHasConnections(startId, edges);
-    const endConnected = this.ensureNodeHasConnections(endId, edges);
+    const startConnections = (edges.get(startId) ?? []).length;
+    const endConnections = (edges.get(endId) ?? []).length;
+    const startConnected = startConnections > 0;
+    const endConnected = endConnections > 0;
 
     return {
       nodes,
       edges,
       startId,
       endId,
-      valid: startConnected && endConnected
+      valid: startConnected && endConnected,
+      startConnections,
+      endConnections
     };
   }
 
@@ -231,23 +316,10 @@ export class Pathfinder {
     }
   }
 
-  private ensureNodeHasConnections(
-    nodeId: string,
-    edges: Map<string, GraphEdge[]>
-  ): boolean {
-    const connections = edges.get(nodeId) ?? [];
-    if (connections.length > 0) {
-      return true;
-    }
-
-    // No viable connection found – fail early so we can report no path.
-    return false;
-  }
-
   private getLowestFCostNode(openSet: Set<string>, nodes: Map<string, AStarNode>): string {
     let lowest: string = '';
     let lowestFCost = Infinity;
-    
+
     for (const nodeId of openSet) {
       const node = nodes.get(nodeId)!;
       if (node.fCost < lowestFCost) {
@@ -255,23 +327,23 @@ export class Pathfinder {
         lowest = nodeId;
       }
     }
-    
+
     return lowest;
   }
-  
+
   /**
    * Reconstruct path from A* result
    */
   private reconstructPath(nodes: Map<string, AStarNode>, endId: string): string[] {
     const path: string[] = [];
     let currentId: string | null = endId;
-    
+
     while (currentId !== null) {
       path.unshift(currentId);
       const astarNode: AStarNode = nodes.get(currentId)!;
       currentId = astarNode.parent;
     }
-    
+
     return path;
   }
 
@@ -322,7 +394,7 @@ export class Pathfinder {
 
     return true;
   }
-  
+
   /**
    * Calculate Euclidean distance between two points
    */
@@ -331,7 +403,7 @@ export class Pathfinder {
     const dy = p2.y - p1.y;
     return Math.sqrt(dx * dx + dy * dy);
   }
-  
+
   /**
    * Update the nav mesh (e.g., when doors close)
    */

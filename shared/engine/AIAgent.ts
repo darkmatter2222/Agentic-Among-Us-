@@ -594,36 +594,55 @@ export class AIAgent {
   /**
    * Navigate to a task location
    */
-  private async goToTask(taskIndex: number): Promise<void> {
+  private async goToTask(taskIndex: number, attemptedTasks: Set<number> = new Set()): Promise<void> {
     if (taskIndex < 0 || taskIndex >= this.aiState.assignedTasks.length) {
       this.wanderRandomly();
       return;
     }
-    
+
     const task = this.aiState.assignedTasks[taskIndex];
     if (task.isCompleted) {
       // Find next incomplete task
       const nextIndex = this.findNextTask();
       if (nextIndex !== -1) {
-        return this.goToTask(nextIndex);
+        return this.goToTask(nextIndex, attemptedTasks);
       }
       this.wanderRandomly();
       return;
     }
-    
+
     this.behaviorState.targetTaskIndex = taskIndex;
     this.aiState.currentTaskIndex = taskIndex;
-    
+
     const success = this.navigateTo(task.position);
     if (success) {
       this.behaviorState.currentGoal = `Going to ${task.taskType} in ${task.room}`;
     } else {
-      // Can't path to task, try wandering
+      // Can't path to this task - try another task first
+      attemptedTasks.add(taskIndex);
+      console.warn(`[${this.config.id}] Cannot reach task ${task.taskType} in ${task.room}, trying alternatives...`);
+      
+      // Try to find another reachable task
+      for (let i = 0; i < this.aiState.assignedTasks.length; i++) {
+        if (attemptedTasks.has(i)) continue;
+        const altTask = this.aiState.assignedTasks[i];
+        if (altTask.isCompleted) continue;
+        
+        // Test if we can reach this task
+        const currentPos = this.movementController.getPosition();
+        const testPath = this.pathfinder.findPath(currentPos, altTask.position);
+        if (testPath.success) {
+          console.log(`[${this.config.id}] Found reachable alternative task: ${altTask.taskType} in ${altTask.room}`);
+          return this.goToTask(i, attemptedTasks);
+        }
+        attemptedTasks.add(i);
+      }
+      
+      // No reachable tasks - wander to a safe location
+      console.warn(`[${this.config.id}] No reachable tasks found, wandering instead`);
       this.wanderRandomly();
     }
-  }
-  
-  /**
+  }  /**
    * Follow another agent
    */
   private async followAgent(agentId: string | undefined): Promise<void> {
@@ -870,50 +889,78 @@ export class AIAgent {
   }
   
   /**
-   * Wander to a random location
+   * Wander to a random location - with fallback to nav nodes if standard wander fails
    */
-  private wanderRandomly(): void {
+  private wanderRandomly(attemptCount: number = 0): void {
     const currentPosition = this.movementController.getPosition();
-    
+    const MAX_WANDER_ATTEMPTS = 5;
+
+    // First try normal destination selection
     const destination = this.destinationSelector.selectRandomDestination(
       currentPosition,
       this.zones,
       {
         preferRooms: Math.random() > 0.3,
         avoidEdges: true,
-        minDistanceFromCurrent: 100
+        minDistanceFromCurrent: Math.max(50, 100 - attemptCount * 20) // Reduce distance requirement on retries
       }
     );
-    
+
     if (destination) {
-      this.navigateTo(destination);
-      this.behaviorState.currentGoal = 'Exploring';
-    } else {
-      this.behaviorState.nextDecisionTime = Date.now() + 2000;
+      const success = this.navigateTo(destination);
+      if (success) {
+        this.behaviorState.currentGoal = 'Exploring';
+        return;
+      }
     }
-  }
-  
-  /**
+
+    // Destination selection or navigation failed - try to find any reachable nav node
+    if (attemptCount < MAX_WANDER_ATTEMPTS) {
+      // Retry with different parameters
+      this.wanderRandomly(attemptCount + 1);
+      return;
+    }
+
+    // Last resort: try to navigate to nearest reachable nav node
+    const escapeNode = this.pathfinder.findNearestReachableNode(currentPosition);
+    if (escapeNode && escapeNode.distance > 10) {
+      console.log(`[${this.config.id}] Wander failed, escaping to nearest nav node at (${escapeNode.node.position.x.toFixed(1)}, ${escapeNode.node.position.y.toFixed(1)})`);
+      const success = this.navigateTo(escapeNode.node.position);
+      if (success) {
+        this.behaviorState.currentGoal = 'Finding safe position';
+        return;
+      }
+    }
+
+    // Complete failure - log and wait for next decision cycle
+    console.warn(`[${this.config.id}] Cannot find any reachable destination from (${currentPosition.x.toFixed(1)}, ${currentPosition.y.toFixed(1)})`);
+    this.behaviorState.nextDecisionTime = Date.now() + 2000;
+    this.stateMachine.transitionTo(PlayerActivityState.IDLE, 'No reachable destination');
+  }  /**
    * Navigate to a specific point
    */
   private navigateTo(destination: Point): boolean {
     const currentPosition = this.movementController.getPosition();
-    
+
     const pathResult = this.pathfinder.findPath(currentPosition, destination);
-    
+
     if (!pathResult.success || pathResult.path.length === 0) {
-      console.warn(`[${this.config.id}] Path not found to destination`);
+      // Enhanced logging with diagnostic info
+      const reason = pathResult.failureReason ?? 'Unknown reason';
+      const debug = pathResult.debugInfo;
+      console.warn(`[${this.config.id}] Path not found: ${reason}`);
+      if (debug) {
+        console.warn(`[${this.config.id}] Debug: startWalkable=${debug.startWalkable}, endWalkable=${debug.endWalkable}, startConn=${debug.startConnections}, endConn=${debug.endConnections}, explored=${debug.nodesExplored}`);
+      }
       return false;
     }
-    
+
     const smoothPath = this.pathSmoother.smoothPath(pathResult.path);
     this.movementController.setPath(smoothPath);
     this.stateMachine.transitionTo(PlayerActivityState.WALKING, 'Navigating');
-    
+
     return true;
-  }
-  
-  // ========== Task System ==========
+  }  // ========== Task System ==========
   
   /**
    * Find next incomplete task
@@ -1021,13 +1068,40 @@ export class AIAgent {
   }
   
   /**
-   * Handle movement stuck
+   * Handle movement stuck - attempts escape to nearest nav node
    */
   private handleMovementStuck(): void {
-    console.warn(`[${this.config.id}] Movement stuck, replanning`);
+    const currentPos = this.movementController.getPosition();
+    const currentZone = this.getCurrentZone() ?? 'unknown';
+    
+    console.warn(`[${this.config.id}] Movement stuck at (${currentPos.x.toFixed(1)}, ${currentPos.y.toFixed(1)}) in ${currentZone}`);
+    
     this.movementController.stop();
     this.movementController.clearStuck();
-    this.stateMachine.transitionTo(PlayerActivityState.IDLE, 'Movement stuck');
+    
+    // Try to escape to nearest reachable navigation node
+    const escapeTarget = this.pathfinder.findNearestReachableNode(currentPos);
+    
+    if (escapeTarget && escapeTarget.distance > 5) {
+      console.log(`[${this.config.id}] Attempting escape to nearest nav node at (${escapeTarget.node.position.x.toFixed(1)}, ${escapeTarget.node.position.y.toFixed(1)}), distance: ${escapeTarget.distance.toFixed(1)}`);
+      
+      // Try to navigate to the escape point
+      const pathResult = this.pathfinder.findPath(currentPos, escapeTarget.node.position);
+      
+      if (pathResult.success && pathResult.path.length > 0) {
+        const smoothPath = this.pathSmoother.smoothPath(pathResult.path);
+        this.movementController.setPath(smoothPath);
+        this.stateMachine.transitionTo(PlayerActivityState.WALKING, 'Escaping stuck position');
+        this.behaviorState.currentGoal = 'Escaping stuck position';
+        this.behaviorState.nextDecisionTime = Date.now() + 3000; // Give time to escape
+        return;
+      } else {
+        console.warn(`[${this.config.id}] Escape path failed: ${pathResult.failureReason ?? 'Unknown'}`);
+      }
+    }
+    
+    // Fallback: just reset to idle and let the AI pick a new destination
+    this.stateMachine.transitionTo(PlayerActivityState.IDLE, 'Movement stuck - no escape path');
     this.behaviorState.currentGoal = null;
     this.behaviorState.idleTimeRemaining = 0;
     this.behaviorState.nextDecisionTime = Date.now() + 250;

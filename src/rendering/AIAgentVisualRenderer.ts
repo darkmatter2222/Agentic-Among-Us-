@@ -58,8 +58,8 @@ export class AIAgentVisualRenderer {
   private agentVisuals: Map<string, AgentVisualState>;
   private speechBubbleRenderer: SpeechBubbleRenderer;
   private thinkingBubbleRenderer: ThinkingBubbleRenderer;
-  private showVisionBoxes: boolean = true;
-  private showActionRadius: boolean = true;
+  private showVisionBoxes: boolean = false;
+  private showActionRadius: boolean = false;
   private showPaths: boolean = true;
   private showSpeechBubbles: boolean = true;
   private showThinkingBubbles: boolean = true;

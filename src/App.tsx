@@ -32,8 +32,8 @@ function App() {
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   
   // Visibility toggle states (all enabled by default)
-  const [showVisionBoxes, setShowVisionBoxes] = useState(true);
-  const [showActionRadius, setShowActionRadius] = useState(true);
+  const [showVisionBoxes, setShowVisionBoxes] = useState(false);
+  const [showActionRadius, setShowActionRadius] = useState(false);
   const [showThinkingBubbles, setShowThinkingBubbles] = useState(true);
   const [showSpeechBubbles, setShowSpeechBubbles] = useState(true);
   const [lightsOn, setLightsOn] = useState(true);
