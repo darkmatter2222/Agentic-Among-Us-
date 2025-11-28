@@ -50,7 +50,7 @@ export class AIAgentVisualRenderer {
   
   // Leg dimensions (relative to sizeMultiplier)
   private static readonly LEG_WIDTH = 7;          // Width of each leg
-  private static readonly LEG_HEIGHT = 12;        // Length of legs (longer now)
+  private static readonly LEG_HEIGHT = 9;         // Length of legs (shorter)
   private static readonly LEG_GAP = 2;            // Gap between legs (closer together)
   private static readonly LEG_Y_OFFSET = 4;       // Where legs attach to body (moved up 20% into body)
 
@@ -386,143 +386,136 @@ export class AIAgentVisualRenderer {
    */
   private drawAnimatedLeg(legGraphics: PIXI.Graphics, color: number, phase: number, isInFront: boolean): void {
     legGraphics.clear();
-    
+
     const s = AIAgentVisualRenderer.SIZE_MULTIPLIER;
     const legWidth = AIAgentVisualRenderer.LEG_WIDTH * s;
     const legHeight = AIAgentVisualRenderer.LEG_HEIGHT * s;
     const yOffset = AIAgentVisualRenderer.LEG_Y_OFFSET * s;
     const outlineColor = 0x000000;
-    const outlineWidth = 1.5 * s;
+    const outlineWidth = 1 * s;
     const cornerRadius = 3 * s;
-    
-    // Calculate leg shape based on phase
-    // phase > 0: knee coming up (front), phase < 0: leg going back
-    
+
+    // Where outline starts (lower = less inappropriate)
+    const outlineStartY = yOffset + 6 * s;
+
     if (phase > 0.3) {
-      // KNEE UP POSE: Leg bent with knee forward
-      const kneeX = phase * 6 * s;  // Knee moves forward
-      const kneeY = yOffset + legHeight * 0.4 - phase * 4 * s; // Knee lifts up
-      const footY = kneeY + legHeight * 0.5;
-      
+      // KNEE UP POSE: L-shaped leg - thigh angles forward, shin hangs straight down
+      const kneeForward = phase * 6 * s;
+      const kneeLift = phase * 3 * s;
+      const kneeY = yOffset + legHeight * 0.4 - kneeLift;
+      const footY = kneeY + legHeight * 0.55;
+
+      // Draw as ONE connected L-shape with curved knee (FILL)
+      legGraphics.moveTo(-legWidth/2, yOffset - 2 * s);
+      legGraphics.lineTo(legWidth/2, yOffset - 2 * s);
+      // Right side of thigh curves to knee
+      legGraphics.quadraticCurveTo(kneeForward + legWidth/2 + 2*s, kneeY - 2*s, kneeForward + legWidth/2, kneeY);
+      legGraphics.lineTo(kneeForward + legWidth/2, footY - cornerRadius);
+      legGraphics.arc(kneeForward + legWidth/2 - cornerRadius, footY - cornerRadius, cornerRadius, 0, Math.PI/2);
+      legGraphics.lineTo(kneeForward - legWidth/2 + cornerRadius, footY);
+      legGraphics.arc(kneeForward - legWidth/2 + cornerRadius, footY - cornerRadius, cornerRadius, Math.PI/2, Math.PI);
+      legGraphics.lineTo(kneeForward - legWidth/2, kneeY);
+      // Left side curves back to hip
+      legGraphics.quadraticCurveTo(kneeForward - legWidth/2 - 2*s, kneeY - 2*s, -legWidth/2, yOffset - 2 * s);
+      legGraphics.closePath();
+      legGraphics.fill(color);
+
       if (isInFront) {
-        // FRONT LEG: No hip outline - blends into body
-        // Draw thigh fill first
-        legGraphics.beginFill(color);
-        legGraphics.moveTo(-legWidth/2, yOffset);
-        legGraphics.lineTo(legWidth/2, yOffset);
-        legGraphics.lineTo(kneeX + legWidth/2, kneeY);
-        legGraphics.lineTo(kneeX - legWidth/2, kneeY);
-        legGraphics.closePath();
-        legGraphics.endFill();
+        // Front leg: outline on shin, foot, and curved thigh line from body DOWN to knee
+        // Curve from body DOWN and FORWARD to top of knee (following thigh direction)
+        legGraphics.moveTo(legWidth/2, outlineStartY);
+        legGraphics.quadraticCurveTo(kneeForward/2 + legWidth/2, outlineStartY + 2*s, kneeForward + legWidth/2, kneeY);
+        legGraphics.stroke({ width: outlineWidth, color: outlineColor });
         
-        // Draw thigh outline - only sides, not top
-        legGraphics.lineStyle(outlineWidth, outlineColor, 1);
-        legGraphics.moveTo(-legWidth/2, yOffset);
-        legGraphics.lineTo(kneeX - legWidth/2, kneeY);
-        legGraphics.moveTo(legWidth/2, yOffset);
-        legGraphics.lineTo(kneeX + legWidth/2, kneeY);
-        legGraphics.lineStyle(0);
+        // Shin and foot outline (separate path)
+        legGraphics.moveTo(kneeForward - legWidth/2, kneeY);
+        legGraphics.lineTo(kneeForward - legWidth/2, footY - cornerRadius);
+        legGraphics.arc(kneeForward - legWidth/2 + cornerRadius, footY - cornerRadius, cornerRadius, Math.PI, Math.PI/2, true);
+        legGraphics.lineTo(kneeForward + legWidth/2 - cornerRadius, footY);
+        legGraphics.arc(kneeForward + legWidth/2 - cornerRadius, footY - cornerRadius, cornerRadius, Math.PI/2, 0, true);
+        legGraphics.lineTo(kneeForward + legWidth/2, kneeY);
+        legGraphics.stroke({ width: outlineWidth, color: outlineColor });
       } else {
-        // BACK LEG: Full outline
-        legGraphics.beginFill(outlineColor);
-        legGraphics.moveTo(-legWidth/2 - outlineWidth/2, yOffset - outlineWidth/2);
-        legGraphics.lineTo(legWidth/2 + outlineWidth/2, yOffset - outlineWidth/2);
-        legGraphics.lineTo(kneeX + legWidth/2 + outlineWidth/2, kneeY + outlineWidth/2);
-        legGraphics.lineTo(kneeX - legWidth/2 - outlineWidth/2, kneeY + outlineWidth/2);
+        // Back leg: full outline including top
+        legGraphics.moveTo(-legWidth/2, yOffset - 2 * s);
+        legGraphics.lineTo(legWidth/2, yOffset - 2 * s);
+        legGraphics.quadraticCurveTo(kneeForward + legWidth/2 + 2*s, kneeY - 2*s, kneeForward + legWidth/2, kneeY);
+        legGraphics.lineTo(kneeForward + legWidth/2, footY - cornerRadius);
+        legGraphics.arc(kneeForward + legWidth/2 - cornerRadius, footY - cornerRadius, cornerRadius, 0, Math.PI/2);
+        legGraphics.lineTo(kneeForward - legWidth/2 + cornerRadius, footY);
+        legGraphics.arc(kneeForward - legWidth/2 + cornerRadius, footY - cornerRadius, cornerRadius, Math.PI/2, Math.PI);
+        legGraphics.lineTo(kneeForward - legWidth/2, kneeY);
+        legGraphics.quadraticCurveTo(kneeForward - legWidth/2 - 2*s, kneeY - 2*s, -legWidth/2, yOffset - 2 * s);
         legGraphics.closePath();
-        legGraphics.endFill();
-        
-        legGraphics.beginFill(color);
-        legGraphics.moveTo(-legWidth/2, yOffset);
-        legGraphics.lineTo(legWidth/2, yOffset);
-        legGraphics.lineTo(kneeX + legWidth/2, kneeY);
-        legGraphics.lineTo(kneeX - legWidth/2, kneeY);
-        legGraphics.closePath();
-        legGraphics.endFill();
+        legGraphics.stroke({ width: outlineWidth, color: outlineColor });
       }
-      
-      // Lower leg (shin) - full outline for both (separate from body)
-      legGraphics.beginFill(outlineColor);
-      legGraphics.drawRoundedRect(kneeX - legWidth/2 - outlineWidth/2, kneeY, legWidth + outlineWidth, footY - kneeY + outlineWidth/2, cornerRadius);
-      legGraphics.endFill();
-      
-      legGraphics.beginFill(color);
-      legGraphics.drawRoundedRect(kneeX - legWidth/2, kneeY, legWidth, footY - kneeY, cornerRadius - 1);
-      legGraphics.endFill();
-      
+
     } else if (phase < -0.3) {
-      // LEG BACK POSE: Leg extended backward
-      const backAmount = -phase; // 0 to 1
-      const footX = -backAmount * 8 * s;  // Foot goes backward
-      const footY = yOffset + legHeight - backAmount * 2 * s; // Slightly shorter when back
-      
+      // LEG BACK POSE: Leg angles backward
+      const backAmount = -phase;
+      const footX = -backAmount * 8 * s;
+      const footY = yOffset + legHeight - backAmount * 2 * s;
+
+      // Draw leg as angled shape with rounded foot (FILL)
+      legGraphics.moveTo(-legWidth/2, yOffset - 2 * s);
+      legGraphics.lineTo(legWidth/2, yOffset - 2 * s);
+      legGraphics.lineTo(footX + legWidth/2, footY - cornerRadius);
+      legGraphics.arc(footX + legWidth/2 - cornerRadius, footY - cornerRadius, cornerRadius, 0, Math.PI/2);
+      legGraphics.lineTo(footX - legWidth/2 + cornerRadius, footY);
+      legGraphics.arc(footX - legWidth/2 + cornerRadius, footY - cornerRadius, cornerRadius, Math.PI/2, Math.PI);
+      legGraphics.lineTo(-legWidth/2, yOffset - 2 * s);
+      legGraphics.closePath();
+      legGraphics.fill(color);
+
       if (isInFront) {
-        // FRONT LEG (going back): No hip outline
-        legGraphics.beginFill(color);
-        legGraphics.moveTo(-legWidth/2, yOffset);
-        legGraphics.lineTo(legWidth/2, yOffset);
-        legGraphics.lineTo(footX + legWidth/2, footY);
-        legGraphics.lineTo(footX - legWidth/2, footY);
-        legGraphics.closePath();
-        legGraphics.endFill();
-        
-        // Draw outline - sides and bottom only, not top
-        legGraphics.lineStyle(outlineWidth, outlineColor, 1);
-        legGraphics.moveTo(-legWidth/2, yOffset);
-        legGraphics.lineTo(footX - legWidth/2, footY);
-        legGraphics.lineTo(footX + legWidth/2, footY);
-        legGraphics.lineTo(legWidth/2, yOffset);
-        legGraphics.lineStyle(0);
+        // Front leg: outline ONLY on foot (no leg outline)
+        legGraphics.moveTo(footX - legWidth/2, footY - cornerRadius);
+        legGraphics.arc(footX - legWidth/2 + cornerRadius, footY - cornerRadius, cornerRadius, Math.PI, Math.PI/2, true);
+        legGraphics.lineTo(footX + legWidth/2 - cornerRadius, footY);
+        legGraphics.arc(footX + legWidth/2 - cornerRadius, footY - cornerRadius, cornerRadius, Math.PI/2, 0, true);
+        legGraphics.stroke({ width: outlineWidth, color: outlineColor });
       } else {
-        // BACK LEG: Full outline
-        legGraphics.beginFill(outlineColor);
-        legGraphics.moveTo(-legWidth/2 - outlineWidth/2, yOffset - outlineWidth/2);
-        legGraphics.lineTo(legWidth/2 + outlineWidth/2, yOffset - outlineWidth/2);
-        legGraphics.lineTo(footX + legWidth/2 + outlineWidth/2, footY + outlineWidth/2);
-        legGraphics.lineTo(footX - legWidth/2 - outlineWidth/2, footY + outlineWidth/2);
+        // Back leg: full outline
+        legGraphics.moveTo(-legWidth/2, yOffset - 2 * s);
+        legGraphics.lineTo(legWidth/2, yOffset - 2 * s);
+        legGraphics.lineTo(footX + legWidth/2, footY - cornerRadius);
+        legGraphics.arc(footX + legWidth/2 - cornerRadius, footY - cornerRadius, cornerRadius, 0, Math.PI/2);
+        legGraphics.lineTo(footX - legWidth/2 + cornerRadius, footY);
+        legGraphics.arc(footX - legWidth/2 + cornerRadius, footY - cornerRadius, cornerRadius, Math.PI/2, Math.PI);
+        legGraphics.lineTo(-legWidth/2, yOffset - 2 * s);
         legGraphics.closePath();
-        legGraphics.endFill();
-        
-        legGraphics.beginFill(color);
-        legGraphics.moveTo(-legWidth/2, yOffset);
-        legGraphics.lineTo(legWidth/2, yOffset);
-        legGraphics.lineTo(footX + legWidth/2, footY);
-        legGraphics.lineTo(footX - legWidth/2, footY);
-        legGraphics.closePath();
-        legGraphics.endFill();
+        legGraphics.stroke({ width: outlineWidth, color: outlineColor });
       }
-      
+
     } else {
-      // NEUTRAL POSE: Straight down
+      // NEUTRAL POSE: Straight down with rounded bottom
+      const frontLegHeight = legHeight * 1.05;
+      const backLegHeight = legHeight * 0.95;
+      const actualHeight = isInFront ? frontLegHeight : backLegHeight;
+
       if (isInFront) {
-        // FRONT LEG: No outline at top (hip)
-        legGraphics.beginFill(color);
-        legGraphics.drawRoundedRect(-legWidth/2, yOffset, legWidth, legHeight, cornerRadius);
-        legGraphics.endFill();
-        
-        // Draw outline on sides and bottom only (not top)
-        legGraphics.lineStyle(outlineWidth, outlineColor, 1);
-        legGraphics.moveTo(-legWidth/2, yOffset);
-        legGraphics.lineTo(-legWidth/2, yOffset + legHeight - cornerRadius);
-        legGraphics.arc(-legWidth/2 + cornerRadius, yOffset + legHeight - cornerRadius, cornerRadius, Math.PI, Math.PI/2, true);
-        legGraphics.lineTo(legWidth/2 - cornerRadius, yOffset + legHeight);
-        legGraphics.arc(legWidth/2 - cornerRadius, yOffset + legHeight - cornerRadius, cornerRadius, Math.PI/2, 0, true);
-        legGraphics.lineTo(legWidth/2, yOffset);
-        legGraphics.lineStyle(0);
+        // Front leg: fill then outline sides and bottom only
+        legGraphics.roundRect(-legWidth/2, yOffset, legWidth, actualHeight, cornerRadius);
+        legGraphics.fill(color);
+
+        // Outline on sides and bottom only
+        legGraphics.moveTo(-legWidth/2, outlineStartY);
+        legGraphics.lineTo(-legWidth/2, yOffset + actualHeight - cornerRadius);
+        legGraphics.arc(-legWidth/2 + cornerRadius, yOffset + actualHeight - cornerRadius, cornerRadius, Math.PI, Math.PI/2, true);
+        legGraphics.lineTo(legWidth/2 - cornerRadius, yOffset + actualHeight);
+        legGraphics.arc(legWidth/2 - cornerRadius, yOffset + actualHeight - cornerRadius, cornerRadius, Math.PI/2, 0, true);
+        legGraphics.lineTo(legWidth/2, outlineStartY);
+        legGraphics.stroke({ width: outlineWidth, color: outlineColor });
       } else {
-        // BACK LEG: Full outline
-        legGraphics.beginFill(outlineColor);
-        legGraphics.drawRoundedRect(-legWidth/2 - outlineWidth/2, yOffset - outlineWidth/2, legWidth + outlineWidth, legHeight + outlineWidth, cornerRadius);
-        legGraphics.endFill();
-        
-        legGraphics.beginFill(color);
-        legGraphics.drawRoundedRect(-legWidth/2, yOffset, legWidth, legHeight, cornerRadius);
-        legGraphics.endFill();
+        // Back leg: full outline
+        legGraphics.roundRect(-legWidth/2 - outlineWidth/2, yOffset - outlineWidth/2, legWidth + outlineWidth, actualHeight + outlineWidth, cornerRadius);
+        legGraphics.fill(outlineColor);
+
+        legGraphics.roundRect(-legWidth/2, yOffset, legWidth, actualHeight, cornerRadius);
+        legGraphics.fill(color);
       }
     }
-  }
-
-  destroy(): void {
+  }destroy(): void {
     for (const state of this.agentVisuals.values()) {
       state.visuals.spriteContainer.destroy({ children: true });
       state.visuals.visionBox.destroy();
