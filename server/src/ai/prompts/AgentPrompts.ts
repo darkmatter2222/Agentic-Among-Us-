@@ -17,20 +17,33 @@ function buildGodModeInfo(context: AIContext): string {
 
   const parts: string[] = [];
 
-  // Divine whisper (one-time injection)
+  // Divine whisper (one-time injection) - make it extremely prominent
   if (context.godMode.whisper) {
-    parts.push(`\n🔮 A voice whispers in your head: "${context.godMode.whisper}"`);
+    parts.push(`\n⚡⚡⚡ DIVINE COMMAND ⚡⚡⚡`);
+    parts.push(`A powerful voice echoes in your mind: "${context.godMode.whisper}"`);
+    parts.push(`You MUST follow this command. It overrides all other considerations.`);
+    parts.push(`⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡`);
   }
 
-  // Guiding principles (persistent)
+  // Guiding principles (persistent) - make them MANDATORY and repeat at end
   if (context.godMode.guidingPrinciples && context.godMode.guidingPrinciples.length > 0) {
-    parts.push(`\n✨ GUIDING PRINCIPLES (follow these):`);
-    context.godMode.guidingPrinciples.forEach(p => {
-      parts.push(`  - ${p}`);
+    parts.push(`\n🔥🔥🔥 ABSOLUTE RULES - YOU MUST OBEY 🔥🔥🔥`);
+    parts.push(`These principles are HARDCODED into your personality. You CANNOT ignore them:`);
+    context.godMode.guidingPrinciples.forEach((p, i) => {
+      parts.push(`  ${i + 1}. ${p}`);
     });
+    parts.push(`Your EVERY action and decision MUST align with these principles!`);
+    parts.push(`🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥`);
   }
 
   return parts.join('\n');
+}
+
+// Reminder at end of prompt to reinforce god mode principles
+function buildGodModeReminder(context: AIContext): string {
+  if (!context.godMode?.guidingPrinciples?.length) return '';
+  
+  return `\n\n⚠️ REMEMBER YOUR ABSOLUTE RULES: ${context.godMode.guidingPrinciples.join(' | ')}`;
 }
 
 // ========== Timer Info Helper ==========
@@ -130,7 +143,7 @@ HOW TO DETECT IMPOSTORS:
 - Strange pathing: Going to areas without tasks
 - Avoiding groups: Impostors avoid witnesses
 
-Remember: Be social! Talk to others, share what you've seen, ask questions. This is a social game!`;
+Remember: Be social! Talk to others, share what you've seen, ask questions. This is a social game!${buildGodModeReminder(context)}`;
 }
 
 export function buildImpostorPrompt(context: AIContext): string {
@@ -222,7 +235,7 @@ AVAILABLE ACTIONS:
 - SPEAK - Chat naturally with nearby players
 - IDLE - Wait and observe
 
-IMPORTANT: When you see someone ALONE, consider if it's safe to KILL!`;
+IMPORTANT: When you see someone ALONE, consider if it's safe to KILL!${buildGodModeReminder(context)}`;
 }
 
 function getImpostorUrgency(context: AIContext): string {
