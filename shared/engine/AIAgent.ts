@@ -58,6 +58,12 @@ export interface AIBehaviorState {
   recentKillTimestamp: number | null; // When the last kill happened
   isInKillAnimation: boolean; // Currently in kill animation
   killAnimationEndTime: number; // When kill animation ends
+  // God Mode state
+  godModeActive: boolean; // Currently executing a god command (bypasses LLM)
+  godModeCommand: string | null; // Description of current god command
+  guidingPrinciples: string[]; // Persistent behavioral directives for LLM
+  lastWhisper: string | null; // Most recent divine whisper for LLM
+  lastWhisperTimestamp: number | null; // When the whisper was received
 }
 
 // ========== AI State (Thoughts, Speech, etc.) ==========
@@ -188,6 +194,12 @@ export class AIAgent {
       recentKillTimestamp: null,
       isInKillAnimation: false,
       killAnimationEndTime: 0,
+      // God Mode state
+      godModeActive: false,
+      godModeCommand: null,
+      guidingPrinciples: [],
+      lastWhisper: null,
+      lastWhisperTimestamp: null,
     };
     
     // Initialize AI state with defaults
@@ -623,11 +635,15 @@ export class AIAgent {
    */
   private async decideNextActionAsync(): Promise<void> {
     let decision: AIDecision;
-    
+
     if (this.decisionCallback) {
       try {
         const context = this.buildAIContext();
         decision = await this.decisionCallback(context);
+        // Clear whisper after it's been used in a decision (one-time use)
+        if (this.behaviorState.lastWhisper) {
+          this.clearWhisper();
+        }
       } catch {
         // AI failed - use fallback immediately, don't log verbose errors
         decision = this.fallbackDecision();
@@ -635,12 +651,10 @@ export class AIAgent {
     } else {
       decision = this.fallbackDecision();
     }
-    
+
     // Execute the decision
     await this.executeDecision(decision);
-  }
-  
-  /**
+  }  /**
    * Execute an AI decision
    */
   private async executeDecision(decision: AIDecision): Promise<void> {
@@ -1701,7 +1715,8 @@ export class AIAgent {
       assignedTasks: this.aiState.assignedTasks,
       currentTaskIndex: this.aiState.currentTaskIndex,
       visibleAgents,
-      suspicionLevels: this.memory.getAllSuspicionLevels(),
+      // Impostors don't track suspicion - they know who everyone is
+      suspicionLevels: this.aiState.role === 'IMPOSTOR' ? {} : this.memory.getAllSuspicionLevels(),
       recentEvents: this.aiState.recentEvents.slice(-10),
       canSpeakTo: this.aiState.agentsInSpeechRange,
       // Memory context
@@ -1721,6 +1736,11 @@ export class AIAgent {
         location: this.aiState.witnessedKill.location,
         timestamp: this.aiState.witnessedKill.timestamp,
       } : null,
+      // God mode - divine intervention from observer
+      godMode: (this.behaviorState.lastWhisper || this.behaviorState.guidingPrinciples.length > 0) ? {
+        whisper: this.behaviorState.lastWhisper,
+        guidingPrinciples: this.behaviorState.guidingPrinciples,
+      } : undefined,
     };
     
     // Add impostor-specific context
@@ -2010,5 +2030,281 @@ export class AIAgent {
    */
   setPosition(position: Point): void {
     this.movementController.setPosition(position);
+  }
+
+  // ==================== GOD MODE METHODS ====================
+
+  /**
+   * Inject a god mode command - immediately executes an action, bypassing LLM
+   * The agent will execute this command and return to normal thinking when done
+   */
+  async injectGodCommand(command: import('../types/protocol.types.ts').GodModeCommand): Promise<void> {
+    console.log(`[${this.config.id}] GOD MODE: Received command - ${command.action}`);
+    
+    // Set god mode active
+    this.behaviorState.godModeActive = true;
+    this.behaviorState.isThinking = false;
+    
+    // Convert GodModeCommand to AIDecision and execute
+    const decision = this.godCommandToDecision(command);
+    this.behaviorState.godModeCommand = `${command.action}${this.getCommandDetails(command)}`;
+    
+    // Execute the decision
+    await this.executeDecision(decision);
+    
+    // Set a short decision time so we can check when the action completes
+    this.behaviorState.nextDecisionTime = Date.now() + 500;
+  }
+
+  /**
+   * Convert a GodModeCommand to an AIDecision
+   */
+  private godCommandToDecision(command: import('../types/protocol.types.ts').GodModeCommand): AIDecision {
+    switch (command.action) {
+      case 'go-to-task':
+        return {
+          goalType: 'GO_TO_TASK',
+          targetTaskIndex: command.taskIndex,
+          reasoning: 'Divine command: Go to task',
+          thought: 'A voice in my head tells me to do this task...',
+        };
+      
+      case 'go-to-position':
+        return {
+          goalType: 'WANDER',
+          targetPosition: command.position,
+          reasoning: 'Divine command: Go to position',
+          thought: 'Something draws me to this location...',
+        };
+      
+      case 'follow-agent':
+        return {
+          goalType: 'FOLLOW_AGENT',
+          targetAgentId: command.targetAgentId,
+          reasoning: 'Divine command: Follow agent',
+          thought: 'I feel compelled to follow them...',
+        };
+      
+      case 'avoid-agent':
+        return {
+          goalType: 'AVOID_AGENT',
+          targetAgentId: command.targetAgentId,
+          reasoning: 'Divine command: Avoid agent',
+          thought: 'I need to stay away from them...',
+        };
+      
+      case 'wander':
+        return {
+          goalType: 'WANDER',
+          reasoning: 'Divine command: Wander',
+          thought: 'I feel like exploring...',
+        };
+      
+      case 'idle':
+        return {
+          goalType: 'IDLE',
+          reasoning: 'Divine command: Idle',
+          thought: 'I should wait here for a moment...',
+        };
+      
+      case 'speak':
+        return {
+          goalType: 'SPEAK',
+          speech: command.message,
+          reasoning: 'Divine command: Speak',
+          thought: 'I need to say something...',
+        };
+      
+      // Impostor-only commands
+      case 'kill':
+        return {
+          goalType: 'KILL',
+          killTarget: command.targetAgentId,
+          reasoning: 'Divine command: Kill',
+          thought: 'The voices tell me to strike...',
+        };
+      
+      case 'hunt':
+        return {
+          goalType: 'HUNT',
+          reasoning: 'Divine command: Hunt',
+          thought: 'I must find a target...',
+        };
+      
+      case 'enter-vent':
+        return {
+          goalType: 'ENTER_VENT',
+          reasoning: 'Divine command: Enter vent',
+          thought: 'I should use the vents...',
+        };
+      
+      case 'exit-vent':
+        return {
+          goalType: 'EXIT_VENT',
+          targetVentId: command.targetVentId,
+          reasoning: 'Divine command: Exit vent',
+          thought: 'Time to emerge...',
+        };
+      
+      case 'flee-body':
+        return {
+          goalType: 'FLEE_BODY',
+          reasoning: 'Divine command: Flee body',
+          thought: 'I need to get away from here...',
+        };
+      
+      case 'self-report':
+        return {
+          goalType: 'SELF_REPORT',
+          reasoning: 'Divine command: Self-report',
+          thought: 'I should report this...',
+        };
+      
+      case 'create-alibi':
+        return {
+          goalType: 'CREATE_ALIBI',
+          reasoning: 'Divine command: Create alibi',
+          thought: 'I need to establish my presence elsewhere...',
+        };
+      
+      default:
+        return {
+          goalType: 'IDLE',
+          reasoning: 'Unknown god command',
+        };
+    }
+  }
+
+  /**
+   * Get details string for a god command
+   */
+  private getCommandDetails(command: import('../types/protocol.types.ts').GodModeCommand): string {
+    switch (command.action) {
+      case 'go-to-task':
+        return ` (task ${command.taskIndex})`;
+      case 'go-to-position':
+        return ` (${command.position.x}, ${command.position.y})`;
+      case 'follow-agent':
+      case 'avoid-agent':
+        return ` (${command.targetAgentId})`;
+      case 'kill':
+        return ` (${command.targetAgentId})`;
+      case 'speak':
+        return `: "${command.message.substring(0, 30)}..."`;
+      case 'exit-vent':
+        return command.targetVentId ? ` (to ${command.targetVentId})` : '';
+      default:
+        return '';
+    }
+  }
+
+  /**
+   * Send a whisper (divine thought) to the agent
+   * This gets injected into the agent's next LLM prompt
+   */
+  receiveWhisper(whisper: string): void {
+    console.log(`[${this.config.id}] GOD MODE: Received whisper - "${whisper.substring(0, 50)}..."`);
+    this.behaviorState.lastWhisper = whisper;
+    this.behaviorState.lastWhisperTimestamp = Date.now();
+    
+    // Add to recent events so it shows up in context
+    this.addRecentEvent(`[DIVINE WHISPER] ${whisper}`);
+    
+    // Force a decision soon to incorporate the whisper
+    this.behaviorState.nextDecisionTime = Math.min(
+      this.behaviorState.nextDecisionTime,
+      Date.now() + 1000
+    );
+  }
+
+  /**
+   * Set guiding principles for the agent
+   * These persist and influence all future LLM decisions
+   */
+  setGuidingPrinciples(principles: string[]): void {
+    console.log(`[${this.config.id}] GOD MODE: Setting ${principles.length} guiding principles`);
+    this.behaviorState.guidingPrinciples = principles;
+  }
+
+  /**
+   * Add a guiding principle
+   */
+  addGuidingPrinciple(principle: string): void {
+    if (!this.behaviorState.guidingPrinciples.includes(principle)) {
+      this.behaviorState.guidingPrinciples.push(principle);
+      console.log(`[${this.config.id}] GOD MODE: Added principle - "${principle}"`);
+    }
+  }
+
+  /**
+   * Remove a guiding principle
+   */
+  removeGuidingPrinciple(principle: string): void {
+    this.behaviorState.guidingPrinciples = this.behaviorState.guidingPrinciples.filter(
+      p => p !== principle
+    );
+  }
+
+  /**
+   * Clear all god mode state - return to normal LLM control
+   */
+  clearGodMode(): void {
+    console.log(`[${this.config.id}] GOD MODE: Cleared - returning to normal control`);
+    this.behaviorState.godModeActive = false;
+    this.behaviorState.godModeCommand = null;
+    // Note: We don't clear whispers or principles - those persist until explicitly cleared
+  }
+
+  /**
+   * Clear whisper (called after it's been processed)
+   */
+  clearWhisper(): void {
+    this.behaviorState.lastWhisper = null;
+    this.behaviorState.lastWhisperTimestamp = null;
+  }
+
+  /**
+   * Get god mode state for snapshot
+   */
+  getGodModeState(): {
+    isActive: boolean;
+    guidingPrinciples: string[];
+    lastWhisper?: string;
+    lastWhisperTimestamp?: number;
+    currentCommand?: string;
+  } {
+    return {
+      isActive: this.behaviorState.godModeActive,
+      guidingPrinciples: this.behaviorState.guidingPrinciples,
+      lastWhisper: this.behaviorState.lastWhisper ?? undefined,
+      lastWhisperTimestamp: this.behaviorState.lastWhisperTimestamp ?? undefined,
+      currentCommand: this.behaviorState.godModeCommand ?? undefined,
+    };
+  }
+
+  /**
+   * Check if a god command has completed (agent reached destination, etc.)
+   * Called from update loop to determine when to deactivate god mode
+   */
+  checkGodCommandCompletion(): boolean {
+    if (!this.behaviorState.godModeActive) return false;
+    
+    // Check if agent has reached a stable state
+    const isIdle = this.stateMachine.getActivityState() === PlayerActivityState.IDLE;
+    const isNotMoving = !this.movementController.isMoving();
+    
+    // If agent is idle and not moving, the command is likely complete
+    if (isIdle && isNotMoving) {
+      // Special case: if doing a task, wait for task to complete
+      if (this.aiState.isDoingTask) {
+        return false;
+      }
+      
+      // Command completed
+      this.clearGodMode();
+      return true;
+    }
+    
+    return false;
   }
 }

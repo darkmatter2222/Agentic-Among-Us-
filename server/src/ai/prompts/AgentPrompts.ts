@@ -10,6 +10,29 @@ import { COLOR_NAMES } from '@shared/constants/colors.ts';
 // Re-export for backward compatibility
 export const AGENT_NAMES = COLOR_NAMES;
 
+// ========== God Mode Helper ==========
+
+function buildGodModeInfo(context: AIContext): string {
+  if (!context.godMode) return '';
+
+  const parts: string[] = [];
+
+  // Divine whisper (one-time injection)
+  if (context.godMode.whisper) {
+    parts.push(`\n🔮 A voice whispers in your head: "${context.godMode.whisper}"`);
+  }
+
+  // Guiding principles (persistent)
+  if (context.godMode.guidingPrinciples && context.godMode.guidingPrinciples.length > 0) {
+    parts.push(`\n✨ GUIDING PRINCIPLES (follow these):`);
+    context.godMode.guidingPrinciples.forEach(p => {
+      parts.push(`  - ${p}`);
+    });
+  }
+
+  return parts.join('\n');
+}
+
 // ========== Timer Info Helper ==========
 
 function buildTimerInfo(context: AIContext): string {
@@ -47,15 +70,15 @@ export function buildCrewmatePrompt(context: AIContext): string {
   const memoryInfo = context.memoryContext || '';
   const conversationInfo = buildConversationInfo(context);
   const timerInfo = buildTimerInfo(context);
-  
+  const godModeInfo = buildGodModeInfo(context);
+
   // Filter out own name from canSpeakTo
-  const othersNearby = context.canSpeakTo.filter(name => 
+  const othersNearby = context.canSpeakTo.filter(name =>
     name.toLowerCase() !== context.agentName.toLowerCase()
   );
 
   return `You are ${context.agentName}. YOUR NAME IS ${context.agentName}. You are a CREWMATE in Among Us.
-
-CRITICAL IDENTITY RULES:
+${godModeInfo}CRITICAL IDENTITY RULES:
 - YOUR name is ${context.agentName}. When speaking about yourself, say "I" not "${context.agentName}".
 - NEVER accuse yourself or say "${context.agentName} is suspicious" - you ARE ${context.agentName}!
 - Other players have DIFFERENT names. You can only talk ABOUT other players, not yourself in third person.
@@ -111,25 +134,24 @@ Remember: Be social! Talk to others, share what you've seen, ask questions. This
 }
 
 export function buildImpostorPrompt(context: AIContext): string {
-  const suspicionInfo = buildSuspicionInfo(context);
   const memoryInfo = context.memoryContext || '';
   const conversationInfo = buildConversationInfo(context);
   const timerInfo = buildTimerInfo(context);
-  
+  const godModeInfo = buildGodModeInfo(context);
+
   // Filter out own name from canSpeakTo
-  const othersNearby = context.canSpeakTo.filter(name => 
+  const othersNearby = context.canSpeakTo.filter(name =>
     name.toLowerCase() !== context.agentName.toLowerCase()
   );
 
   // Build impostor-specific context if available
   const impostorInfo = buildImpostorKillInfo(context);
-  
+
   // Calculate time-based urgency for impostors
   const urgencyLevel = getImpostorUrgency(context);
 
   return `You are ${context.agentName}. YOUR NAME IS ${context.agentName}. You are an IMPOSTOR in Among Us (KEEP THIS SECRET!).
-
-CRITICAL IDENTITY RULES:
+${godModeInfo}CRITICAL IDENTITY RULES:
 - YOUR name is ${context.agentName}. When speaking about yourself, say "I" not "${context.agentName}".
 - NEVER accuse yourself or say "${context.agentName} is suspicious" - you ARE ${context.agentName}!
 - Other players have DIFFERENT names. Accuse THEM, not yourself.
@@ -180,7 +202,6 @@ CURRENT GAME STATE:
 ${context.isBeingFollowed ? '- ⚠️ Someone is following you - act natural, DO NOT KILL!' : ''}
 ${timerInfo}
 
-${suspicionInfo}
 ${memoryInfo}
 ${conversationInfo}
 
@@ -338,10 +359,14 @@ function buildImpostorKillInfo(context: AIContext): string {
 export function buildThoughtPrompt(context: AIContext, trigger: ThoughtTrigger): string {
   const basePrompt = context.role === 'IMPOSTOR'
     ? `You are ${context.agentName}. YOUR NAME IS ${context.agentName}. You are secretly an IMPOSTOR.`
-    : `You are ${context.agentName}. YOUR NAME IS ${context.agentName}. You are a loyal CREWMATE.`;  const triggerContext = getThoughtTriggerContext(trigger);
-  const suspicionInfo = context.suspicionContext || '';
+    : `You are ${context.agentName}. YOUR NAME IS ${context.agentName}. You are a loyal CREWMATE.`;
+  const triggerContext = getThoughtTriggerContext(trigger);
+  // Only crewmates have suspicions - impostors know who everyone is
+  const suspicionInfo = context.role === 'CREWMATE' ? (context.suspicionContext || '') : '';
+  const godModeInfo = buildGodModeInfo(context);
 
   return `${basePrompt}
+${godModeInfo}
 
 You are having an internal thought (no one else can hear this).
 ${triggerContext}
@@ -349,14 +374,12 @@ ${triggerContext}
 ${suspicionInfo ? `Your current suspicions:\n${suspicionInfo}` : ''}
 
 Generate a brief, natural internal thought (1 sentence max).
-${context.role === 'IMPOSTOR' 
-  ? 'Think about: appearing innocent, who to frame, your fake alibi, avoiding detection.' 
+${context.role === 'IMPOSTOR'
+  ? 'Think about: appearing innocent, who to frame, your fake alibi, avoiding detection.'
   : 'Think about: task efficiency, safety, who you trust/distrust, observations.'}
 
 Stay in character. Be genuine. Keep it SHORT.`;
-}
-
-export function buildSpeechPrompt(context: AIContext): string {
+}export function buildSpeechPrompt(context: AIContext): string {
   // Filter out own name from nearby players to prevent self-reference
   const otherNearby = context.canSpeakTo.filter(name => 
     name.toLowerCase() !== context.agentName.toLowerCase()
@@ -367,27 +390,29 @@ export function buildSpeechPrompt(context: AIContext): string {
     : `You are ${context.agentName}. YOUR NAME IS ${context.agentName}. You are a CREWMATE working with the team to find the impostor.`;
 
   // Build info about nearby players (exclude self)
-  const visibleOthers = context.visibleAgents.filter(a => 
+  const visibleOthers = context.visibleAgents.filter(a =>
     a.name.toLowerCase() !== context.agentName.toLowerCase()
   );
   const nearbyInfo = visibleOthers.length > 0
     ? `\nNearby players you can talk to: ${visibleOthers.map(a => `${a.name} (${a.activityState || 'unknown'})`).join(', ')}`
     : '\nNo other players nearby.';
 
-  const suspicionHint = context.suspicionContext 
-    ? `\nYour suspicions: ${context.suspicionContext.substring(0, 200)}` 
+  // Only crewmates have suspicions to share
+  const suspicionHint = context.role === 'CREWMATE' && context.suspicionContext
+    ? `\nYour suspicions: ${context.suspicionContext.substring(0, 200)}`
     : '';
 
   const recentConvoHint = context.recentConversations && context.recentConversations.length > 0
     ? `\nJust heard: "${context.recentConversations[context.recentConversations.length - 1]?.message || ''}"`
     : '';
 
+  const godModeInfo = buildGodModeInfo(context);
+
   return `${basePrompt}
+${godModeInfo}
 
 You're about to say something out loud to nearby players.
-${nearbyInfo}${suspicionHint}${recentConvoHint}
-
-SPEECH TYPES (mix it up!):
+${nearbyInfo}${suspicionHint}${recentConvoHint}SPEECH TYPES (mix it up!):
 - Greeting/Social: "Hey Red!", "What's up everyone?"
 - Coordination: "Let's go to electrical together", "I'll watch your back"
 - Information: "I just finished admin tasks", "Blue was in medbay"
@@ -421,7 +446,12 @@ function getThoughtTriggerContext(trigger: ThoughtTrigger): string {
     'heard_speech': 'You overheard someone talking nearby.',
     'passed_agent_closely': 'You just passed very close to another player.',
     'task_in_action_radius': 'You noticed a task location is within reach.',
-    'target_entered_kill_range': '\ud83d\udd2a KILL OPPORTUNITY! A crewmate just walked into your kill range. You have seconds to decide: Strike now? Use them as an alibi? Let them pass to avoid suspicion?'
+    'target_entered_kill_range': '🔪 KILL OPPORTUNITY! A crewmate just walked into your kill range. You have seconds to decide: Strike now? Use them as an alibi? Let them pass to avoid suspicion?',
+    'near_vent': 'You noticed a vent nearby. Consider if venting could help you escape or reposition.',
+    'entered_vent': 'You just entered a vent! You can travel to connected vents unseen.',
+    'exited_vent': 'You just emerged from a vent. Check if anyone saw you!',
+    'witnessed_vent_activity': '⚠️ You just saw someone use a vent! Only impostors can vent!',
+    'alone_with_vent': 'You are alone in a room with a vent. This could be your chance to move unseen.',
   };
   return contexts[trigger] || 'Something happened.';
 }

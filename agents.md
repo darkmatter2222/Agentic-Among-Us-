@@ -553,6 +553,57 @@ Map Settings:
 | **AI Decision Making** | LLM-powered with 10 goal types (see below) |
 | **Kill Sound Effects** | Audio plays on new body detection with browser autoplay unlock |
 | **Vent Sound Effects** | Audio plays on vent enter/exit events (vent-in and vent-out sounds) |
+| **God Mode** | Divine control system allowing observers to override agent behavior (see below) |
+
+### God Mode System (Active)
+
+God Mode allows observers to take divine control of AI agents through three mechanisms:
+
+#### Direct Commands
+Bypass the LLM entirely and force an agent to perform a specific action:
+- Agent's AI decision-making is suspended during command execution
+- Visual indicator shows agent is under divine control (pulsing golden glow)
+- Once command completes, agent returns to normal AI behavior
+
+**Available Commands:**
+| Command | All Agents | Impostor Only | Description |
+|---------|------------|---------------|-------------|
+| `wander` | ✅ | | Random exploration |
+| `idle` | ✅ | | Stop and wait |
+| `go_to_task` | ✅ | | Navigate to selected task |
+| `speak` | ✅ | | Say something to nearby agents |
+| `follow` | ✅ | | Follow a target agent |
+| `avoid` | ✅ | | Stay away from target agent |
+| `vent` | | ✅ | Enter nearest vent |
+| `kill` | | ✅ | Kill nearest crewmate in range |
+| `hunt` | | ✅ | Seek isolated targets |
+| `flee` | | ✅ | Run from current location |
+| `alibi` | | ✅ | Create an alibi by faking task |
+| `self_report` | | ✅ | Report own kill |
+
+#### Whispers (Prompt Injection)
+Inject a divine whisper into the agent's next LLM prompt:
+- Appears as "A voice whispers in your head: [message]"
+- Agent's LLM considers the whisper alongside normal observations
+- Single-use: clears after the next decision
+- Useful for subtle influence without direct control
+
+#### Guiding Principles (Persistent)
+Add persistent behavioral modifications:
+- Injected into every LLM prompt until removed
+- Multiple principles can be active simultaneously
+- Examples: "You vent frequently", "You trust no one", "You are paranoid"
+- Can be added/removed individually
+
+#### UI Access
+- Click on any agent to open their info panel
+- Select the "Control" tab (shows ✨ when god mode is active)
+- Quick command buttons for common actions
+- Task dropdown for GO_TO_TASK commands
+- Custom message input for SPEAK commands
+- Whisper input with "Send Whisper" button
+- Principles list with add/remove functionality
+- "Clear All God Mode" button to reset
 
 ### AI Decision Types (Active)
 

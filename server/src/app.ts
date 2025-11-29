@@ -2,7 +2,7 @@ import Fastify from 'fastify';
 import websocket from '@fastify/websocket';
 import cors from '@fastify/cors';
 import { WebSocket } from 'ws';
-import { PROTOCOL_VERSION, type ServerMessage } from '@shared/types/protocol.types.ts';
+import { PROTOCOL_VERSION, type ServerMessage, type ClientMessage } from '@shared/types/protocol.types.ts';
 import type { WorldSnapshot } from '@shared/types/simulation.types.ts';
 import type { LLMTraceEvent } from '@shared/types/llm-trace.types.ts';
 import { diffWorldSnapshots } from '@shared/engine/stateDiff.ts';
@@ -227,7 +227,73 @@ export async function buildServer(options: BuildOptions = {}) {
         stopHeartbeat();
       }
     });
+
+    // Handle incoming client messages (God Mode commands)
+    socket.on('message', (data: Buffer | ArrayBuffer | Buffer[]) => {
+      try {
+        const text = data.toString();
+        const message = JSON.parse(text) as ClientMessage;
+        handleClientMessage(message, socket);
+      } catch (error) {
+        fastify.log.warn({ err: error }, 'Failed to parse client message');
+      }
+    });
   });
+
+  // Handle God Mode client messages
+  const handleClientMessage = (message: ClientMessage, _socket: WebSocket) => {
+    const manager = simulation.getAgentManager();
+    const agents = manager.getAgents();
+
+    switch (message.type) {
+      case 'god-command': {
+        const agent = agents.find(a => a.getId() === message.payload.agentId);
+        if (agent) {
+          fastify.log.info({ agentId: message.payload.agentId, command: message.payload.command.action }, 'God Mode command received');
+          agent.injectGodCommand(message.payload.command);
+        } else {
+          fastify.log.warn({ agentId: message.payload.agentId }, 'God Mode: Agent not found');
+        }
+        break;
+      }
+
+      case 'god-whisper': {
+        const agent = agents.find(a => a.getId() === message.payload.agentId);
+        if (agent) {
+          fastify.log.info({ agentId: message.payload.agentId, whisper: message.payload.whisper.substring(0, 50) }, 'God Mode whisper received');
+          agent.receiveWhisper(message.payload.whisper);
+        } else {
+          fastify.log.warn({ agentId: message.payload.agentId }, 'God Mode: Agent not found');
+        }
+        break;
+      }
+
+      case 'god-principles': {
+        const agent = agents.find(a => a.getId() === message.payload.agentId);
+        if (agent) {
+          fastify.log.info({ agentId: message.payload.agentId, count: message.payload.principles.length }, 'God Mode principles set');
+          agent.setGuidingPrinciples(message.payload.principles);
+        } else {
+          fastify.log.warn({ agentId: message.payload.agentId }, 'God Mode: Agent not found');
+        }
+        break;
+      }
+
+      case 'god-clear': {
+        const agent = agents.find(a => a.getId() === message.payload.agentId);
+        if (agent) {
+          fastify.log.info({ agentId: message.payload.agentId }, 'God Mode cleared');
+          agent.clearGodMode();
+        } else {
+          fastify.log.warn({ agentId: message.payload.agentId }, 'God Mode: Agent not found');
+        }
+        break;
+      }
+
+      default:
+        fastify.log.warn({ type: (message as { type: string }).type }, 'Unknown client message type');
+    }
+  };
 
   simulationLoop.onTickMetrics((metrics) => {
     telemetry.noteTickMetrics(metrics);

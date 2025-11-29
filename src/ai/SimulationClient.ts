@@ -1,4 +1,4 @@
-import type { ServerMessage, WorldDelta } from '@shared/types/protocol.types.ts';
+import type { ServerMessage, WorldDelta, ClientMessage, GodModeCommand } from '@shared/types/protocol.types.ts';
 import type { AgentSnapshot, WorldSnapshot } from '@shared/types/simulation.types.ts';
 import type { LLMTraceEvent } from '@shared/types/llm-trace.types.ts';
 
@@ -457,6 +457,73 @@ export class SimulationClient {
     const inferred = `${scheme}://${hostname}:${port}/ws/state`;
     console.debug('[simulation] inferred websocket URL', inferred);
     return inferred;
+  }
+
+  // ========== God Mode Methods ==========
+
+  /**
+   * Send a message to the server
+   */
+  private sendMessage(message: ClientMessage): boolean {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      console.warn('[simulation] Cannot send message - not connected');
+      return false;
+    }
+    try {
+      this.socket.send(JSON.stringify(message));
+      return true;
+    } catch (error) {
+      console.error('[simulation] Failed to send message', error);
+      return false;
+    }
+  }
+
+  /**
+   * Send a god mode command to an agent
+   * Commands are executed immediately, bypassing the LLM
+   */
+  sendGodCommand(agentId: string, command: GodModeCommand): boolean {
+    console.info('[simulation] Sending god command', { agentId, action: command.action });
+    return this.sendMessage({
+      type: 'god-command',
+      payload: { agentId, command }
+    });
+  }
+
+  /**
+   * Send a whisper (divine thought) to an agent
+   * This gets injected into the agent's next LLM prompt
+   */
+  sendWhisper(agentId: string, whisper: string): boolean {
+    console.info('[simulation] Sending whisper', { agentId, whisper: whisper.substring(0, 50) });
+    return this.sendMessage({
+      type: 'god-whisper',
+      payload: { agentId, whisper }
+    });
+  }
+
+  /**
+   * Set guiding principles for an agent
+   * These persist and influence all future LLM decisions
+   */
+  setGuidingPrinciples(agentId: string, principles: string[]): boolean {
+    console.info('[simulation] Setting guiding principles', { agentId, count: principles.length });
+    return this.sendMessage({
+      type: 'god-principles',
+      payload: { agentId, principles }
+    });
+  }
+
+  /**
+   * Clear god mode state for an agent
+   * Returns the agent to normal LLM control
+   */
+  clearGodMode(agentId: string): boolean {
+    console.info('[simulation] Clearing god mode', { agentId });
+    return this.sendMessage({
+      type: 'god-clear',
+      payload: { agentId }
+    });
   }
 }
 

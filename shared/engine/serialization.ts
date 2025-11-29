@@ -90,13 +90,14 @@ export function serializeAgent(agent: AIAgent, timestamp: number, killStatus?: K
     recentConversations,
     isBeingFollowed: typeof agent.isBeingFollowed === 'function' ? agent.isBeingFollowed() : false,
     buddyId: agent.getBuddyId ? agent.getBuddyId() : null,
-    
+
     // Kill status (impostors only)
     killStatus: killStatus,
-  };
-}
 
-export function serializeAgentSummary(agent: AIAgent): AgentSummarySnapshot {
+    // God Mode status
+    godMode: agent.getGodModeState ? agent.getGodModeState() : undefined,
+  };
+}export function serializeAgentSummary(agent: AIAgent): AgentSummarySnapshot {
   const state = agent.getStateMachine().getState();
   return {
     id: agent.getId(),

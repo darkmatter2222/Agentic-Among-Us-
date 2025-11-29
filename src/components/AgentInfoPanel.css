@@ -1335,3 +1335,288 @@
   flex-direction: column;
   gap: 2px;
 }
+
+/* ========== God Mode / Control Panel Styles ========== */
+
+/* God Mode Tab Button */
+.god-mode-tab {
+  background: linear-gradient(135deg, rgba(147, 51, 234, 0.2), rgba(59, 130, 246, 0.2)) !important;
+  border-color: rgba(147, 51, 234, 0.4) !important;
+}
+
+.god-mode-tab:hover {
+  background: linear-gradient(135deg, rgba(147, 51, 234, 0.3), rgba(59, 130, 246, 0.3)) !important;
+}
+
+.god-mode-tab.active {
+  background: linear-gradient(135deg, rgba(147, 51, 234, 0.4), rgba(59, 130, 246, 0.4)) !important;
+  border-color: #9333ea !important;
+  color: #c084fc !important;
+}
+
+/* Active Banner */
+.god-mode-active-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: linear-gradient(135deg, rgba(147, 51, 234, 0.3), rgba(59, 130, 246, 0.3));
+  border: 1px solid rgba(147, 51, 234, 0.5);
+  border-radius: 8px;
+  margin-bottom: 12px;
+  animation: god-pulse 2s ease-in-out infinite;
+}
+
+@keyframes god-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.god-icon {
+  font-size: 1.2rem;
+  animation: god-glow 1.5s ease-in-out infinite;
+}
+
+@keyframes god-glow {
+  0%, 100% { filter: drop-shadow(0 0 3px #9333ea); }
+  50% { filter: drop-shadow(0 0 8px #c084fc); }
+}
+
+/* Commands Grid */
+.god-commands-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.god-cmd-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 0.7rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.god-cmd-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: rgba(255, 255, 255, 0.25);
+  transform: translateY(-1px);
+}
+
+.god-cmd-btn:active {
+  transform: translateY(0);
+}
+
+.god-cmd-btn.impostor {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.3);
+  color: #fca5a5;
+}
+
+.god-cmd-btn.impostor:hover {
+  background: rgba(239, 68, 68, 0.25);
+  border-color: rgba(239, 68, 68, 0.5);
+}
+
+.god-cmd-btn.impostor.danger {
+  background: rgba(239, 68, 68, 0.25);
+  border-color: rgba(239, 68, 68, 0.5);
+}
+
+.god-cmd-btn.impostor.danger:hover {
+  background: rgba(239, 68, 68, 0.4);
+}
+
+/* Task Command List */
+.task-command-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.task-cmd-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-align: left;
+}
+
+.task-cmd-btn:hover:not(:disabled) {
+  background: rgba(76, 175, 80, 0.15);
+  border-color: rgba(76, 175, 80, 0.3);
+}
+
+.task-cmd-btn.completed {
+  opacity: 0.5;
+  text-decoration: line-through;
+}
+
+.task-cmd-btn:disabled {
+  cursor: not-allowed;
+}
+
+.task-cmd-btn .task-check {
+  font-size: 0.8rem;
+}
+
+.task-cmd-btn .task-name {
+  flex: 1;
+  font-weight: 500;
+}
+
+.task-cmd-btn .task-room {
+  font-size: 0.65rem;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+/* Input Row */
+.god-input-row {
+  display: flex;
+  gap: 8px;
+}
+
+.god-input {
+  flex: 1;
+  padding: 8px 12px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  color: #fff;
+  font-size: 0.8rem;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.god-input:focus {
+  border-color: rgba(147, 51, 234, 0.5);
+}
+
+.god-input::placeholder {
+  color: rgba(255, 255, 255, 0.3);
+}
+
+.god-send-btn {
+  padding: 8px 16px;
+  background: linear-gradient(135deg, rgba(147, 51, 234, 0.4), rgba(59, 130, 246, 0.4));
+  border: 1px solid rgba(147, 51, 234, 0.5);
+  border-radius: 6px;
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.god-send-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, rgba(147, 51, 234, 0.6), rgba(59, 130, 246, 0.6));
+}
+
+.god-send-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* God Mode Hints */
+.god-hint {
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.4);
+  margin: 0 0 8px 0;
+  font-style: italic;
+}
+
+/* Last Whisper */
+.last-whisper {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(147, 51, 234, 0.1);
+  border-radius: 6px;
+  margin-top: 8px;
+  border-left: 3px solid rgba(147, 51, 234, 0.5);
+}
+
+.whisper-icon {
+  font-size: 0.9rem;
+  opacity: 0.8;
+}
+
+.whisper-text {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.7);
+  font-style: italic;
+}
+
+/* Principles List */
+.principles-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.principle-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: rgba(59, 130, 246, 0.1);
+  border-radius: 6px;
+  border-left: 3px solid rgba(59, 130, 246, 0.5);
+}
+
+.principle-text {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.85);
+  flex: 1;
+}
+
+.principle-remove {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 0 4px;
+  transition: color 0.15s ease;
+}
+
+.principle-remove:hover {
+  color: #ef4444;
+}
+
+/* Clear God Mode Button */
+.god-clear-btn {
+  width: 100%;
+  padding: 10px 16px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.god-clear-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}

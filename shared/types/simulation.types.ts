@@ -127,6 +127,15 @@ export interface AgentSnapshot {
     ventCooldownRemaining: number; // seconds remaining on cooldown
     ventAnimationState?: 'entering' | 'exiting' | null;
   };
+
+  // God Mode status (for UI display)
+  godMode?: {
+    isActive: boolean;                    // Currently executing a god command
+    guidingPrinciples: string[];          // Persistent behavioral directives
+    lastWhisper?: string;                 // Most recent divine whisper
+    lastWhisperTimestamp?: number;        // When the whisper was received
+    currentCommand?: string;              // Description of current god command
+  };
 }
 
 export interface AgentSummarySnapshot {
@@ -357,4 +366,12 @@ export interface AIContext {
     location: string | null;
     timestamp: number;
   } | null;
+
+  // ===== God Mode context (divine intervention from observer) =====
+  godMode?: {
+    /** Divine whisper to inject into next prompt (one-time use) */
+    whisper: string | null;
+    /** Persistent guiding principles for all prompts */
+    guidingPrinciples: string[];
+  };
 }

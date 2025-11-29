@@ -1,6 +1,80 @@
-import type { AgentSnapshot, AgentSummarySnapshot, WorldSnapshot } from './simulation.types.ts';
+import type { AgentSnapshot, AgentSummarySnapshot, WorldSnapshot, AIDecision, AIGoalType } from './simulation.types.ts';
 
 export const PROTOCOL_VERSION = '0.1.0';
+
+// ========== Client-to-Server Messages (God Mode) ==========
+
+/**
+ * Inject a direct command to an agent - bypasses LLM completely
+ * The agent will immediately execute this action
+ */
+export interface GodModeCommandMessage {
+  type: 'god-command';
+  payload: {
+    agentId: string;
+    command: GodModeCommand;
+  };
+}
+
+/**
+ * Available god mode commands
+ */
+export type GodModeCommand = 
+  | { action: 'go-to-task'; taskIndex: number }
+  | { action: 'go-to-position'; position: { x: number; y: number } }
+  | { action: 'follow-agent'; targetAgentId: string }
+  | { action: 'avoid-agent'; targetAgentId: string }
+  | { action: 'wander' }
+  | { action: 'idle' }
+  | { action: 'speak'; message: string }
+  // Impostor-only commands
+  | { action: 'kill'; targetAgentId: string }
+  | { action: 'hunt' }
+  | { action: 'enter-vent' }
+  | { action: 'exit-vent'; targetVentId?: string }
+  | { action: 'flee-body' }
+  | { action: 'self-report' }
+  | { action: 'create-alibi' };
+
+/**
+ * Send a whisper (divine thought) to an agent
+ * This gets injected into the agent's next LLM prompt
+ */
+export interface GodModeWhisperMessage {
+  type: 'god-whisper';
+  payload: {
+    agentId: string;
+    whisper: string;
+  };
+}
+
+/**
+ * Set guiding principles for an agent
+ * These persist and influence all future decisions
+ */
+export interface GodModeGuidingPrinciplesMessage {
+  type: 'god-principles';
+  payload: {
+    agentId: string;
+    principles: string[];
+  };
+}
+
+/**
+ * Clear god mode override - return agent to normal LLM control
+ */
+export interface GodModeClearMessage {
+  type: 'god-clear';
+  payload: {
+    agentId: string;
+  };
+}
+
+export type ClientMessage =
+  | GodModeCommandMessage
+  | GodModeWhisperMessage
+  | GodModeGuidingPrinciplesMessage
+  | GodModeClearMessage;
 
 // Capacity configuration for the LLM
 export interface LLMCapacityConfig {

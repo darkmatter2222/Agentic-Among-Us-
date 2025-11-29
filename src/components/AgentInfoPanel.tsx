@@ -2,8 +2,9 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import './AgentInfoPanel.css';
 import type { TaskAssignment } from '@shared/types/simulation.types.ts';
 import type { PlayerRole } from '@shared/types/game.types.ts';
-import type { LLMQueueStats } from '@shared/types/protocol.types.ts';
+import type { LLMQueueStats, GodModeCommand } from '@shared/types/protocol.types.ts';
 import { getColorName } from '@shared/constants/colors.ts';
+import { getSimulationClient } from '../ai/SimulationClient.ts';
 
 export interface AgentSummary {
   id: string;
@@ -37,6 +38,14 @@ export interface AgentSummary {
     canKill: boolean;
     hasTargetInRange: boolean;
     killCount: number;
+  };
+  // God Mode status
+  godMode?: {
+    isActive: boolean;
+    guidingPrinciples: string[];
+    lastWhisper?: string;
+    lastWhisperTimestamp?: number;
+    currentCommand?: string;
   };
 }
 
@@ -101,7 +110,7 @@ interface ExpandedAgentCardProps {
   onClose: () => void;
 }
 
-type TabType = 'overview' | 'memory' | 'suspicion';
+type TabType = 'overview' | 'memory' | 'suspicion' | 'control';
 
 function SuspicionBar({ level, name }: { level: number; name: string }) {
   const getBarColor = (l: number) => {
@@ -110,13 +119,13 @@ function SuspicionBar({ level, name }: { level: number; name: string }) {
     if (l >= 20) return '#f1c40f'; // Yellow - slight
     return '#2ecc71'; // Green - trusted
   };
-  
+
   return (
     <div className="suspicion-item">
       <span className="suspicion-name">{name}</span>
       <div className="suspicion-bar">
-        <div 
-          className="suspicion-fill" 
+        <div
+          className="suspicion-fill"
           style={{ width: `${level}%`, backgroundColor: getBarColor(level) }}
         />
       </div>
@@ -125,7 +134,217 @@ function SuspicionBar({ level, name }: { level: number; name: string }) {
   );
 }
 
-function ExpandedAgentCard({ agent, onClose }: ExpandedAgentCardProps) {
+// God Mode Control Panel - Divine intervention tools
+function GodModeControlPanel({ agent }: { agent: AgentSummary }) {
+  const [whisperText, setWhisperText] = useState('');
+  const [principleText, setPrincipleText] = useState('');
+  const [principles, setPrinciples] = useState<string[]>(agent.godMode?.guidingPrinciples ?? []);
+  const [speakText, setSpeakText] = useState('');
+
+  const client = getSimulationClient();
+  const isImpostor = agent.role === 'IMPOSTOR';
+
+  const sendCommand = (command: GodModeCommand) => {
+    client.sendGodCommand(agent.id, command);
+  };
+
+  const handleWhisper = () => {
+    if (whisperText.trim()) {
+      client.sendWhisper(agent.id, whisperText.trim());
+      setWhisperText('');
+    }
+  };
+
+  const handleAddPrinciple = () => {
+    if (principleText.trim() && !principles.includes(principleText.trim())) {
+      const newPrinciples = [...principles, principleText.trim()];
+      setPrinciples(newPrinciples);
+      client.setGuidingPrinciples(agent.id, newPrinciples);
+      setPrincipleText('');
+    }
+  };
+
+  const handleRemovePrinciple = (principle: string) => {
+    const newPrinciples = principles.filter(p => p !== principle);
+    setPrinciples(newPrinciples);
+    client.setGuidingPrinciples(agent.id, newPrinciples);
+  };
+
+  const handleSpeak = () => {
+    if (speakText.trim()) {
+      sendCommand({ action: 'speak', message: speakText.trim() });
+      setSpeakText('');
+    }
+  };
+
+  return (
+    <>
+      {/* God Mode Status */}
+      {agent.godMode?.isActive && (
+        <div className="god-mode-active-banner">
+          <span className="god-icon">⚡</span>
+          <span>Divine Control Active: {agent.godMode.currentCommand}</span>
+        </div>
+      )}
+
+      {/* Quick Commands Section */}
+      <div className="expanded-card__section">
+        <div className="section-label">⚡ Quick Commands</div>
+        <div className="god-commands-grid">
+          <button className="god-cmd-btn" onClick={() => sendCommand({ action: 'wander' })} title="Make agent wander randomly">
+            🚶 Wander
+          </button>
+          <button className="god-cmd-btn" onClick={() => sendCommand({ action: 'idle' })} title="Make agent stop and wait">
+            ⏸️ Idle
+          </button>
+          {agent.assignedTasks && agent.assignedTasks.length > 0 && (
+            <button 
+              className="god-cmd-btn" 
+              onClick={() => {
+                const nextTask = agent.assignedTasks?.findIndex(t => !t.isCompleted) ?? 0;
+                sendCommand({ action: 'go-to-task', taskIndex: nextTask });
+              }} 
+              title="Go to next incomplete task"
+            >
+              📋 Do Task
+            </button>
+          )}
+          {isImpostor && (
+            <>
+              <button className="god-cmd-btn impostor" onClick={() => sendCommand({ action: 'hunt' })} title="Hunt for isolated targets">
+                🎯 Hunt
+              </button>
+              <button className="god-cmd-btn impostor" onClick={() => sendCommand({ action: 'enter-vent' })} title="Enter nearest vent">
+                🕳️ Vent
+              </button>
+              <button className="god-cmd-btn impostor" onClick={() => sendCommand({ action: 'exit-vent' })} title="Exit current vent">
+                ↗️ Exit Vent
+              </button>
+              <button className="god-cmd-btn impostor" onClick={() => sendCommand({ action: 'flee-body' })} title="Flee from the body">
+                🏃 Flee
+              </button>
+              <button className="god-cmd-btn impostor" onClick={() => sendCommand({ action: 'create-alibi' })} title="Create an alibi">
+                🎭 Alibi
+              </button>
+              <button className="god-cmd-btn impostor danger" onClick={() => sendCommand({ action: 'self-report' })} title="Self-report the body">
+                📢 Self Report
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Task Selection */}
+      {agent.assignedTasks && agent.assignedTasks.length > 0 && (
+        <div className="expanded-card__section">
+          <div className="section-label">📋 Go To Task</div>
+          <div className="task-command-list">
+            {agent.assignedTasks.map((task, idx) => (
+              <button
+                key={idx}
+                className={`task-cmd-btn ${task.isCompleted ? 'completed' : ''}`}
+                onClick={() => sendCommand({ action: 'go-to-task', taskIndex: idx })}
+                disabled={task.isCompleted}
+              >
+                <span className="task-check">{task.isCompleted ? '✓' : '○'}</span>
+                <span className="task-name">{task.taskType}</span>
+                <span className="task-room">{task.room}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Make Agent Speak */}
+      <div className="expanded-card__section">
+        <div className="section-label">🗣️ Make Agent Speak</div>
+        <div className="god-input-row">
+          <input
+            type="text"
+            className="god-input"
+            placeholder="What should they say..."
+            value={speakText}
+            onChange={(e) => setSpeakText(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleSpeak()}
+          />
+          <button className="god-send-btn" onClick={handleSpeak} disabled={!speakText.trim()}>
+            Say
+          </button>
+        </div>
+      </div>
+
+      {/* Divine Whisper */}
+      <div className="expanded-card__section">
+        <div className="section-label">👁️ Divine Whisper</div>
+        <p className="god-hint">Inject a thought into the agent's mind. This will influence their next LLM decision.</p>
+        <div className="god-input-row">
+          <input
+            type="text"
+            className="god-input"
+            placeholder="A voice whispers: You should vent more often..."
+            value={whisperText}
+            onChange={(e) => setWhisperText(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleWhisper()}
+          />
+          <button className="god-send-btn" onClick={handleWhisper} disabled={!whisperText.trim()}>
+            Whisper
+          </button>
+        </div>
+        {agent.godMode?.lastWhisper && (
+          <div className="last-whisper">
+            <span className="whisper-icon">👁️</span>
+            <span className="whisper-text">"{agent.godMode.lastWhisper}"</span>
+          </div>
+        )}
+      </div>
+
+      {/* Guiding Principles */}
+      <div className="expanded-card__section">
+        <div className="section-label">📜 Guiding Principles</div>
+        <p className="god-hint">Persistent behavioral directives that influence all future decisions.</p>
+        <div className="god-input-row">
+          <input
+            type="text"
+            className="god-input"
+            placeholder="Always be suspicious of Red..."
+            value={principleText}
+            onChange={(e) => setPrincipleText(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleAddPrinciple()}
+          />
+          <button className="god-send-btn" onClick={handleAddPrinciple} disabled={!principleText.trim()}>
+            Add
+          </button>
+        </div>
+        {principles.length > 0 && (
+          <div className="principles-list">
+            {principles.map((principle, idx) => (
+              <div key={idx} className="principle-item">
+                <span className="principle-text">{principle}</span>
+                <button 
+                  className="principle-remove" 
+                  onClick={() => handleRemovePrinciple(principle)}
+                  title="Remove principle"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Clear God Mode */}
+      <div className="expanded-card__section">
+        <button 
+          className="god-clear-btn"
+          onClick={() => client.clearGodMode(agent.id)}
+        >
+          🔄 Return to Normal AI Control
+        </button>
+      </div>
+    </>
+  );
+}function ExpandedAgentCard({ agent, onClose }: ExpandedAgentCardProps) {
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const role = getRoleBadge(agent.role);
   const totalTasks = agent.assignedTasks?.length ?? 0;
@@ -155,27 +374,31 @@ function ExpandedAgentCard({ agent, onClose }: ExpandedAgentCardProps) {
       
       {/* Tab Navigation */}
       <div className="expanded-card__tabs">
-        <button 
+        <button
           className={`tab-btn ${activeTab === 'overview' ? 'active' : ''}`}
           onClick={() => setActiveTab('overview')}
         >
           Overview
         </button>
-        <button 
+        <button
           className={`tab-btn ${activeTab === 'memory' ? 'active' : ''}`}
           onClick={() => setActiveTab('memory')}
         >
           Memory
         </button>
-        <button 
+        <button
           className={`tab-btn ${activeTab === 'suspicion' ? 'active' : ''}`}
           onClick={() => setActiveTab('suspicion')}
         >
           Suspicions
         </button>
-      </div>
-      
-      {/* Tab Content */}
+        <button
+          className={`tab-btn god-mode-tab ${activeTab === 'control' ? 'active' : ''}`}
+          onClick={() => setActiveTab('control')}
+        >
+          ⚡ Control
+        </button>
+      </div>      {/* Tab Content */}
       <div className="expanded-card__tab-content">
         {activeTab === 'overview' && (
           <>
@@ -302,7 +525,7 @@ function ExpandedAgentCard({ agent, onClose }: ExpandedAgentCardProps) {
                 )}
               </div>
             </div>
-            
+
             <div className="expanded-card__section">
               <div className="section-label">Suspicion Context</div>
               <div className="suspicion-context-box">
@@ -315,12 +538,14 @@ function ExpandedAgentCard({ agent, onClose }: ExpandedAgentCardProps) {
             </div>
           </>
         )}
+
+        {activeTab === 'control' && (
+          <GodModeControlPanel agent={agent} />
+        )}
       </div>
     </div>
   );
-}
-
-// LLM Queue Statistics Panel - Capacity-aware monitoring
+}// LLM Queue Statistics Panel - Capacity-aware monitoring
 type TimeInterval = '1min' | '5min';
 
 function LLMQueuePanel({ stats, isCollapsed, onToggle, height, onHeightChange }: {
