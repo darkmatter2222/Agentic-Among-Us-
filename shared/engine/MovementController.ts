@@ -178,6 +178,17 @@ export class MovementController {
     return { ...this.state.currentPosition };
   }
 
+  /**
+   * Set the position directly (used for teleportation, e.g., exiting vents)
+   */
+  setPosition(position: Point): void {
+    this.state.currentPosition = { ...position };
+    this.state.path = [];
+    this.state.pathIndex = 0;
+    this.state.isMoving = false;
+    this.state.velocity = { x: 0, y: 0 };
+  }
+
   getFacing(): number {
     return this.state.facing;
   }

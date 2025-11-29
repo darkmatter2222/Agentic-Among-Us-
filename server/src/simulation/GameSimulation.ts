@@ -1,9 +1,10 @@
 import { AIAgentManager } from '@shared/engine/AIAgentManager.ts';
 import { serializeWorld, type SerializeWorldOptions } from '@shared/engine/serialization.ts';
-import { WALKABLE_ZONES, LABELED_ZONES, TASKS } from '@shared/data/poly3-map.ts';
+import { WALKABLE_ZONES, LABELED_ZONES, TASKS, VENTS } from '@shared/data/poly3-map.ts';
 import type { WorldSnapshot, ThoughtEvent, SpeechEvent, AIContext, GameTimerSnapshot } from '@shared/types/simulation.types.ts';
 import { AIDecisionService } from '../ai/AIDecisionService.js';
 import type { KillEvent } from '@shared/engine/KillSystem.ts';
+import type { VentEvent } from '@shared/engine/VentSystem.ts';
 
 export interface SimulationOptions {
   numAgents?: number;
@@ -32,6 +33,7 @@ export class GameSimulation {
   private recentThoughts: ThoughtEvent[];
   private recentSpeech: SpeechEvent[];
   private recentKills: KillEvent[];
+  private recentVentEvents: VentEvent[];
   
   // Game timer
   private readonly gameDurationMs: number;
@@ -45,6 +47,7 @@ export class GameSimulation {
       walkableZones: WALKABLE_ZONES,
       labeledZones: LABELED_ZONES,
       tasks: TASKS,
+      vents: VENTS,
       numAgents: this.options.numAgents,
       numImpostors: this.options.numImpostors,
       tasksPerAgent: this.options.tasksPerAgent,
@@ -66,6 +69,7 @@ export class GameSimulation {
     this.recentThoughts = [];
     this.recentSpeech = [];
     this.recentKills = [];
+    this.recentVentEvents = [];
     
     // Initialize game timer
     this.gameDurationMs = this.options.gameDurationMs;
@@ -181,6 +185,7 @@ export class GameSimulation {
       walkableZones: WALKABLE_ZONES,
       labeledZones: LABELED_ZONES,
       tasks: TASKS,
+      vents: VENTS,
       numAgents: this.options.numAgents,
       numImpostors: this.options.numImpostors,
       tasksPerAgent: this.options.tasksPerAgent,
@@ -202,6 +207,7 @@ export class GameSimulation {
     this.recentThoughts = [];
     this.recentSpeech = [];
     this.recentKills = [];
+    this.recentVentEvents = [];
     
     // Reset timer
     this.gameStartTime = Date.now();
@@ -270,6 +276,7 @@ export class GameSimulation {
       llmQueueStats: this.aiService?.getQueueStats(),
       bodies: this.manager.getBodies(),
       recentKills: this.recentKills,
+      recentVentEvents: this.recentVentEvents,
       gameTimer: this.getGameTimer(),
       killStatusMap,
     };
@@ -278,7 +285,12 @@ export class GameSimulation {
     if (this.recentKills.length > 10) {
       this.recentKills = this.recentKills.slice(-10);
     }
-    
+
+    // Clear old vent events (keep only last 10)
+    if (this.recentVentEvents.length > 10) {
+      this.recentVentEvents = this.recentVentEvents.slice(-10);
+    }
+
     return serializeWorld(this.manager.getAgents(), this.tick, timestamp, options);
   }
 
@@ -329,5 +341,61 @@ export class GameSimulation {
    */
   getKillCooldown(impostorId: string): number {
     return this.manager.getKillCooldown(impostorId);
+  }
+
+  // ==================== VENT SYSTEM METHODS ====================
+
+  /**
+   * Attempt to enter a vent (impostor only)
+   */
+  attemptEnterVent(impostorId: string, ventId: string): VentEvent | null {
+    const ventEvent = this.manager.attemptEnterVent(impostorId, ventId);
+    if (ventEvent) {
+      this.recentVentEvents.push(ventEvent);
+    }
+    return ventEvent;
+  }
+
+  /**
+   * Attempt to exit a vent (impostor only)
+   */
+  attemptExitVent(impostorId: string): VentEvent | null {
+    const ventEvent = this.manager.attemptExitVent(impostorId);
+    if (ventEvent) {
+      this.recentVentEvents.push(ventEvent);
+    }
+    return ventEvent;
+  }
+
+  /**
+   * Attempt to travel between connected vents (impostor only)
+   */
+  attemptVentTravel(impostorId: string, targetVentId: string): VentEvent | null {
+    const ventEvent = this.manager.attemptVentTravel(impostorId, targetVentId);
+    if (ventEvent) {
+      this.recentVentEvents.push(ventEvent);
+    }
+    return ventEvent;
+  }
+
+  /**
+   * Get vent context for AI decision making
+   */
+  getVentContext(impostorId: string) {
+    return this.manager.getVentContext(impostorId);
+  }
+
+  /**
+   * Get recent vent events
+   */
+  getRecentVentEvents(): VentEvent[] {
+    return this.recentVentEvents;
+  }
+
+  /**
+   * Get players currently in vents
+   */
+  getPlayersInVents(): string[] {
+    return this.manager.getPlayersInVents();
   }
 }

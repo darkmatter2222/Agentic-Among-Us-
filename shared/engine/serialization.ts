@@ -2,6 +2,7 @@ import type { AIAgent } from './AIAgent.ts';
 import type { MovementState } from './MovementController.ts';
 import type { PlayerStateMachineState } from './PlayerStateMachine.ts';
 import type { DeadBody, KillEvent } from './KillSystem.ts';
+import type { VentEvent } from './VentSystem.ts';
 import type {
   AgentSnapshot,
   AgentSummarySnapshot,
@@ -121,6 +122,7 @@ export interface SerializeWorldOptions {
   llmQueueStats?: import('../types/protocol.types.ts').LLMQueueStats;
   bodies?: DeadBody[];
   recentKills?: KillEvent[];
+  recentVentEvents?: VentEvent[];
   gameTimer?: import('../types/simulation.types.ts').GameTimerSnapshot;
   killStatusMap?: Map<string, KillStatusInfo>;
 }
@@ -149,6 +151,21 @@ function serializeKillEvent(event: KillEvent): KillEventSnapshot {
   };
 }
 
+function serializeVentEvent(event: VentEvent): import('../types/simulation.types.ts').VentEventSnapshot {
+  return {
+    id: event.id,
+    playerId: event.playerId,
+    playerName: event.playerName,
+    ventId: event.ventId,
+    ventRoom: event.ventRoom,
+    eventType: event.eventType,
+    relatedVentId: event.relatedVentId,
+    ventPosition: event.ventPosition,
+    timestamp: event.timestamp,
+    witnessCount: event.witnesses.length,
+  };
+}
+
 export function serializeWorld(
   agents: AIAgent[],
   tick: number,
@@ -166,6 +183,7 @@ export function serializeWorld(
     }),
     bodies: options.bodies?.map(serializeBody) ?? [],
     recentKills: options.recentKills?.map(serializeKillEvent) ?? [],
+    recentVentEvents: options.recentVentEvents?.map(serializeVentEvent) ?? [],
     recentThoughts: options.recentThoughts ?? [],
     recentSpeech: options.recentSpeech ?? [],
     taskProgress: options.taskProgress ?? 0,

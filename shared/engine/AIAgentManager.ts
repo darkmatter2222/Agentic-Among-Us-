@@ -10,10 +10,11 @@ import { ZoneDetector } from './ZoneDetector.ts';
 import { DestinationSelector } from './DestinationSelector.ts';
 import { AIAgent, type AIAgentConfig, type AIAgentRoleConfig, type AIDecisionCallback, type AITriggerCallback } from './AIAgent.ts';
 import { COLOR_NAMES, AGENT_COLORS } from '../constants/colors.ts';
-import type { WalkableZone, LabeledZone, Task } from '../data/poly3-map.ts';
+import type { WalkableZone, LabeledZone, Task, Vent } from '../data/poly3-map.ts';
 import type { PlayerRole } from '../types/game.types.ts';
 import type { TaskAssignment, AIContext, AIDecision } from '../types/simulation.types.ts';
 import { KillSystem, type KillSystemConfig, type DeadBody, type KillEvent, type WitnessRecord } from './KillSystem.ts';
+import { VentSystem, type VentSystemConfig, type VentEvent, type VentState, type VentWitness } from './VentSystem.ts';
 
 // ========== Configuration ==========
 
@@ -26,6 +27,8 @@ export interface AgentManagerConfig {
   tasksPerAgent?: number;
   aiServerUrl?: string;
   killSystemConfig?: Partial<KillSystemConfig>;
+  vents?: Vent[];
+  ventSystemConfig?: Partial<VentSystemConfig>;
 }
 
 // ========== Task Duration Lookup ==========
@@ -66,6 +69,7 @@ export class AIAgentManager {
   private availableTasks: Task[];
   private impostorIds: Set<string>;
   private killSystem: KillSystem;
+  private ventSystem: VentSystem;
   
   // AI Decision callbacks (can be set externally for LLM integration)
   private decisionCallback: AIDecisionCallback | null = null;
@@ -95,6 +99,13 @@ export class AIAgentManager {
     
     // Initialize kill system with config or defaults
     this.killSystem = new KillSystem(config.killSystemConfig || {});
+    
+    // Initialize vent system with map vents and line-of-sight checker
+    this.ventSystem = new VentSystem(
+      config.vents || [],
+      (from, to) => this.pathfinder.hasLineOfSight(from, to),
+      config.ventSystemConfig || {}
+    );
     
     // Create agents with roles and tasks
     this.agents = [];
@@ -622,5 +633,242 @@ export class AIAgentManager {
    */
   getImpostorIds(): string[] {
     return Array.from(this.impostorIds);
+  }
+
+  // ==================== VENT SYSTEM METHODS ====================
+
+  /**
+   * Get the vent system instance
+   */
+  getVentSystem(): VentSystem {
+    return this.ventSystem;
+  }
+
+  /**
+   * Attempt to enter a vent (impostor only)
+   */
+  attemptEnterVent(impostorId: string, ventId: string): VentEvent | null {
+    // Verify impostor
+    if (!this.impostorIds.has(impostorId)) {
+      return null;
+    }
+
+    const impostor = this.agents.find(a => a.getId() === impostorId);
+    if (!impostor || impostor.getPlayerState() !== 'ALIVE') {
+      return null;
+    }
+
+    // Get witnesses (other players who can see the vent)
+    const potentialWitnesses: Array<{ id: string; position: Point; visionRadius: number }> = [];
+    for (const agent of this.agents) {
+      if (agent.getId() === impostorId || agent.getPlayerState() !== 'ALIVE') continue;
+      potentialWitnesses.push({
+        id: agent.getId(),
+        position: agent.getPosition(),
+        visionRadius: agent.getVisionRadius(),
+      });
+    }
+
+    const result = this.ventSystem.enterVent(
+      impostorId,
+      impostor.getPosition(),
+      ventId,
+      potentialWitnesses
+    );
+
+    if (result.success && result.event) {
+      // Update agent state to be in vent
+      impostor.setInVent(true, ventId);
+      
+      // Record memories for witnesses
+      for (const witness of result.witnesses || []) {
+        const witnessAgent = this.agents.find(a => a.getId() === witness.witnessId);
+        if (witnessAgent) {
+          witnessAgent.getMemory().addObservation({
+            type: 'VENT_SEEN',
+            agentId: impostorId,
+            ventId,
+            action: 'enter',
+            location: impostor.getCurrentZone(),
+          });
+        }
+      }
+      
+      return result.event;
+    }
+
+    return null;
+  }
+
+  /**
+   * Attempt to exit a vent (impostor only)
+   */
+  attemptExitVent(impostorId: string): VentEvent | null {
+    // Verify impostor
+    if (!this.impostorIds.has(impostorId)) {
+      return null;
+    }
+
+    const impostor = this.agents.find(a => a.getId() === impostorId);
+    if (!impostor) {
+      return null;
+    }
+
+    // Get the vent they're currently in
+    const ventState = this.ventSystem.getVentState(impostorId);
+    if (!ventState || !ventState.currentVentId) {
+      return null;
+    }
+
+    const vent = this.ventSystem.getVent(ventState.currentVentId);
+    if (!vent) {
+      return null;
+    }
+
+    // Get witnesses (other players who can see the vent)
+    const potentialWitnesses: Array<{ id: string; position: Point; visionRadius: number }> = [];
+    for (const agent of this.agents) {
+      if (agent.getId() === impostorId || agent.getPlayerState() !== 'ALIVE') continue;
+      potentialWitnesses.push({
+        id: agent.getId(),
+        position: agent.getPosition(),
+        visionRadius: agent.getVisionRadius(),
+      });
+    }
+
+    const result = this.ventSystem.exitVent(impostorId, potentialWitnesses);
+
+    if (result.success && result.event) {
+      // Update agent state - no longer in vent and teleport to vent position
+      impostor.setInVent(false, undefined);
+      impostor.setPosition(vent.position);
+      
+      // Record memories for witnesses
+      for (const witness of result.witnesses || []) {
+        const witnessAgent = this.agents.find(a => a.getId() === witness.witnessId);
+        if (witnessAgent) {
+          witnessAgent.getMemory().addObservation({
+            type: 'VENT_SEEN',
+            agentId: impostorId,
+            ventId: ventState.currentVentId,
+            action: 'exit',
+            location: vent.room,
+          });
+        }
+      }
+      
+      return result.event;
+    }
+
+    return null;
+  }
+
+  /**
+   * Travel between connected vents while inside (impostor only)
+   */
+  attemptVentTravel(impostorId: string, targetVentId: string): VentEvent | null {
+    // Verify impostor
+    if (!this.impostorIds.has(impostorId)) {
+      return null;
+    }
+
+    const impostor = this.agents.find(a => a.getId() === impostorId);
+    if (!impostor) {
+      return null;
+    }
+
+    const result = this.ventSystem.travelInVent(impostorId, targetVentId);
+
+    if (result.success && result.event) {
+      // Update the agent's current vent
+      impostor.setInVent(true, targetVentId);
+      return result.event;
+    }
+
+    return null;
+  }
+
+  /**
+   * Get vent context for AI decision making
+   */
+  getVentContext(impostorId: string): {
+    isInVent: boolean;
+    currentVentId: string | null;
+    connectedVents: string[];
+    nearbyVents: Array<{ ventId: string; distance: number; room: string }>;
+    ventCooldownRemaining: number;
+  } | null {
+    if (!this.impostorIds.has(impostorId)) {
+      return null;
+    }
+
+    const impostor = this.agents.find(a => a.getId() === impostorId);
+    if (!impostor) {
+      return null;
+    }
+
+    const ventState = this.ventSystem.getVentState(impostorId);
+    const nearbyVents = this.ventSystem.getVentsInRange(impostor.getPosition());
+
+    // Get connected vents if currently in a vent
+    let connectedVents: string[] = [];
+    if (ventState?.isInVent && ventState.currentVentId) {
+      const currentVent = this.ventSystem.getVent(ventState.currentVentId);
+      if (currentVent) {
+        connectedVents = currentVent.connectedVents;
+      }
+    }
+
+    return {
+      isInVent: ventState?.isInVent || false,
+      currentVentId: ventState?.currentVentId || null,
+      connectedVents,
+      nearbyVents: nearbyVents.map(v => ({
+        ventId: v.id,
+        distance: Math.sqrt(
+          Math.pow(v.position.x - impostor.getPosition().x, 2) +
+          Math.pow(v.position.y - impostor.getPosition().y, 2)
+        ),
+        room: v.room,
+      })),
+      ventCooldownRemaining: ventState?.cooldownRemaining || 0,
+    };
+  }
+
+  /**
+   * Check if an impostor can enter a specific vent
+   */
+  canEnterVent(impostorId: string, ventId: string): boolean {
+    if (!this.impostorIds.has(impostorId)) {
+      return false;
+    }
+
+    const impostor = this.agents.find(a => a.getId() === impostorId);
+    if (!impostor || impostor.getPlayerState() !== 'ALIVE') {
+      return false;
+    }
+
+    return this.ventSystem.canEnterVent(impostorId, impostor.getPosition(), ventId).canEnter;
+  }
+
+  /**
+   * Check if an impostor can exit their current vent
+   */
+  canExitVent(impostorId: string): boolean {
+    return this.ventSystem.canExitVent(impostorId).canExit;
+  }
+
+  /**
+   * Get recent vent events for UI/state
+   */
+  getRecentVentEvents(): VentEvent[] {
+    return this.ventSystem.getRecentEvents();
+  }
+
+  /**
+   * Get list of player IDs currently in vents
+   */
+  getPlayersInVents(): string[] {
+    return this.ventSystem.getPlayersInVents();
   }
 }

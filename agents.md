@@ -445,7 +445,7 @@
 
 ### Sound Effects
 - **Kill Sound**: Sharp stab/slash
-- **Vent Sound**: Metallic clang (proximity-based)
+- **Vent Sound**: Metallic clang (proximity-based) ✅ Implemented - vent-in and vent-out sounds
 - **Task Completion**: Soft chime
 - **Sabotage Alarm**: Different for each type
 - **Meeting Horn**: Loud emergency sound
@@ -552,6 +552,7 @@ Map Settings:
 | **Social Actions** | Buddy up, follow, avoid, confront, spread rumors, defend self |
 | **AI Decision Making** | LLM-powered with 10 goal types (see below) |
 | **Kill Sound Effects** | Audio plays on new body detection with browser autoplay unlock |
+| **Vent Sound Effects** | Audio plays on vent enter/exit events (vent-in and vent-out sounds) |
 
 ### AI Decision Types (Active)
 
@@ -592,6 +593,11 @@ heard_speech            - Heard another agent speak
 passed_agent_closely    - Brief proximity encounter
 task_in_action_radius   - Task location nearby
 target_entered_kill_range - IMPOSTOR ONLY: Crewmate entered kill range, forces immediate decision
+near_vent              - IMPOSTOR ONLY: Near a vent, might consider using it
+entered_vent           - IMPOSTOR ONLY: Just entered a vent
+exited_vent            - IMPOSTOR ONLY: Just exited a vent  
+witnessed_vent_activity - Crewmate/Impostor: Saw someone enter/exit a vent
+alone_with_vent        - IMPOSTOR ONLY: Alone in a room with a vent
 ```
 
 ### ❌ Not Yet Implemented
@@ -609,7 +615,7 @@ target_entered_kill_range - IMPOSTOR ONLY: Crewmate entered kill range, forces i
 | **Sabotage (Lights)** | ❌ | Vision reduction not implemented |
 | **Sabotage (Comms)** | ❌ | Task hiding not implemented |
 | **Door System** | ❌ | Doors don't close or block movement |
-| **Vent System** | ❌ | Impostors cannot use vents |
+| **Vent System** | 🔶 Partial | VentSystem class implemented with entry/exit/travel mechanics, witness detection, cooldowns. Integration with AI agents pending |
 | **Win Conditions** | ❌ | Game runs indefinitely |
 | **Ghost Mode** | ❌ | Dead players cannot continue |
 | **Security Cameras** | ❌ | No camera monitoring |

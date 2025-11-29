@@ -22,6 +22,7 @@ export interface Vent {
   id: string;
   position: Point;
   connectedTo: string[];
+  room?: string; // Optional: room the vent is in (can be derived from position if not present)
 }
 
 export interface Door {

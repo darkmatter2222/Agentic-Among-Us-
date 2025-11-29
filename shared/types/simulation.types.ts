@@ -24,7 +24,12 @@ export type ThoughtTrigger =
   | 'heard_speech'
   | 'passed_agent_closely'
   | 'task_in_action_radius'
-  | 'target_entered_kill_range';  // Impostor-only: crewmate just entered kill range
+  | 'target_entered_kill_range'  // Impostor-only: crewmate just entered kill range
+  | 'near_vent'                  // Impostor-only: near a vent, might consider using it
+  | 'entered_vent'               // Impostor-only: just entered a vent
+  | 'exited_vent'                // Impostor-only: just exited a vent
+  | 'witnessed_vent_activity'    // Crewmate/Impostor: saw someone enter/exit a vent
+  | 'alone_with_vent';           // Impostor-only: alone in a room with a vent
 
 export interface SpeechEvent {
   id: string;
@@ -114,6 +119,14 @@ export interface AgentSnapshot {
     hasTargetInRange: boolean;  // target in kill range (regardless of cooldown)
     killCount: number;          // total kills this game
   };
+
+  // Vent status (only for impostors, for UI display)
+  ventStatus?: {
+    isInVent: boolean;
+    currentVentId: string | null;
+    ventCooldownRemaining: number; // seconds remaining on cooldown
+    ventAnimationState?: 'entering' | 'exiting' | null;
+  };
 }
 
 export interface AgentSummarySnapshot {
@@ -148,6 +161,23 @@ export interface KillEventSnapshot {
   witnessCount: number;
 }
 
+// ========== Vent Event Snapshot (for UI notification) ==========
+
+export interface VentEventSnapshot {
+  id: string;
+  playerId: string;
+  playerName: string;
+  ventId: string;
+  ventRoom: string;
+  eventType: 'ENTER' | 'EXIT' | 'TRAVEL';
+  /** For EXIT - where they came from. For TRAVEL - destination */
+  relatedVentId?: string;
+  ventPosition: Point;
+  timestamp: number;
+  /** Number of witnesses who saw this event */
+  witnessCount: number;
+}
+
 // ========== World Snapshot ==========
 
 // ========== Game Timer ==========
@@ -167,6 +197,8 @@ export interface WorldSnapshot {
   agents: AgentSnapshot[];
   bodies?: BodySnapshot[]; // Dead bodies on the map
   recentKills?: KillEventSnapshot[]; // Recent kill events for UI
+  recentVentEvents?: VentEventSnapshot[]; // Recent vent events for UI
+  playersInVents?: string[]; // Player IDs currently in vents
   recentThoughts?: ThoughtEvent[];
   recentSpeech?: SpeechEvent[];
   taskProgress?: number; // 0-100 percentage of total tasks completed
@@ -191,7 +223,11 @@ export type AIGoalType =
   | 'HUNT'           // Actively seek isolated targets
   | 'SELF_REPORT'    // Report own kill
   | 'FLEE_BODY'      // Get away from body
-  | 'CREATE_ALIBI';  // Position near witnesses/tasks after kill
+  | 'CREATE_ALIBI'   // Position near witnesses/tasks after kill
+  // Vent actions (Impostor-only)
+  | 'ENTER_VENT'     // Go to and enter nearest accessible vent
+  | 'EXIT_VENT'      // Exit current vent at chosen destination
+  | 'VENT_TO';       // Navigate through vent network to specific destination
 
 export interface AIDecision {
   goalType: AIGoalType;
@@ -207,6 +243,8 @@ export interface AIDecision {
   defense?: string; // For DEFEND_SELF - alibi/defense statement
   // Kill context (impostor only)
   killTarget?: string; // Agent ID to kill
+  // Vent context (impostor only)
+  targetVentId?: string; // Vent ID for ENTER_VENT, EXIT_VENT, VENT_TO
 }
 
 export interface AIContext {
@@ -273,6 +311,31 @@ export interface AIContext {
       distance: number;
       zone: string | null;
     }>;
+  };
+
+  // ===== Vent context (only provided when role is IMPOSTOR) =====
+  ventContext?: {
+    isInVent: boolean;
+    currentVentId: string | null;
+    /** Connected vents if currently in a vent */
+    connectedVents: Array<{
+      id: string;
+      room: string;
+      /** Risk of being seen when exiting (0-100) */
+      witnessRisk: number;
+    }>;
+    /** Nearby vents if not in a vent */
+    nearbyVents: Array<{
+      id: string;
+      room: string;
+      distance: number;
+      /** Can enter (within interaction range) */
+      canEnter: boolean;
+      /** Risk of being seen when entering (0-100) */
+      witnessRisk: number;
+    }>;
+    /** Cooldown remaining before can use vent again */
+    ventCooldownRemaining: number;
   };
   
   // ===== Body/witness context (for both roles) =====

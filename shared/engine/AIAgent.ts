@@ -138,6 +138,10 @@ export class AIAgent {
 
   // Kill request callback (set by manager) - returns true if kill succeeded
   private killRequestCallback: ((killerId: string, targetId: string) => boolean) | null = null;
+  
+  // Vent state
+  private _isInVent: boolean = false;
+  private _currentVentId: string | undefined = undefined;
 
   // Conversation state - tracks pending replies
   private pendingConversationReply: {
@@ -1975,5 +1979,36 @@ export class AIAgent {
   
   getBuddyId(): string | null {
     return this.behaviorState.buddyId;
+  }
+
+  // ==================== VENT METHODS ====================
+
+  /**
+   * Set the agent's vent state
+   */
+  setInVent(isInVent: boolean, ventId?: string): void {
+    this._isInVent = isInVent;
+    this._currentVentId = ventId;
+  }
+
+  /**
+   * Check if the agent is currently in a vent
+   */
+  isInVent(): boolean {
+    return this._isInVent;
+  }
+
+  /**
+   * Get the current vent ID if the agent is in a vent
+   */
+  getCurrentVentId(): string | undefined {
+    return this._currentVentId;
+  }
+
+  /**
+   * Set the agent's position (used when exiting vents)
+   */
+  setPosition(position: Point): void {
+    this.movementController.setPosition(position);
   }
 }

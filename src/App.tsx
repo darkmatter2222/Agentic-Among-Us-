@@ -54,6 +54,11 @@ function App() {
   const lastKnownBodiesRef = useRef<Set<string>>(new Set());
   const audioUnlockedRef = useRef<boolean>(false);
 
+  // Vent audio - preload for instant playback
+  const ventInAudioRef = useRef<HTMLAudioElement | null>(null);
+  const ventOutAudioRef = useRef<HTMLAudioElement | null>(null);
+  const seenVentEventIdsRef = useRef<Set<string>>(new Set());
+
   // Preload kill sound on mount
   useEffect(() => {
     const audio = new Audio('/audio/among-us-kill.mp3');
@@ -75,7 +80,7 @@ function App() {
     // Unlock audio on first user interaction (required by browser autoplay policies)
     const unlockAudio = () => {
       if (audioUnlockedRef.current) return;
-      
+
       // Play and immediately pause to unlock audio context
       const unlockPromise = audio.play();
       if (unlockPromise) {
@@ -106,7 +111,47 @@ function App() {
     };
   }, []);
 
-  // ResizeObserver to track viewport size changes and resize PIXI renderer
+  // Preload vent sounds on mount
+  useEffect(() => {
+    // Vent-in sound (entering vent)
+    const ventInAudio = new Audio('/audio/among-us-vent-sound-made-with-Voicemod.mp3');
+    ventInAudio.preload = 'auto';
+    ventInAudio.volume = 0.4;
+    ventInAudioRef.current = ventInAudio;
+
+    ventInAudio.addEventListener('canplaythrough', () => {
+      console.log('[AUDIO] Vent-in sound loaded and ready to play');
+    });
+    ventInAudio.addEventListener('error', (e) => {
+      console.error('[AUDIO] Error loading vent-in sound:', e);
+    });
+    ventInAudio.load();
+
+    // Vent-out sound (exiting vent)
+    const ventOutAudio = new Audio('/audio/among-us-vent-out-made-with-Voicemod.mp3');
+    ventOutAudio.preload = 'auto';
+    ventOutAudio.volume = 0.4;
+    ventOutAudioRef.current = ventOutAudio;
+
+    ventOutAudio.addEventListener('canplaythrough', () => {
+      console.log('[AUDIO] Vent-out sound loaded and ready to play');
+    });
+    ventOutAudio.addEventListener('error', (e) => {
+      console.error('[AUDIO] Error loading vent-out sound:', e);
+    });
+    ventOutAudio.load();
+
+    return () => {
+      if (ventInAudioRef.current) {
+        ventInAudioRef.current.pause();
+        ventInAudioRef.current = null;
+      }
+      if (ventOutAudioRef.current) {
+        ventOutAudioRef.current.pause();
+        ventOutAudioRef.current = null;
+      }
+    };
+  }, []);  // ResizeObserver to track viewport size changes and resize PIXI renderer
   useEffect(() => {
     const mapWrapper = mapWrapperRef.current;
     const gameRenderer = gameRendererRef.current;
@@ -284,6 +329,42 @@ function App() {
         }
         
         lastKnownBodiesRef.current = currentBodyIds;
+      }
+
+      // Detect new vent events and play sounds
+      if (snapshot.recentVentEvents && snapshot.recentVentEvents.length > 0) {
+        for (const ventEvent of snapshot.recentVentEvents) {
+          if (!seenVentEventIdsRef.current.has(ventEvent.id)) {
+            // New vent event detected
+            seenVentEventIdsRef.current.add(ventEvent.id);
+            
+            if (ventEvent.eventType === 'ENTER') {
+              console.log(`[AUDIO] Vent ENTER detected: ${ventEvent.playerName} at ${ventEvent.ventId}`);
+              if (ventInAudioRef.current) {
+                ventInAudioRef.current.currentTime = 0;
+                ventInAudioRef.current.play()
+                  .then(() => console.log('[AUDIO] Vent-in sound playing'))
+                  .catch((err) => console.warn('[AUDIO] Failed to play vent-in sound:', err.message));
+              }
+              break; // Only play one sound per tick
+            } else if (ventEvent.eventType === 'EXIT') {
+              console.log(`[AUDIO] Vent EXIT detected: ${ventEvent.playerName} at ${ventEvent.ventId}`);
+              if (ventOutAudioRef.current) {
+                ventOutAudioRef.current.currentTime = 0;
+                ventOutAudioRef.current.play()
+                  .then(() => console.log('[AUDIO] Vent-out sound playing'))
+                  .catch((err) => console.warn('[AUDIO] Failed to play vent-out sound:', err.message));
+              }
+              break; // Only play one sound per tick
+            }
+          }
+        }
+
+        // Cleanup old seen vent event IDs to prevent memory leak (keep last 100)
+        if (seenVentEventIdsRef.current.size > 100) {
+          const idsArray = Array.from(seenVentEventIdsRef.current);
+          seenVentEventIdsRef.current = new Set(idsArray.slice(-50));
+        }
       }
 
       const now = performance.now();
