@@ -12,6 +12,7 @@ export interface AgentSummary {
   currentZone: string | null;
   locationState: string;
   goal: string | null;
+  playerState?: 'ALIVE' | 'DEAD';
   // Extended data
   role?: PlayerRole;
   currentThought?: string | null;
@@ -672,7 +673,7 @@ export function AgentInfoPanel({ agents, width = 380, taskProgress = 0, selected
                       >
                         <td className="agent-row__id" style={{ width: columnWidths[0] }}>
                           <span className="agent-color-dot" style={{ backgroundColor: hexColor(agent.color) }} />
-                          <span className={`agent-num ${agent.role === 'IMPOSTOR' ? 'impostor-name' : 'crewmate-name'}`}>{colorName}</span>
+                          <span className={`agent-num ${agent.role === 'IMPOSTOR' ? 'impostor-name' : 'crewmate-name'}${agent.playerState === 'DEAD' ? ' agent-dead' : ''}`}>{colorName}</span>
                           {agent.role === 'IMPOSTOR' && <KillStatusIcon killStatus={agent.killStatus} />}
                         </td>
                         <td className="agent-row__zone" style={{ width: columnWidths[1] }} title={agent.currentZone ?? 'Unknown'}>

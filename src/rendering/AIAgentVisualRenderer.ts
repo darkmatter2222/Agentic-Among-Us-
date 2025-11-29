@@ -19,7 +19,10 @@ export interface AgentVisuals {
   leftLeg: PIXI.Graphics;          // Left leg (redrawn each frame for animation)
   rightLeg: PIXI.Graphics;         // Right leg (redrawn each frame for animation)
   shadow: PIXI.Graphics;           // Shadow under character
+  deadBodyGraphics: PIXI.Graphics; // Dead body when killed
+  bloodPool: PIXI.Graphics;        // Blood pool under dead body
   darknessOverlay: PIXI.Graphics;  // Darkness overlay for lights-off effect
+  impostorIndicator: PIXI.Graphics; // Red outline + glow for impostors (admin view only)
   bodyColor: number;               // Store color for leg redrawing
   visionBox: VisionBoxRenderer;
   actionRadius: ActionRadiusRenderer;
@@ -39,6 +42,8 @@ interface AgentVisualState {
   pathDirty: boolean;
   lastSpeechTime: number; // Track when we last showed a speech bubble
   isThinking: boolean; // Track if agent is waiting for LLM response
+  isDead: boolean; // Track if agent is dead
+  isImpostor: boolean; // Track if agent is an impostor (for admin indicator)
   // Animation state
   walkTime: number;
   isWalking: boolean;
@@ -110,6 +115,12 @@ export class AIAgentVisualRenderer {
   syncAgents(snapshots: AgentSnapshot[], recentSpeech?: SpeechEvent[]): void {
     const activeIds = new Set<string>();
 
+    // Log any dead agents received
+    const deadSnapshots = snapshots.filter(s => s.playerState === 'DEAD');
+    if (deadSnapshots.length > 0) {
+      console.log(`[RENDER] Received ${deadSnapshots.length} dead agent(s):`, deadSnapshots.map(s => s.name));
+    }
+
     for (const snapshot of snapshots) {
       activeIds.add(snapshot.id);
       const state = this.ensureAgentVisual(snapshot);
@@ -119,6 +130,21 @@ export class AIAgentVisualRenderer {
       state.targetPath = snapshot.movement.path.map(point => ({ ...point }));
       state.pathDirty = true;
       state.isThinking = snapshot.isThinking ?? false;
+      
+      // Track dead state
+      const wasDead = state.isDead;
+      state.isDead = snapshot.playerState === 'DEAD';
+
+      // Debug logging
+      if (snapshot.playerState === 'DEAD') {
+        console.log(`[RENDER] Agent ${snapshot.id} is DEAD, wasDead=${wasDead}, isDead=${state.isDead}`);
+      }
+
+      // If just died, switch to dead body graphics
+      if (state.isDead && !wasDead) {
+        console.log(`[RENDER] Agent ${snapshot.id} just died! Showing dead body.`);
+        this.showDeadBody(state);
+      }
 
       // Track task progress
       const isDoingTask = snapshot.activityState === 'DOING_TASK';
@@ -200,6 +226,15 @@ export class AIAgentVisualRenderer {
 
     for (const [agentId, state] of this.agentVisuals) {
       const { visuals, targetPosition, targetFacing } = state;
+      
+      // Skip animation for dead agents - they don't move
+      if (state.isDead) {
+        // Just update position (no animation)
+        visuals.spriteContainer.x = targetPosition.x;
+        visuals.spriteContainer.y = targetPosition.y;
+        agentPositions.set(agentId, { x: visuals.spriteContainer.x, y: visuals.spriteContainer.y });
+        continue;
+      }
 
       // Calculate movement for flipping and walking detection
       const dx = targetPosition.x - visuals.spriteContainer.x;
@@ -827,6 +862,14 @@ export class AIAgentVisualRenderer {
     darknessOverlay.endFill();
     spriteContainer.addChild(darknessOverlay);
 
+    // Impostor indicator - red outline with glow for admin view (drawn on top of body)
+    const impostorIndicator = new PIXI.Graphics();
+    impostorIndicator.zIndex = 21; // Above darkness overlay, visible on top
+    impostorIndicator.visible = false; // Will be shown only for impostors
+    // Draw the impostor indicator (red glow + outline around body)
+    this.drawImpostorIndicator(impostorIndicator, sizeMultiplier, bodyWidth, bodyHeight, bodyX, bodyY, bodyRadius);
+    spriteContainer.addChild(impostorIndicator);
+
     const visionBox = new VisionBoxRenderer({
       size: snapshot.visionRadius * 1.4,
       color: snapshot.color,
@@ -879,6 +922,17 @@ export class AIAgentVisualRenderer {
     taskCheckmark.visible = false;
     taskCheckmark.alpha = 0;
     spriteContainer.addChild(taskCheckmark);
+    
+    // Dead body graphics (hidden until player dies)
+    const bloodPool = new PIXI.Graphics();
+    bloodPool.zIndex = -1; // Under everything
+    bloodPool.visible = false;
+    spriteContainer.addChild(bloodPool);
+    
+    const deadBodyGraphics = new PIXI.Graphics();
+    deadBodyGraphics.zIndex = 10; // Same level as body
+    deadBodyGraphics.visible = false;
+    spriteContainer.addChild(deadBodyGraphics);
 
     this.container.addChild(visionBox.getContainer());
     this.container.addChild(pathLine.getContainer());
@@ -886,7 +940,7 @@ export class AIAgentVisualRenderer {
     this.container.addChild(spriteContainer);
 
     const state: AgentVisualState = {
-      visuals: { spriteContainer, bodyGraphics, leftLeg, rightLeg, shadow, darknessOverlay, bodyColor, visionBox, actionRadius, pathLine, taskProgressBar, taskProgressBackground, taskCheckmark },
+      visuals: { spriteContainer, bodyGraphics, leftLeg, rightLeg, shadow, deadBodyGraphics, bloodPool, darknessOverlay, impostorIndicator, bodyColor, visionBox, actionRadius, pathLine, taskProgressBar, taskProgressBackground, taskCheckmark },
       targetPosition: { ...snapshot.movement.position },
       previousPosition: { ...snapshot.movement.position },
       targetFacing: snapshot.movement.facing,
@@ -894,16 +948,265 @@ export class AIAgentVisualRenderer {
       pathDirty: true,
       lastSpeechTime: 0,
       isThinking: snapshot.isThinking ?? false,
+      isDead: snapshot.playerState === 'DEAD',
+      isImpostor: snapshot.role === 'IMPOSTOR',
       walkTime: 0,
       isWalking: false,
       taskProgress: 0,
       showTaskProgress: false,
       taskCompleteAnimation: 0,
-    };
-
-    spriteContainer.position.set(snapshot.movement.position.x, snapshot.movement.position.y);
+    };    spriteContainer.position.set(snapshot.movement.position.x, snapshot.movement.position.y);
 
     this.agentVisuals.set(snapshot.id, state);
-    return state;
+
+    // Show impostor indicator for impostors (admin view only)
+    if (state.isImpostor) {
+      state.visuals.impostorIndicator.visible = true;
+    }
+
+    // If agent is already dead when we create their visual, show dead body immediately
+    if (state.isDead) {
+      console.log(`[RENDER] Agent ${snapshot.id} created as already dead - showing dead body immediately`);
+      this.showDeadBody(state);
+    }    return state;
+  }
+  
+  /**
+   * Show dead body graphics and hide live body
+   * Based on Among Us SVG reference - body split in half with cartoon bone
+   */
+  private showDeadBody(state: AgentVisualState): void {
+    console.log(`[RENDER] showDeadBody() called - hiding live body, showing dead body graphics`);
+    const visuals = state.visuals;
+    const color = visuals.bodyColor;
+    const sizeMultiplier = AIAgentVisualRenderer.SIZE_MULTIPLIER;
+    const size = 14 * sizeMultiplier;
+
+    console.log(`[RENDER] showDeadBody - bodyGraphics.visible was: ${visuals.bodyGraphics.visible}, deadBodyGraphics.visible was: ${visuals.deadBodyGraphics.visible}`);
+
+    // Hide live body parts
+    visuals.bodyGraphics.visible = false;
+    visuals.leftLeg.visible = false;
+    visuals.rightLeg.visible = false;
+    visuals.shadow.visible = false;
+    visuals.taskProgressBar.visible = false;
+    visuals.taskProgressBackground.visible = false;
+    visuals.taskCheckmark.visible = false;
+    visuals.impostorIndicator.visible = false; // Hide impostor indicator when dead
+
+    // Generate color variations like the SVG (darker shades for depth)
+    const darkerColor = this.darkenColor(color, 0.25);   // #1F8C9C equivalent
+    const darkestColor = this.darkenColor(color, 0.45);  // #185056 equivalent
+    const visorColor = this.darkenColor(color, 0.5);
+
+    // Draw blood pool
+    visuals.bloodPool.clear();
+    visuals.bloodPool.visible = true;
+    // Main blood pool (dark red, spread out under body)
+    visuals.bloodPool.beginFill(0x8B0000, 0.85);
+    visuals.bloodPool.drawEllipse(size * 0.2, size * 0.4, size * 2.2, size * 1.3);
+    visuals.bloodPool.endFill();
+    // Blood splatter details
+    visuals.bloodPool.beginFill(0x8B0000, 0.7);
+    visuals.bloodPool.drawCircle(size * 1.5, size * 0.3, size * 0.35);
+    visuals.bloodPool.endFill();
+    visuals.bloodPool.beginFill(0x8B0000, 0.6);
+    visuals.bloodPool.drawCircle(-size * 0.9, size * 0.7, size * 0.3);
+    visuals.bloodPool.endFill();
+
+    // Draw dead body
+    visuals.deadBodyGraphics.clear();
+    visuals.deadBodyGraphics.visible = true;
+
+    // ===== UPPER HALF (LEFT SIDE) - Body torso with backpack and visor =====
+    // Based on SVG: main body is a rounded bean shape lying horizontally
+
+    // Shadow/depth layer for upper half (darkest color underneath)
+    visuals.deadBodyGraphics.beginFill(darkestColor);
+    visuals.deadBodyGraphics.drawEllipse(-size * 0.55, size * 0.05, size * 0.72, size * 0.58);
+    visuals.deadBodyGraphics.endFill();
+
+    // Main upper body shape (primary color)
+    visuals.deadBodyGraphics.beginFill(color);
+    visuals.deadBodyGraphics.drawEllipse(-size * 0.5, -size * 0.05, size * 0.7, size * 0.52);
+    visuals.deadBodyGraphics.endFill();
+
+    // Backpack (darker rounded hump on the LEFT side of upper body)
+    // SVG shows it as a darker protrusion on the back
+    visuals.deadBodyGraphics.beginFill(darkerColor);
+    visuals.deadBodyGraphics.drawEllipse(-size * 1.1, -size * 0.1, size * 0.32, size * 0.45);
+    visuals.deadBodyGraphics.endFill();
+    // Backpack outline
+    visuals.deadBodyGraphics.lineStyle(1.5, 0x000000, 0.25);
+    visuals.deadBodyGraphics.drawEllipse(-size * 1.1, -size * 0.1, size * 0.32, size * 0.45);
+    visuals.deadBodyGraphics.lineStyle(0);
+
+    // Cut/exposed interior on upper half (where it was sliced - darker ellipse on right edge)
+    visuals.deadBodyGraphics.beginFill(darkerColor);
+    visuals.deadBodyGraphics.drawEllipse(size * 0.1, 0, size * 0.18, size * 0.38);
+    visuals.deadBodyGraphics.endFill();
+
+    // Visor on upper half (dark curved shape facing up/right)
+    visuals.deadBodyGraphics.beginFill(visorColor);
+    visuals.deadBodyGraphics.drawEllipse(-size * 0.35, -size * 0.28, size * 0.38, size * 0.22);
+    visuals.deadBodyGraphics.endFill();
+    // Visor highlight/reflection
+    visuals.deadBodyGraphics.beginFill(0xFFFFFF, 0.3);
+    visuals.deadBodyGraphics.drawEllipse(-size * 0.2, -size * 0.38, size * 0.12, size * 0.06);
+    visuals.deadBodyGraphics.endFill();
+
+    // Upper half body outline
+    visuals.deadBodyGraphics.lineStyle(1.5, 0x000000, 0.35);
+    visuals.deadBodyGraphics.drawEllipse(-size * 0.5, -size * 0.05, size * 0.7, size * 0.52);
+    visuals.deadBodyGraphics.lineStyle(0);
+
+    // ===== LOWER HALF (RIGHT SIDE) - Bottom portion fallen away =====
+    // Based on SVG: smaller rounded shape separated to the right
+
+    // Shadow layer for lower half
+    visuals.deadBodyGraphics.beginFill(darkestColor);
+    visuals.deadBodyGraphics.drawEllipse(size * 0.85, size * 0.25, size * 0.52, size * 0.42);
+    visuals.deadBodyGraphics.endFill();
+
+    // Main lower body portion
+    visuals.deadBodyGraphics.beginFill(color);
+    visuals.deadBodyGraphics.drawEllipse(size * 0.8, size * 0.15, size * 0.48, size * 0.38);
+    visuals.deadBodyGraphics.endFill();
+
+    // Exposed interior on lower half (darker, where cut - left edge)
+    visuals.deadBodyGraphics.beginFill(darkerColor);
+    visuals.deadBodyGraphics.drawEllipse(size * 0.42, size * 0.12, size * 0.18, size * 0.32);
+    visuals.deadBodyGraphics.endFill();
+
+    // Lower half outline
+    visuals.deadBodyGraphics.lineStyle(1.5, 0x000000, 0.35);
+    visuals.deadBodyGraphics.drawEllipse(size * 0.8, size * 0.15, size * 0.48, size * 0.38);
+    visuals.deadBodyGraphics.lineStyle(0);
+
+    // ===== BONE (Classic cartoon dog bone shape - from SVG) =====
+    // SVG shows bone positioned between halves with rounded ends
+    const boneWhite = 0xFCFBFC;    // Main bone color from SVG
+    const boneGray = 0xC3C3C3;     // Shading color from SVG
+    const boneDarkGray = 0xBDBDBD; // Darker shading
+
+    // Bone is positioned diagonally, emerging from the gap between body halves
+    // Start point (lower-left, partially hidden) to end point (upper-right, visible)
+    const boneStartX = -size * 0.05;
+    const boneStartY = size * 0.45;
+    const boneEndX = size * 0.4;
+    const boneEndY = -size * 0.05;
+    const boneThickness = size * 0.14;
+
+    // Calculate perpendicular offset for bone shaft thickness
+    const dx = boneEndX - boneStartX;
+    const dy = boneEndY - boneStartY;
+    const len = Math.sqrt(dx * dx + dy * dy);
+    const perpX = (-dy / len) * boneThickness / 2;
+    const perpY = (dx / len) * boneThickness / 2;
+
+    // Draw bone shaft (angled rectangle)
+    visuals.deadBodyGraphics.beginFill(boneWhite);
+    visuals.deadBodyGraphics.drawPolygon([
+      boneStartX + perpX, boneStartY + perpY,
+      boneEndX + perpX, boneEndY + perpY,
+      boneEndX - perpX, boneEndY - perpY,
+      boneStartX - perpX, boneStartY - perpY,
+    ]);
+    visuals.deadBodyGraphics.endFill();
+
+    // Bottom-left bone knob (double-ball cartoon bone end) - partially hidden
+    visuals.deadBodyGraphics.beginFill(boneWhite);
+    visuals.deadBodyGraphics.drawCircle(boneStartX - size * 0.06, boneStartY + size * 0.08, size * 0.11);
+    visuals.deadBodyGraphics.drawCircle(boneStartX + size * 0.06, boneStartY + size * 0.1, size * 0.1);
+    visuals.deadBodyGraphics.endFill();
+    // Shading on bottom knob
+    visuals.deadBodyGraphics.beginFill(boneGray);
+    visuals.deadBodyGraphics.drawCircle(boneStartX - size * 0.04, boneStartY + size * 0.12, size * 0.06);
+    visuals.deadBodyGraphics.endFill();
+
+    // Top-right bone knob (double-ball cartoon bone end) - fully visible
+    visuals.deadBodyGraphics.beginFill(boneWhite);
+    visuals.deadBodyGraphics.drawCircle(boneEndX - size * 0.08, boneEndY - size * 0.08, size * 0.13);
+    visuals.deadBodyGraphics.drawCircle(boneEndX + size * 0.08, boneEndY - size * 0.06, size * 0.12);
+    visuals.deadBodyGraphics.endFill();
+    // Shading on top knob
+    visuals.deadBodyGraphics.beginFill(boneGray);
+    visuals.deadBodyGraphics.drawCircle(boneEndX + size * 0.06, boneEndY - size * 0.1, size * 0.07);
+    visuals.deadBodyGraphics.endFill();
+    visuals.deadBodyGraphics.beginFill(boneDarkGray);
+    visuals.deadBodyGraphics.drawCircle(boneEndX - size * 0.1, boneEndY - size * 0.12, size * 0.05);
+    visuals.deadBodyGraphics.endFill();
+
+    // Subtle bone outline for definition
+    visuals.deadBodyGraphics.lineStyle(1, 0xD0D0D0, 0.4);
+    visuals.deadBodyGraphics.drawCircle(boneEndX - size * 0.08, boneEndY - size * 0.08, size * 0.13);
+    visuals.deadBodyGraphics.drawCircle(boneEndX + size * 0.08, boneEndY - size * 0.06, size * 0.12);
+    visuals.deadBodyGraphics.lineStyle(0);
+
+    console.log(`[RENDER] showDeadBody - COMPLETE. bodyGraphics.visible: ${visuals.bodyGraphics.visible}, deadBodyGraphics.visible: ${visuals.deadBodyGraphics.visible}, bloodPool.visible: ${visuals.bloodPool.visible}`);
+  }/**
+   * Darken a color by a factor (0-1)
+   */
+  private drawImpostorIndicator(
+    graphics: PIXI.Graphics,
+    sizeMultiplier: number,
+    bodyWidth: number,
+    bodyHeight: number,
+    bodyX: number,
+    bodyY: number,
+    bodyRadius: number
+  ): void {
+    // The body has a black outline of ~1-2px, we draw our red outline OUTSIDE that
+    // Multiple layers for a soft glow effect emanating outward
+    
+    // Outermost glow layer - very soft and diffuse
+    graphics.lineStyle(5, 0xFF0000, 0.12);
+    graphics.drawRoundedRect(
+      bodyX - 6 * sizeMultiplier,
+      bodyY - 6 * sizeMultiplier,
+      bodyWidth + 12 * sizeMultiplier,
+      bodyHeight + 12 * sizeMultiplier,
+      bodyRadius + 6
+    );
+    
+    // Middle glow layer - slightly brighter
+    graphics.lineStyle(4, 0xFF0000, 0.18);
+    graphics.drawRoundedRect(
+      bodyX - 4 * sizeMultiplier,
+      bodyY - 4 * sizeMultiplier,
+      bodyWidth + 8 * sizeMultiplier,
+      bodyHeight + 8 * sizeMultiplier,
+      bodyRadius + 4
+    );
+    
+    // Inner glow layer - more visible
+    graphics.lineStyle(3, 0xFF0000, 0.3);
+    graphics.drawRoundedRect(
+      bodyX - 2.5 * sizeMultiplier,
+      bodyY - 2.5 * sizeMultiplier,
+      bodyWidth + 5 * sizeMultiplier,
+      bodyHeight + 5 * sizeMultiplier,
+      bodyRadius + 2.5
+    );
+    
+    // Main red border - solid line just outside the black body outline
+    graphics.lineStyle(2, 0xFF0000, 0.8);
+    graphics.drawRoundedRect(
+      bodyX - 1.5 * sizeMultiplier,
+      bodyY - 1.5 * sizeMultiplier,
+      bodyWidth + 3 * sizeMultiplier,
+      bodyHeight + 3 * sizeMultiplier,
+      bodyRadius + 1.5
+    );
+  }
+
+  /**
+   * Darken a color by a factor (0-1)
+   */
+  private darkenColor(color: number, factor: number): number {
+    const r = Math.floor(((color >> 16) & 0xFF) * (1 - factor));
+    const g = Math.floor(((color >> 8) & 0xFF) * (1 - factor));
+    const b = Math.floor((color & 0xFF) * (1 - factor));
+    return (r << 16) | (g << 8) | b;
   }
 }

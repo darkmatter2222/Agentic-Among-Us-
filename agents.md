@@ -539,6 +539,7 @@ idle_random             - Periodic thoughts while idle
 heard_speech            - Heard another agent speak
 passed_agent_closely    - Brief proximity encounter
 task_in_action_radius   - Task location nearby
+target_entered_kill_range - IMPOSTOR ONLY: Crewmate entered kill range, forces immediate decision
 ```
 
 ### ❌ Not Yet Implemented

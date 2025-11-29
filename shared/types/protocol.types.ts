@@ -131,6 +131,8 @@ export interface AgentAIStateDelta {
   assignedTasks?: AgentSnapshot['assignedTasks'];
   currentTaskIndex?: number | null;
   tasksCompleted?: number;
+  role?: 'CREWMATE' | 'IMPOSTOR';
+  playerState?: 'ALIVE' | 'DEAD' | 'GHOST';
 }
 
 export interface HeartbeatPayload {

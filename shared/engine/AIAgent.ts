@@ -73,7 +73,8 @@ export interface AIAgentState {
   // Perception
   visibleAgentIds: string[];
   visibleAgentNames: string[];
-  agentsInSpeechRange: string[];  // Internal state
+  agentsInSpeechRange: string[];
+  agentsInKillRange: string[];  // Impostors only: IDs of agents within kill distance  // Internal state
   currentThought: string | null;
   lastThoughtTime: number;
   recentSpeech: string | null;
@@ -196,6 +197,7 @@ export class AIAgent {
       visibleAgentIds: [],
       visibleAgentNames: [],
       agentsInSpeechRange: [],
+      agentsInKillRange: [],
       currentThought: null,
       lastThoughtTime: 0,
       recentSpeech: null,
@@ -428,6 +430,44 @@ export class AIAgent {
     this.aiState.visibleAgentIds = visibleIds;
     this.aiState.visibleAgentNames = visibleNames;
     this.aiState.agentsInSpeechRange = speechRangeNames;
+
+    // IMPOSTOR ONLY: Track agents in kill range and trigger immediate decision
+    if (this.aiState.role === 'IMPOSTOR') {
+      const KILL_RANGE = 1.8; // Must match KillSystem
+      const currentInKillRange: string[] = [];
+      
+      for (const other of this.otherAgents) {
+        // Only track living crewmates (not other impostors, not dead agents)
+        if (other.getRole() === 'IMPOSTOR' || other.getPlayerState() === 'DEAD') continue;
+        
+        const distance = this.distanceTo(other.getPosition());
+        if (distance <= KILL_RANGE) {
+          currentInKillRange.push(other.getId());
+        }
+      }
+      
+      // Check if any NEW targets just entered kill range
+      const newTargetsInRange = currentInKillRange.filter(id => !this.aiState.agentsInKillRange.includes(id));
+      
+      if (newTargetsInRange.length > 0) {
+        // Someone just walked into our kill range! Force an immediate decision
+        const targetNames = newTargetsInRange.map(id => {
+          const agent = this.otherAgents.find(a => a.getId() === id);
+          return agent ? agent.getName() : id;
+        });
+        this.addRecentEvent(`\ud83d\udd2a TARGET IN RANGE: ${targetNames.join(', ')}`);
+        
+        // Force immediate decision - don't wait for the next decision interval
+        this.behaviorState.nextDecisionTime = Date.now();
+        
+        // If not already thinking, trigger decision immediately
+        if (!this.behaviorState.isThinking) {
+          this.makeDecisionAsync();
+        }
+      }
+      
+      this.aiState.agentsInKillRange = currentInKillRange;
+    }
 
     // Update suspicion levels from memory
     this.aiState.suspicionLevels = this.memory.getAllSuspicionLevels();
@@ -1696,7 +1736,7 @@ export class AIAgent {
     const canKill = killCooldownRemaining <= 0 && !this.isInKillAnimation();
     
     // Find targets in kill range
-    const KILL_RANGE = 90; // Medium kill range
+    const KILL_RANGE = 1.8; // Medium kill range (actual game units, not pixels!)
     const targetsInKillRange = this.otherAgents
       .filter(a => 
         a.getRole() !== 'IMPOSTOR' && 
@@ -1727,6 +1767,7 @@ export class AIAgent {
           name: a.getName(),
           distance,
           isIsolated: witnessCount === 0,
+          witnessCount,
           zone: a.getCurrentZone(),
         };
       });

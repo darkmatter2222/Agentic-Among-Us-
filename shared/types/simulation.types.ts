@@ -23,7 +23,8 @@ export type ThoughtTrigger =
   | 'idle_random'
   | 'heard_speech'
   | 'passed_agent_closely'
-  | 'task_in_action_radius';
+  | 'task_in_action_radius'
+  | 'target_entered_kill_range';  // Impostor-only: crewmate just entered kill range
 
 export interface SpeechEvent {
   id: string;
@@ -239,6 +240,11 @@ export interface AIContext {
   isBeingFollowed?: boolean;
   buddyId?: string | null;
   
+  // ===== Current Goal/Hunt Tracking (for persistent behaviors) =====
+  currentGoalType?: AIGoalType;
+  huntTargetId?: string;      // ID of agent being hunted
+  huntTargetName?: string;    // Name of agent being hunted (for display)
+
   // ===== Game Timer Context (for urgency-aware decisions) =====
   gameTimer?: {
     remainingMs: number;         // Time remaining in the round
@@ -255,6 +261,7 @@ export interface AIContext {
       name: string;
       distance: number;
       isIsolated: boolean; // No other witnesses nearby
+      witnessCount?: number; // Number of potential witnesses if not isolated
       zone: string | null;
     }>;
     recentKillTime: number | null; // timestamp of last kill

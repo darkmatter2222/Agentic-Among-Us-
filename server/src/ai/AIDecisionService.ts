@@ -1,4 +1,4 @@
-/**
+﻿/**
  * AI Decision Service
  * Orchestrates LLM inference for agent decision-making with trigger-based activation
  * Uses LLMQueue to serialize requests and prevent GPU overload
@@ -162,6 +162,7 @@ interface AgentAIState {
   lastSpeechTime: number;
   nextRandomThoughtTime: number;
   previouslyVisibleAgents: Set<string>;
+  previouslyInKillRange: Set<string>;  // Track agents who were in kill range last tick
   lastZone: string | null;
   recentEvents: string[];
   conversationHistory: ChatMessage[];
@@ -319,6 +320,7 @@ export class AIDecisionService {
       lastSpeechTime: now - this.config.baseSpeechCooldownMs + (Math.random() * 20000), // Randomize speech timing
       nextRandomThoughtTime: now + this.randomInterval() + randomThoughtDelay, // Add random delay to first thought
       previouslyVisibleAgents: new Set(),
+      previouslyInKillRange: new Set(),
       lastZone: null,
       recentEvents: [],
       conversationHistory: []
@@ -838,7 +840,7 @@ Keep it brief (1-2 sentences). Start the conversation!`;
   private buildUserPrompt(context: AIContext): string {
     const taskStatus = context.assignedTasks
       .map((t: TaskAssignment, i: number) => `${i + 1}. ${t.taskType} in ${t.room} - ${t.isCompleted ? 'DONE' : 'TODO'}`)
-      .join('\n');
+      .join('\n') || 'No tasks assigned';
 
     const visibleInfo = context.visibleAgents
       .map((a: { name: string; zone: string | null; distance: number }) => `- ${a.name} in ${a.zone || 'hallway'} (${Math.round(a.distance)} units away)`)
@@ -846,26 +848,69 @@ Keep it brief (1-2 sentences). Start the conversation!`;
 
     // Build impostor-specific kill context if applicable
     let impostorKillContext = '';
+    let canKillNow = false;
+    let hasTargetInKillRange = false;
+    let isOnCooldown = false;
+    let huntingTarget: string | null = null;
+    
     if (context.role === 'IMPOSTOR' && context.impostorContext) {
       const imp = context.impostorContext;
+      isOnCooldown = imp.killCooldownRemaining > 0;
+      canKillNow = imp.canKill && imp.targetsInKillRange.length > 0;
+      hasTargetInKillRange = imp.targetsInKillRange.length > 0;
+      
+      // Check if currently hunting someone
+      if (context.currentGoalType === 'HUNT' && context.huntTargetId) {
+        huntingTarget = context.huntTargetName || context.huntTargetId;
+      }
       if (imp.canKill && imp.targetsInKillRange.length > 0) {
         const isolatedTargets = imp.targetsInKillRange.filter(t => t.isIsolated);
         if (isolatedTargets.length > 0) {
-          impostorKillContext = `\n\n🔪🔪🔪 KILL OPPORTUNITY! ${isolatedTargets[0].name} is ISOLATED and in range!
-OUTPUT: GOAL: KILL
-TARGET: ${isolatedTargets[0].name}`;
+          impostorKillContext = `\n\nðŸ”ªðŸ”ªðŸ”ª KILL NOW! ${isolatedTargets[0].name} is ISOLATED and within kill range (${isolatedTargets[0].distance?.toFixed(0) || '?'} units)!
+You MUST use GOAL: KILL and TARGET: ${isolatedTargets[0].name}`;
         } else {
-          impostorKillContext = `\n\nTargets in kill range: ${imp.targetsInKillRange.map(t => t.name).join(', ')} (but have witnesses)`;
+          impostorKillContext = `\n\nTargets within kill range but have witnesses: ${imp.targetsInKillRange.map(t => `${t.name} (${t.witnessCount} witnesses)`).join(', ')}`;
         }
       } else if (imp.killCooldownRemaining > 0) {
-        impostorKillContext = `\n\n⏱️ Kill on cooldown: ${imp.killCooldownRemaining.toFixed(0)}s remaining`;
+        impostorKillContext = `\n\nâ±ï¸ Kill on cooldown: ${imp.killCooldownRemaining.toFixed(0)}s remaining. Cannot kill yet.`;
+      } else if (imp.targetsInKillRange.length === 0 && context.visibleAgents.length > 0) {
+        // Visible but not in kill range - suggest HUNT
+        const closestTarget = context.visibleAgents
+          .filter(a => !imp.fellowImpostors?.some(f => f.name === a.name))
+          .sort((a, b) => a.distance - b.distance)[0];
+        if (closestTarget) {
+          impostorKillContext = `\n\nðŸŽ¯ ${closestTarget.name} visible but out of kill range (${Math.round(closestTarget.distance)} units away, need < 90 units).\nUse HUNT to chase them down!`;
+        }
+      }
+      
+      // Add hunt status if currently hunting
+      if (huntingTarget) {
+        impostorKillContext += `\n\nðŸ” CURRENTLY HUNTING: ${huntingTarget} - continue pursuit until in kill range!`;
       }
     }
 
-    // Different response format for impostors vs crewmates
-    const goalOptions = context.role === 'IMPOSTOR'
-      ? 'KILL/HUNT/GO_TO_TASK/WANDER/FOLLOW_AGENT/AVOID_AGENT/IDLE/SPEAK'
-      : 'GO_TO_TASK/WANDER/FOLLOW_AGENT/AVOID_AGENT/IDLE/SPEAK';
+    // Build dynamic goal options based on current state
+    let goalOptions: string;
+    if (context.role === 'IMPOSTOR') {
+      const availableGoals: string[] = [];
+      
+      // KILL only available if: not on cooldown AND target in range
+      if (canKillNow) {
+        availableGoals.push('KILL');
+      }
+      
+      // HUNT available if: not on cooldown OR already hunting (to continue)
+      if (!isOnCooldown || huntingTarget) {
+        availableGoals.push('HUNT');
+      }
+      
+      // Always available options for impostors
+      availableGoals.push('GO_TO_TASK', 'WANDER', 'FOLLOW_AGENT', 'AVOID_AGENT', 'IDLE', 'SPEAK');
+      
+      goalOptions = availableGoals.join('/');
+    } else {
+      goalOptions = 'GO_TO_TASK/WANDER/FOLLOW_AGENT/AVOID_AGENT/IDLE/SPEAK';
+    }
 
     return `CURRENT SITUATION:
 Location: ${context.currentZone || 'Hallway'}
@@ -873,16 +918,18 @@ Position: (${Math.round(context.currentPosition.x)}, ${Math.round(context.curren
 
 MY TASKS:
 ${taskStatus}
-Current task: ${context.currentTaskIndex !== null ? context.assignedTasks[context.currentTaskIndex]?.taskType : 'None selected'}
+Current task: ${context.currentTaskIndex !== null ? context.assignedTasks[context.currentTaskIndex]?.taskType : (huntingTarget ? `HUNTING ${huntingTarget}` : 'None selected')}
 
 VISIBLE AGENTS:
 ${visibleInfo}${impostorKillContext}
 
-What should I do next? Respond with your decision in this format:
-GOAL: [${goalOptions}]
-TARGET: [task number, agent name, or "none"]
-REASONING: [brief explanation]
-THOUGHT: [your internal thought, 1 sentence]`;
+What should I do next?
+
+RESPOND EXACTLY LIKE THIS (replace the placeholders with your actual choice):
+GOAL: <choose one: ${goalOptions}>
+TARGET: <task number 1-${context.assignedTasks.length}, agent name, or none>
+REASONING: <your explanation>
+THOUGHT: <your internal thought, 1 sentence>`;
   }
 
   /**
@@ -899,7 +946,8 @@ THOUGHT: [your internal thought, 1 sentence]`;
       'idle_random': 'You have a moment to think.',
       'heard_speech': 'You heard someone talking nearby.',
       'passed_agent_closely': `You just passed close to ${context.visibleAgents.find((a: { name: string; distance: number }) => a.distance < 50)?.name || 'someone'}.`,
-      'task_in_action_radius': 'A task location is nearby.'
+      'task_in_action_radius': 'A task location is nearby.',
+      'target_entered_kill_range': '\u{1F52A} A crewmate just entered your kill range! Quick - decide: kill them, use them as an alibi, or let them pass?'
     };
 
     return `${triggerDescriptions[trigger]}
@@ -939,7 +987,7 @@ What are you thinking? (One brief internal thought, stay in character)`;
   private randomInterval(): number {
     const cooldowns = this.getEffectiveCooldowns();
     const [min, max] = cooldowns.randomInterval;
-    // Add extra jitter (±20%) to break any synchronization patterns
+    // Add extra jitter (Â±20%) to break any synchronization patterns
     const jitterFactor = 0.8 + (Math.random() * 0.4); // 0.8 to 1.2
     return (min + Math.random() * (max - min)) * jitterFactor;
   }
@@ -977,7 +1025,8 @@ What are you thinking? (One brief internal thought, stay in character)`;
       'idle_random': ['Hmm...', 'What next?', 'Thinking...', 'Stay focused.'],
       'heard_speech': ['What was that?', 'Someone said something.'],
       'passed_agent_closely': ['Hey there.', 'Passing by.', 'Excuse me.'],
-      'task_in_action_radius': ['Task nearby.', 'Could work on this.']
+      'task_in_action_radius': ['Task nearby.', 'Could work on this.'],
+      'target_entered_kill_range': ['They\'re right here...', 'Perfect opportunity?', 'Kill or wait?', 'Now or never...']
     };
     const options = fallbacks[trigger] || ['...'];
     return options[Math.floor(Math.random() * options.length)];
@@ -1064,7 +1113,7 @@ What are you thinking? (One brief internal thought, stay in character)`;
     };
 
     this.activeConversations.set(convId, conversation);
-    console.log(`[Conversation] Started: ${initiatorName} → ${targetName} (max ${maxTurns} turns): "${initialMessage.substring(0, 50)}..."`);
+    console.log(`[Conversation] Started: ${initiatorName} â†’ ${targetName} (max ${maxTurns} turns): "${initialMessage.substring(0, 50)}..."`);
     
     return convId;
   }
@@ -1373,3 +1422,4 @@ export function getAIDecisionService(aiServerUrl?: string): AIDecisionService {
 export function resetAIDecisionService(): void {
   serviceInstance = null;
 }
+

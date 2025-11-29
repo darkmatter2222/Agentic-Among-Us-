@@ -250,7 +250,7 @@ Write-Host "    - Name: $containerName" -ForegroundColor DarkGray
 Write-Host "    - Port: $port" -ForegroundColor DarkGray
 Write-Host "    - GPU Layers: 99 (full offload)" -ForegroundColor DarkGray
 
-$runCmd = "docker run -d --name $containerName --gpus all -v /home/${SSH_USER}/models:/models -p ${port}:8080 $DOCKER_IMAGE -m /models/$MODEL_NAME --host 0.0.0.0 --port 8080 -ngl 99"
+$runCmd = "docker run -d --name $containerName --gpus all --restart unless-stopped -v /home/${SSH_USER}/models:/models -p ${port}:8080 $DOCKER_IMAGE -m /models/$MODEL_NAME --host 0.0.0.0 --port 8080 -ngl 99"
 
 $containerId = Invoke-RemoteCommand $runCmd
 if ($containerId) {

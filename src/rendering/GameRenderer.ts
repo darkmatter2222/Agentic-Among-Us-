@@ -160,6 +160,45 @@ export class GameRenderer {
   }
 
   /**
+   * Get the PIXI stage dimensions (logical resolution)
+   */
+  getStageSize(): { width: number; height: number } {
+    return {
+      width: this.app.screen.width,
+      height: this.app.screen.height
+    };
+  }
+
+  /**
+   * Get the canvas element's actual display size in CSS pixels
+   */
+  getCanvasDisplaySize(): { width: number; height: number } {
+    const canvas = this.app.canvas;
+    return {
+      width: canvas.clientWidth,
+      height: canvas.clientHeight
+    };
+  }
+
+  /**
+   * Convert CSS canvas coordinates (from mouse events) to PIXI stage coordinates
+   * This accounts for the CSS scaling of the canvas
+   */
+  cssToStageCoords(cssX: number, cssY: number): { x: number; y: number } {
+    const displaySize = this.getCanvasDisplaySize();
+    const stageSize = this.getStageSize();
+    
+    // Scale factor from CSS pixels to PIXI stage pixels
+    const scaleX = stageSize.width / displaySize.width;
+    const scaleY = stageSize.height / displaySize.height;
+    
+    return {
+      x: cssX * scaleX,
+      y: cssY * scaleY
+    };
+  }
+
+  /**
    * Set zoom level
    */
   setZoom(zoom: number): void {
@@ -188,6 +227,21 @@ export class GameRenderer {
   }
 
   /**
+   * Resize the renderer to fit a new viewport size
+   * This updates both the PIXI renderer and the camera's viewport center
+   */
+  resize(width: number, height: number): void {
+    if (!this.initialized) return;
+
+    // Resize the PIXI renderer
+    this.app.renderer.resize(width, height);
+
+    // Update the stage hit area
+    this.app.stage.hitArea = this.app.screen;
+
+    // Update camera's viewport center to the new center
+    this.camera.setViewportCenter(width / 2, height / 2);
+  }  /**
    * Cleanup
    */
   destroy(): void {
@@ -206,36 +260,48 @@ export class Camera {
   x: number = 0;
   y: number = 0;
   zoom: number = 1.0;
-  
+
   private targetX: number = 0;
   private targetY: number = 0;
   private targetZoom: number = 1.0;
-  
+
   private smoothing: number = 0.1; // Lerp factor
   private following: boolean = false;
   private followTarget?: { x: number; y: number };
 
+  // Default PIXI stage center (1920x1080), can be overridden for custom viewports
+  private viewportCenterX = 960;
+  private viewportCenterY = 540;
+
   constructor() {
-    // Center camera initially
-    this.x = 960; // Half of 1920
-    this.y = 540; // Half of 1080
+    // Center camera initially at default PIXI stage center
+    this.x = this.viewportCenterX;
+    this.y = this.viewportCenterY;
     this.targetX = this.x;
     this.targetY = this.y;
   }
 
+  /**
+   * Set the viewport center point (in PIXI stage coordinates)
+   * This should be called when centering/fitting to account for actual viewport size
+   */
+  setViewportCenter(centerX: number, centerY: number): void {
+    this.viewportCenterX = centerX;
+    this.viewportCenterY = centerY;
+  }
+
   update(_deltaTime: number): void {
     if (this.following && this.followTarget) {
-      this.targetX = -this.followTarget.x * this.zoom + 960;
-      this.targetY = -this.followTarget.y * this.zoom + 540;
+      // Center follow target in the viewport
+      this.targetX = -this.followTarget.x * this.zoom + this.viewportCenterX;
+      this.targetY = -this.followTarget.y * this.zoom + this.viewportCenterY;
     }
 
     // Smooth interpolation
     this.x += (this.targetX - this.x) * this.smoothing;
     this.y += (this.targetY - this.y) * this.smoothing;
     this.zoom += (this.targetZoom - this.zoom) * this.smoothing;
-  }
-
-  getTransform(): { x: number; y: number; scale: number } {
+  }  getTransform(): { x: number; y: number; scale: number } {
     return {
       x: this.x,
       y: this.y,
@@ -280,38 +346,11 @@ export class Camera {
   }
 
   focusOn(x: number, y: number, smooth: boolean = true): void {
-    // x and y are now in pixel coordinates (not game units)
-    // Use targetZoom since setZoom sets targetZoom, not immediate zoom
+    // x and y are world coordinates (map pixels)
+    // Center them in the viewport
     const zoomToUse = this.targetZoom;
-    const screenX = -x * zoomToUse + 960;
-    const screenY = -y * zoomToUse + 540;
-
-    if (smooth) {
-      this.targetX = screenX;
-      this.targetY = screenY;
-    } else {
-      this.x = screenX;
-      this.y = screenY;
-      this.targetX = screenX;
-      this.targetY = screenY;
-      this.zoom = zoomToUse; // Also set immediate zoom when not smooth
-    }
-  }
-
-  /**
-   * Focus on a world position, centered in a specific viewport area
-   * Use this when the visible area is not the full 1920x1080 canvas
-   * @param x World X position (in pixels)
-   * @param y World Y position (in pixels)
-   * @param viewportWidth Width of the visible area
-   * @param viewportHeight Height of the visible area
-   * @param smooth Whether to animate the transition
-   */
-  focusOnWithViewport(x: number, y: number, viewportWidth: number, viewportHeight: number, smooth: boolean = true): void {
-    const zoomToUse = this.targetZoom;
-    // Center in the actual visible viewport, not the full 1920x1080 canvas
-    const screenX = -x * zoomToUse + viewportWidth / 2;
-    const screenY = -y * zoomToUse + viewportHeight / 2;
+    const screenX = -x * zoomToUse + this.viewportCenterX;
+    const screenY = -y * zoomToUse + this.viewportCenterY;
 
     if (smooth) {
       this.targetX = screenX;
@@ -323,7 +362,10 @@ export class Camera {
       this.targetY = screenY;
       this.zoom = zoomToUse;
     }
-  }  followPlayer(player: { x: number; y: number }): void {
+    this.following = false;
+  }
+
+  followPlayer(player: { x: number; y: number }): void {
     this.following = true;
     this.followTarget = player;
   }

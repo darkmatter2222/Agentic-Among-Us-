@@ -86,86 +86,187 @@ function getGoalTypeColor(goalType?: string): string {
 }
 
 // Mini map component for the modal
-function MiniMap({ agents, highlightAgentId }: { 
-  agents: LLMTraceEvent['agentPositions']; 
+function MiniMap({ agents, highlightAgentId }: {
+  agents: LLMTraceEvent['agentPositions'];
   highlightAgentId: string;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    
+
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    
+
     const width = canvas.width;
     const height = canvas.height;
-    
+
     // Clear
     ctx.fillStyle = '#1a1f2e';
     ctx.fillRect(0, 0, width, height);
-    
-    // Draw simple map outline (Skeld approximation)
+
+    // Actual map bounds from poly3-map.ts
+    const MAP_MIN_X = 385;
+    const MAP_MAX_X = 2617;
+    const MAP_MIN_Y = 225;
+    const MAP_MAX_Y = 1483;
+    const MAP_WIDTH = MAP_MAX_X - MAP_MIN_X;  // ~2232
+    const MAP_HEIGHT = MAP_MAX_Y - MAP_MIN_Y; // ~1258
+
+    // Calculate scale to fit canvas with padding
+    const padding = 20;
+    const availableWidth = width - padding * 2;
+    const availableHeight = height - padding * 2;
+    const scale = Math.min(availableWidth / MAP_WIDTH, availableHeight / MAP_HEIGHT);
+
+    // Center the map
+    const offsetX = padding + (availableWidth - MAP_WIDTH * scale) / 2;
+    const offsetY = padding + (availableHeight - MAP_HEIGHT * scale) / 2;
+
+    // Helper to convert map coords to canvas coords
+    const toCanvas = (mapX: number, mapY: number) => ({
+      x: offsetX + (mapX - MAP_MIN_X) * scale,
+      y: offsetY + (mapY - MAP_MIN_Y) * scale
+    });
+
+    // Draw map outline
     ctx.strokeStyle = '#334155';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    // Simple rectangular outline
-    ctx.rect(20, 20, width - 40, height - 40);
+    const topLeft = toCanvas(MAP_MIN_X, MAP_MIN_Y);
+    const bottomRight = toCanvas(MAP_MAX_X, MAP_MAX_Y);
+    ctx.rect(topLeft.x, topLeft.y, bottomRight.x - topLeft.x, bottomRight.y - topLeft.y);
     ctx.stroke();
-    
-    // Scale positions to fit canvas (assuming map coords are roughly 0-1800 x 0-1000)
-    const scaleX = (width - 60) / 1800;
-    const scaleY = (height - 60) / 1000;
-    const offsetX = 30;
-    const offsetY = 30;
-    
-    // Draw agents
-    agents.forEach(agent => {
-      const x = offsetX + agent.position.x * scaleX;
-      const y = offsetY + agent.position.y * scaleY;
-      
+
+    // Find the highlighted agent
+    const highlightedAgent = agents.find(a => a.id === highlightAgentId);
+
+    // Draw vision radius for highlighted agent
+    if (highlightedAgent) {
+      const pos = toCanvas(highlightedAgent.position.x, highlightedAgent.position.y);
+      const VISION_RADIUS = 150; // Game units - typical vision radius
+      const visionRadiusCanvas = VISION_RADIUS * scale;
+
+      // Vision range (translucent fill)
+      ctx.beginPath();
+      ctx.arc(pos.x, pos.y, visionRadiusCanvas, 0, Math.PI * 2);
+      ctx.fillStyle = `${hexColor(highlightedAgent.color)}15`;
+      ctx.fill();
+      ctx.strokeStyle = `${hexColor(highlightedAgent.color)}40`;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      // Kill range for impostors (red inner circle)
+      if (highlightedAgent.role === 'IMPOSTOR') {
+        const KILL_RANGE = 1.8; // Game units
+        const killRadiusCanvas = KILL_RANGE * scale;
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, Math.max(killRadiusCanvas, 3), 0, Math.PI * 2);
+        ctx.fillStyle = '#ff000030';
+        ctx.fill();
+        ctx.strokeStyle = '#ff0000';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+    }
+
+    // Draw agents (non-highlighted first, then highlighted on top)
+    const sortedAgents = [...agents].sort((a, b) => {
+      if (a.id === highlightAgentId) return 1;
+      if (b.id === highlightAgentId) return -1;
+      return 0;
+    });
+
+    sortedAgents.forEach(agent => {
+      const pos = toCanvas(agent.position.x, agent.position.y);
       const isHighlight = agent.id === highlightAgentId;
       const radius = isHighlight ? 8 : 5;
-      
+
+      // Draw dead indicator
+      if (agent.state === 'DEAD') {
+        ctx.beginPath();
+        ctx.moveTo(pos.x - 6, pos.y - 6);
+        ctx.lineTo(pos.x + 6, pos.y + 6);
+        ctx.moveTo(pos.x + 6, pos.y - 6);
+        ctx.lineTo(pos.x - 6, pos.y + 6);
+        ctx.strokeStyle = hexColor(agent.color);
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        return;
+      }
+
       // Draw circle
       ctx.beginPath();
-      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
       ctx.fillStyle = hexColor(agent.color);
       ctx.fill();
-      
+
+      // Impostor marker (subtle skull)
+      if (agent.role === 'IMPOSTOR') {
+        ctx.fillStyle = '#000';
+        ctx.font = '8px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('☠', pos.x, pos.y + 1);
+      }
+
       if (isHighlight) {
         ctx.strokeStyle = '#fff';
         ctx.lineWidth = 2;
         ctx.stroke();
-        
+
         // Pulsing effect
         ctx.beginPath();
-        ctx.arc(x, y, radius + 4, 0, Math.PI * 2);
+        ctx.arc(pos.x, pos.y, radius + 4, 0, Math.PI * 2);
         ctx.strokeStyle = `${hexColor(agent.color)}88`;
         ctx.lineWidth = 2;
         ctx.stroke();
+
+        // Name label
+        ctx.font = 'bold 10px sans-serif';
+        ctx.fillStyle = '#fff';
+        ctx.textAlign = 'center';
+        ctx.fillText(agent.name, pos.x, pos.y - radius - 6);
       }
     });
-    
-    // Draw zone labels
-    ctx.font = '10px sans-serif';
-    ctx.fillStyle = '#64748b';
+
+    // Draw zone labels (approximate positions)
+    ctx.font = '9px sans-serif';
+    ctx.fillStyle = '#475569';
     ctx.textAlign = 'center';
-    
+    const zones = [
+      { name: 'Cafeteria', x: 1500, y: 450 },
+      { name: 'Weapons', x: 2200, y: 650 },
+      { name: 'Navigation', x: 2400, y: 900 },
+      { name: 'Shields', x: 2100, y: 1100 },
+      { name: 'Admin', x: 1800, y: 900 },
+      { name: 'Storage', x: 1500, y: 1100 },
+      { name: 'Electrical', x: 1100, y: 1000 },
+      { name: 'Lower Engine', x: 700, y: 1100 },
+      { name: 'Upper Engine', x: 700, y: 500 },
+      { name: 'Reactor', x: 500, y: 800 },
+      { name: 'Security', x: 900, y: 700 },
+      { name: 'MedBay', x: 1100, y: 550 },
+      { name: 'O2', x: 2000, y: 600 },
+      { name: 'Comms', x: 1900, y: 1200 },
+    ];
+    zones.forEach(zone => {
+      const pos = toCanvas(zone.x, zone.y);
+      ctx.fillText(zone.name, pos.x, pos.y);
+    });
+
   }, [agents, highlightAgentId]);
-  
+
   return (
-    <canvas 
-      ref={canvasRef} 
-      width={320} 
-      height={200} 
+    <canvas
+      ref={canvasRef}
+      width={400}
+      height={280}
       className="llm-trace-mini-map"
     />
   );
-}
-
-// Modal component for detailed trace view
+}// Modal component for detailed trace view
 function TraceDetailModal({ 
   event, 
   onClose 
@@ -174,7 +275,53 @@ function TraceDetailModal({
   onClose: () => void;
 }) {
   const [activeTab, setActiveTab] = useState<'overview' | 'prompt' | 'response' | 'context' | 'agents'>('overview');
+  const [copiedField, setCopiedField] = useState<string | null>(null);
   const modalRef = useRef<HTMLDivElement>(null);
+
+  // Copy helper function
+  const copyToClipboard = useCallback(async (text: string, fieldName: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedField(fieldName);
+      setTimeout(() => setCopiedField(null), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  }, []);
+
+  // Copy all as JSON
+  const copyAllAsJson = useCallback(() => {
+    const jsonData = {
+      agent: {
+        id: event.agentId,
+        name: event.agentName,
+        role: event.agentRole,
+        color: hexColor(event.agentColor),
+      },
+      request: {
+        type: event.requestType,
+        timestamp: event.timestamp,
+        durationMs: event.durationMs,
+        success: event.success,
+      },
+      prompts: {
+        systemPrompt: event.systemPrompt,
+        userPrompt: event.userPrompt,
+      },
+      response: {
+        raw: event.rawResponse,
+        parsed: event.parsedDecision,
+        error: event.error,
+      },
+      context: event.context,
+      agentPositions: event.agentPositions,
+      tokens: {
+        prompt: event.promptTokens,
+        completion: event.completionTokens,
+      },
+    };
+    copyToClipboard(JSON.stringify(jsonData, null, 2), 'all');
+  }, [event, copyToClipboard]);
   
   // Close on escape key
   useEffect(() => {
@@ -203,7 +350,16 @@ function TraceDetailModal({
             <span className="request-type">{getRequestTypeIcon(event.requestType)} {event.requestType}</span>
             <span className="timestamp">{formatTimestamp(event.timestamp)}</span>
           </div>
-          <button className="llm-trace-modal-close" onClick={onClose}>×</button>
+          <div className="header-buttons">
+            <button 
+              className={`copy-all-btn ${copiedField === 'all' ? 'copied' : ''}`}
+              onClick={copyAllAsJson}
+              title="Copy all data as JSON"
+            >
+              {copiedField === 'all' ? '✓ Copied' : '📋 Copy All JSON'}
+            </button>
+            <button className="llm-trace-modal-close" onClick={onClose}>×</button>
+          </div>
         </div>
         
         <div className="llm-trace-modal-tabs">
@@ -333,11 +489,27 @@ function TraceDetailModal({
           {activeTab === 'prompt' && (
             <div className="tab-content prompts">
               <div className="prompt-section">
-                <h4>System Prompt</h4>
+                <div className="section-header">
+                  <h4>System Prompt</h4>
+                  <button 
+                    className={`copy-btn ${copiedField === 'systemPrompt' ? 'copied' : ''}`}
+                    onClick={() => copyToClipboard(event.systemPrompt, 'systemPrompt')}
+                  >
+                    {copiedField === 'systemPrompt' ? '✓' : '📋'}
+                  </button>
+                </div>
                 <pre className="prompt-text">{event.systemPrompt}</pre>
               </div>
               <div className="prompt-section">
-                <h4>User Prompt</h4>
+                <div className="section-header">
+                  <h4>User Prompt</h4>
+                  <button 
+                    className={`copy-btn ${copiedField === 'userPrompt' ? 'copied' : ''}`}
+                    onClick={() => copyToClipboard(event.userPrompt, 'userPrompt')}
+                  >
+                    {copiedField === 'userPrompt' ? '✓' : '📋'}
+                  </button>
+                </div>
                 <pre className="prompt-text">{event.userPrompt}</pre>
               </div>
             </div>
@@ -346,7 +518,15 @@ function TraceDetailModal({
           {activeTab === 'response' && (
             <div className="tab-content response">
               <div className="prompt-section">
-                <h4>Raw LLM Response</h4>
+                <div className="section-header">
+                  <h4>Raw LLM Response</h4>
+                  <button 
+                    className={`copy-btn ${copiedField === 'rawResponse' ? 'copied' : ''}`}
+                    onClick={() => copyToClipboard(event.rawResponse, 'rawResponse')}
+                  >
+                    {copiedField === 'rawResponse' ? '✓' : '📋'}
+                  </button>
+                </div>
                 <pre className="prompt-text">{event.rawResponse}</pre>
               </div>
               {event.error && (

@@ -35,18 +35,21 @@ function serializeStateMachineState(state: PlayerStateMachineState, timestamp: n
 
 export function serializeAgent(agent: AIAgent, timestamp: number, killStatus?: KillStatusInfo): AgentSnapshot {
   const movementState = agent.getMovementController().getState();
-  const playerState = agent.getStateMachine().getState();
+  const stateMachineState = agent.getStateMachine().getState();
 
-  const summary = serializeStateMachineState(playerState, timestamp);
+  const summary = serializeStateMachineState(stateMachineState, timestamp);
   const movement = serializeMovementState(movementState);
 
   // Get recent conversations from memory
-  const recentConversations = agent.getRecentConversations ? 
+  const recentConversations = agent.getRecentConversations ?
     agent.getRecentConversations().map(conv => ({
       speakerName: conv.speakerName,
       message: conv.message,
       timestamp: conv.timestamp,
     })) : [];
+
+  // Get the actual player alive/dead state from AIAgent (not state machine)
+  const playerAliveDeadState = agent.getPlayerState();
 
   return {
     id: agent.getId(),
@@ -60,10 +63,10 @@ export function serializeAgent(agent: AIAgent, timestamp: number, killStatus?: K
     currentZone: summary.currentZone,
     currentGoal: agent.getCurrentGoal(),
     timeInStateMs: summary.timeInStateMs,
-    
+
     // AI State
     role: agent.getRole(),
-    playerState: agent.getPlayerState(),
+    playerState: playerAliveDeadState,
     assignedTasks: agent.getAssignedTasks(),
     currentTaskIndex: agent.getCurrentTaskIndex(),
     tasksCompleted: agent.getTasksCompleted(),

@@ -5,7 +5,7 @@
 
 import * as PIXI from 'pixi.js';
 import type { Player } from '@shared/types/game.types';
-import { PlayerState } from '@shared/types/game.types';
+import { PlayerState, PlayerRole } from '@shared/types/game.types';
 
 export class PlayerRenderer {
   private container: PIXI.Container;
@@ -74,7 +74,8 @@ class PlayerSprite {
   private rightLeg: PIXI.Graphics;
   private nameLabel: PIXI.Text;
   private shadow: PIXI.Graphics;
-  
+  private impostorIndicator: PIXI.Graphics; // Red outline for impostors (admin view only)
+
   private player: Player;
   private scale: number;
   private prevPosition: { x: number; y: number } | null = null;
@@ -114,26 +115,29 @@ class PlayerSprite {
     this.player = player;
     this.scale = scale;
     this.container = new PIXI.Container();
-    
+
     // Create shadow (below everything)
     this.shadow = new PIXI.Graphics();
     this.container.addChild(this.shadow);
-    
+
     // Create body container for coordinated animation
     this.bodyContainer = new PIXI.Container();
     this.container.addChild(this.bodyContainer);
-    
+
     // Create legs (behind body)
     this.leftLeg = new PIXI.Graphics();
     this.rightLeg = new PIXI.Graphics();
     this.bodyContainer.addChild(this.leftLeg);
     this.bodyContainer.addChild(this.rightLeg);
-    
+
     // Create player body graphics
     this.graphics = new PIXI.Graphics();
     this.bodyContainer.addChild(this.graphics);
-    
-    // Create name label
+
+    // Create impostor indicator (ON TOP of body - red outline with glow)
+    // Added last to bodyContainer so it renders on top and animates with body
+    this.impostorIndicator = new PIXI.Graphics();
+    this.bodyContainer.addChild(this.impostorIndicator);    // Create name label
     this.nameLabel = new PIXI.Text({
       text: player.name,
       style: {
@@ -184,9 +188,15 @@ class PlayerSprite {
     this.shadow.clear();
     this.leftLeg.clear();
     this.rightLeg.clear();
-    
+    this.impostorIndicator.clear();
+
     const color = PlayerSprite.COLORS[this.player.color.toLowerCase()] || 0xFFFFFF;
-    
+
+    // Draw impostor indicator for admin view (only for living impostors)
+    if (this.player.role === PlayerRole.IMPOSTOR && this.player.state === PlayerState.ALIVE) {
+      this.drawImpostorIndicator();
+    }
+
     if (this.player.state === PlayerState.DEAD) {
       this.drawDeadBody(color);
       this.leftLeg.visible = false;
@@ -274,36 +284,107 @@ class PlayerSprite {
   }
 
   /**
-   * Draw dead body (cut in half with bone) - 20% larger
+   * Draw impostor indicator - red outline with faint glow (admin view only)
+   * This is purely informational for the administrator and has no gameplay impact
+   * Draws OUTSIDE the black border: red border around the black border + faint outward glow
+   */
+  private drawImpostorIndicator(): void {
+    const sizeMultiplier = PlayerSprite.SIZE_MULTIPLIER;
+    const radius = 0.4 * this.scale * sizeMultiplier;
+    
+    // The body ellipse is radius * 0.85 wide, radius tall
+    // The black border stroke is 1.5px wide, so outer edge is at ~radius * 0.85 + 0.75, radius + 0.75
+    // We draw the red border OUTSIDE that
+    
+    const bodyRadiusX = radius * 0.85;
+    const bodyRadiusY = radius;
+    const blackBorderWidth = 1.5;
+    
+    // Outermost glow layer - soft diffuse glow
+    this.impostorIndicator.ellipse(0, 0, bodyRadiusX + 8, bodyRadiusY + 8);
+    this.impostorIndicator.stroke({ width: 6, color: 0xFF0000, alpha: 0.15 });
+    
+    // Middle glow layer
+    this.impostorIndicator.ellipse(0, 0, bodyRadiusX + 5, bodyRadiusY + 5);
+    this.impostorIndicator.stroke({ width: 4, color: 0xFF0000, alpha: 0.2 });
+    
+    // Inner glow layer - brighter
+    this.impostorIndicator.ellipse(0, 0, bodyRadiusX + 3, bodyRadiusY + 3);
+    this.impostorIndicator.stroke({ width: 2.5, color: 0xFF0000, alpha: 0.35 });
+    
+    // Main red border - solid red outline just outside the black border
+    this.impostorIndicator.ellipse(0, 0, bodyRadiusX + blackBorderWidth + 1.5, bodyRadiusY + blackBorderWidth + 1.5);
+    this.impostorIndicator.stroke({ width: 2, color: 0xFF0000, alpha: 0.85 });
+  }/**
+   * Draw dead body - Among Us style fallen corpse with bone sticking out
+   * Based on the canonical dead body appearance: body on side, split open, bone visible
    */
   private drawDeadBody(color: number): void {
     const sizeMultiplier = PlayerSprite.SIZE_MULTIPLIER;
     const size = 0.5 * this.scale * sizeMultiplier;
+    const darkerColor = this.darkenColor(color, 0.3);
     
-    // Blood pool
-    this.shadow.ellipse(0, 0, size * 1.5, size);
-    this.shadow.fill({ color: color, alpha: 0.3 });
+    // Blood pool underneath (dark red, spread out)
+    this.shadow.clear();
+    this.shadow.ellipse(0, size * 0.2, size * 2.0, size * 1.2);
+    this.shadow.fill({ color: 0x8B0000, alpha: 0.85 });
     
-    // Top half
-    this.graphics.rect(-size * 0.3, -size * 0.5, size * 0.6, size * 0.4);
+    // Blood splatter details
+    this.shadow.circle(size * 1.2, size * 0.1, size * 0.3);
+    this.shadow.fill({ color: 0x8B0000, alpha: 0.7 });
+    this.shadow.circle(-size * 0.9, size * 0.5, size * 0.25);
+    this.shadow.fill({ color: 0x8B0000, alpha: 0.6 });
+    this.shadow.circle(size * 0.7, size * 0.7, size * 0.2);
+    this.shadow.fill({ color: 0x8B0000, alpha: 0.5 });
+    
+    // Lower half of body (fallen away, on the right)
+    // Draw as a half-bean shape rotated
+    this.graphics.ellipse(size * 0.8, size * 0.1, size * 0.55, size * 0.45);
+    this.graphics.fill(color);
+    // Darker inner part (exposed interior)
+    this.graphics.ellipse(size * 0.5, size * 0.1, size * 0.25, size * 0.35);
+    this.graphics.fill(darkerColor);
+    
+    // Upper half of body (main torso, on its side)
+    // Bean-shaped body laying sideways
+    this.graphics.ellipse(-size * 0.3, -size * 0.1, size * 0.7, size * 0.55);
     this.graphics.fill(color);
     
-    // Bottom half
-    this.graphics.rect(-size * 0.3, size * 0.2, size * 0.6, size * 0.4);
-    this.graphics.fill(color);
+    // Backpack on the upper half
+    this.graphics.roundRect(-size * 1.1, -size * 0.35, size * 0.35, size * 0.5, size * 0.1);
+    this.graphics.fill(darkerColor);
+    this.graphics.stroke({ width: 1, color: 0x000000, alpha: 0.3 });
     
-    // Bone (white stick)
-    this.graphics.rect(-size * 0.1, -size * 0.1, size * 0.2, size * 0.6);
-    this.graphics.fill(0xFFFFFF);
+    // Visor on upper half (dark opening, sideways)
+    const visorColor = this.darkenColor(color, 0.5);
+    this.graphics.ellipse(-size * 0.1, -size * 0.25, size * 0.35, size * 0.25);
+    this.graphics.fill(visorColor);
+    // Visor highlight
+    this.graphics.ellipse(-size * 0.0, -size * 0.35, size * 0.1, size * 0.06);
+    this.graphics.fill({ color: 0xFFFFFF, alpha: 0.4 });
     
-    // Bone ends
-    this.graphics.circle(0, -size * 0.1, size * 0.15);
-    this.graphics.fill(0xFFFFFF);
-    this.graphics.circle(0, size * 0.5, size * 0.15);
-    this.graphics.fill(0xFFFFFF);
-  }
-
-  /**
+    // Bone sticking out between the halves
+    // Main bone shaft
+    this.graphics.roundRect(size * 0.05, -size * 0.15, size * 0.55, size * 0.15, size * 0.02);
+    this.graphics.fill(0xF5F5DC); // Bone white/cream color
+    this.graphics.stroke({ width: 1, color: 0xD4D4AA, alpha: 0.8 });
+    
+    // Bone knob on left (inside body)
+    this.graphics.circle(size * 0.05, -size * 0.08, size * 0.12);
+    this.graphics.fill(0xF5F5DC);
+    this.graphics.circle(size * 0.05, -size * 0.08, size * 0.08);
+    this.graphics.fill(0xE8E8D0);
+    
+    // Bone knob on right (sticking out)
+    this.graphics.circle(size * 0.6, -size * 0.08, size * 0.14);
+    this.graphics.fill(0xF5F5DC);
+    this.graphics.circle(size * 0.6, -size * 0.08, size * 0.09);
+    this.graphics.fill(0xE8E8D0);
+    
+    // Body outline on upper half
+    this.graphics.ellipse(-size * 0.3, -size * 0.1, size * 0.7, size * 0.55);
+    this.graphics.stroke({ width: 1.5, color: 0x000000, alpha: 0.4 });
+  }  /**
    * Draw ghost (semi-transparent, floating) - 20% larger
    */
   private drawGhost(color: number): void {

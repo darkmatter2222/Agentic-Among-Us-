@@ -342,6 +342,79 @@
   color: #fff;
 }
 
+/* Header buttons container */
+.llm-trace-modal-header .header-buttons {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Copy All JSON button */
+.copy-all-btn {
+  padding: 6px 12px;
+  border: 1px solid rgba(88, 166, 255, 0.3);
+  background: rgba(88, 166, 255, 0.1);
+  color: #58a6ff;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.copy-all-btn:hover {
+  background: rgba(88, 166, 255, 0.2);
+  border-color: rgba(88, 166, 255, 0.5);
+}
+
+.copy-all-btn.copied {
+  background: rgba(63, 185, 80, 0.2);
+  border-color: rgba(63, 185, 80, 0.5);
+  color: #3fb950;
+}
+
+/* Section header with copy button */
+.prompt-section .section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.prompt-section .section-header h4 {
+  margin: 0;
+}
+
+/* Copy button for individual sections */
+.copy-btn {
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(48, 54, 61, 0.5);
+  color: #8b949e;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.copy-btn:hover {
+  background: rgba(88, 166, 255, 0.2);
+  border-color: rgba(88, 166, 255, 0.5);
+  color: #58a6ff;
+}
+
+.copy-btn.copied {
+  background: rgba(63, 185, 80, 0.2);
+  border-color: rgba(63, 185, 80, 0.5);
+  color: #3fb950;
+}
+
 .llm-trace-modal-tabs {
   display: flex;
   gap: 4px;

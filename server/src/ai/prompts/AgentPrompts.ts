@@ -420,7 +420,8 @@ function getThoughtTriggerContext(trigger: ThoughtTrigger): string {
     'idle_random': 'You have a moment to reflect while moving or waiting.',
     'heard_speech': 'You overheard someone talking nearby.',
     'passed_agent_closely': 'You just passed very close to another player.',
-    'task_in_action_radius': 'You noticed a task location is within reach.'
+    'task_in_action_radius': 'You noticed a task location is within reach.',
+    'target_entered_kill_range': '\ud83d\udd2a KILL OPPORTUNITY! A crewmate just walked into your kill range. You have seconds to decide: Strike now? Use them as an alibi? Let them pass to avoid suspicion?'
   };
   return contexts[trigger] || 'Something happened.';
 }

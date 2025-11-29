@@ -15,6 +15,8 @@ export interface AgentPositionSnapshot {
   zone: string | null;
   activityState: string;
   currentGoal: string | null;
+  role?: 'CREWMATE' | 'IMPOSTOR';  // Agent role
+  state?: 'ALIVE' | 'DEAD';        // Player state
 }
 
 // Full LLM trace event

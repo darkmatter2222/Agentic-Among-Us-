@@ -79,6 +79,8 @@ function aiStateEqual(a: AgentSnapshot, b: AgentSnapshot): boolean {
     a.recentSpeech === b.recentSpeech &&
     a.currentTaskIndex === b.currentTaskIndex &&
     a.tasksCompleted === b.tasksCompleted &&
+    a.role === b.role &&
+    a.playerState === b.playerState &&
     arraysEqual(a.visibleAgentIds, b.visibleAgentIds) &&
     tasksEqual(a.assignedTasks, b.assignedTasks)
   );
@@ -93,6 +95,8 @@ function buildAIStateDelta(agent: AgentSnapshot): AgentAIStateDelta {
     assignedTasks: agent.assignedTasks,
     currentTaskIndex: agent.currentTaskIndex,
     tasksCompleted: agent.tasksCompleted,
+    role: agent.role,
+    playerState: agent.playerState,
   };
 }
 

@@ -336,7 +336,8 @@ export class SimulationClient {
           currentThought: deltaEntry.aiState.currentThought?.substring(0, 30),
           recentSpeech: deltaEntry.aiState.recentSpeech?.substring(0, 30),
           visibleAgents: deltaEntry.aiState.visibleAgentIds?.length ?? 0,
-          tasks: deltaEntry.aiState.assignedTasks?.length ?? 0
+          tasks: deltaEntry.aiState.assignedTasks?.length ?? 0,
+          playerState: deltaEntry.aiState.playerState
         });
         cloned.isThinking = deltaEntry.aiState.isThinking;
         cloned.currentThought = deltaEntry.aiState.currentThought;
@@ -345,6 +346,13 @@ export class SimulationClient {
         cloned.assignedTasks = deltaEntry.aiState.assignedTasks;
         cloned.currentTaskIndex = deltaEntry.aiState.currentTaskIndex;
         cloned.tasksCompleted = deltaEntry.aiState.tasksCompleted;
+        // Critical: apply role and playerState for kill mechanics
+        if (deltaEntry.aiState.role !== undefined) {
+          cloned.role = deltaEntry.aiState.role;
+        }
+        if (deltaEntry.aiState.playerState !== undefined) {
+          cloned.playerState = deltaEntry.aiState.playerState;
+        }
       }
 
       updatedAgents.push(cloned);

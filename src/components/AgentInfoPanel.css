@@ -1323,6 +1323,12 @@
   margin-bottom: 10px;
 }
 
+/* Dead Agent Styling */
+.agent-dead {
+  text-decoration: line-through;
+  opacity: 0.5;
+}
+
 /* Enhanced LLM Panel Content */
 .llm-panel-content {
   display: flex;

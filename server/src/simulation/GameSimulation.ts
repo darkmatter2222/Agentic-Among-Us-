@@ -232,6 +232,8 @@ export class GameSimulation {
           zone: a.getCurrentZone(),
           activityState: a.getStateMachine().getActivityState() as string,
           currentGoal: a.getCurrentGoal(),
+          role: a.getRole() as 'CREWMATE' | 'IMPOSTOR',
+          state: a.getPlayerState() as 'ALIVE' | 'DEAD',
         }));
         this.aiService.updateAgentPositions(positions);
       }
