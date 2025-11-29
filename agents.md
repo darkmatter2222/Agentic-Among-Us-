@@ -4,7 +4,7 @@
 
 ---
 
-## 📝 Document Maintenance Requirements
+## Document Maintenance Requirements
 
 **IMPORTANT**: When making ANY changes to the codebase, AI agents MUST update this document (`agents.md`) to reflect those changes. This includes:
 
@@ -18,9 +18,9 @@
 
 ---
 
-## ⚠️ Development Notes & Do's/Don'ts
+## Development Notes & Do's/Don'ts
 
-### ❌ DON'T DO
+### DON'T DO
 
 1. **DO NOT stop or start the server** when making changes to this document, reviewing issues, or debugging. The simulation runs continuously and server restarts will disrupt live testing.
 
@@ -34,7 +34,7 @@
 
 6. **DO NOT change WebSocket port configurations** without updating all dependent files.
 
-### ✅ DO
+### DO
 
 1. **DO update this `agents.md` file** whenever you make changes to the codebase.
 
@@ -445,7 +445,7 @@
 
 ### Sound Effects
 - **Kill Sound**: Sharp stab/slash
-- **Vent Sound**: Metallic clang (proximity-based) ✅ Implemented - vent-in and vent-out sounds
+- **Vent Sound**: Metallic clang (proximity-based) - Implemented - vent-in and vent-out sounds
 - **Task Completion**: Soft chime
 - **Sabotage Alarm**: Different for each type
 - **Meeting Horn**: Loud emergency sound
@@ -531,14 +531,112 @@ Map Settings:
 
 ---
 
+## Logging System
+
+The simulation uses a comprehensive, universal logging system that provides structured JSON output with color-coded console display.
+
+### Log Levels
+
+| Level | Value | Usage |
+|-------|-------|-------|
+| TRACE | 0 | Very detailed debugging, high-frequency events |
+| DEBUG | 1 | General debugging information |
+| INFO | 2 | Significant events (default level) |
+| WARN | 3 | Potential issues, recoverable errors |
+| ERROR | 4 | Errors that affect functionality |
+| FATAL | 5 | Critical failures |
+| SILENT | 6 | Disable all logging |
+
+### Log Categories
+
+```
+AI          - AI decision making and LLM interactions
+SIMULATION  - Game simulation loop and state
+WEBSOCKET   - WebSocket connections and messages
+RENDER      - Client-side rendering
+AUDIO       - Sound effects and audio playback
+MOVEMENT    - Agent pathfinding and navigation
+TASK        - Task assignment and completion
+KILL        - Kill attempts and deaths
+VENT        - Vent entry/exit/travel
+MEETING     - Emergency meetings and voting
+SABOTAGE    - Sabotage events
+MEMORY      - Agent memory and observations
+VISION      - Line-of-sight and visibility
+ZONE        - Room/area detection
+HTTP        - HTTP requests (server)
+SYSTEM      - System initialization and shutdown
+PERF        - Performance metrics
+GOD         - God mode commands and whispers
+SPEECH      - Agent speech and hearing
+THOUGHT     - Agent internal thoughts
+ERROR       - Error category for error handlers
+GENERAL     - Uncategorized logs
+```
+
+### Usage
+
+**Server-side (server/src/logging/index.ts):**
+```typescript
+import { aiLogger, simulationLogger, websocketLogger } from '../logging/index.ts';
+
+aiLogger.info('Decision made', { agentId, goalType });
+simulationLogger.debug('Tick processed', { tick, deltaTime });
+```
+
+**Client-side (src/logging/index.ts):**
+```typescript
+import { renderLogger, audioLogger, systemLogger } from '../logging/index.ts';
+
+audioLogger.info('Sound loaded', { soundName });
+renderLogger.debug('Frame rendered', { fps });
+```
+
+**Shared code (shared/logging/sharedLogger.ts):**
+```typescript
+import { aiLog, moveLog, killLog } from '../logging/index.ts';
+
+// Use .get() to lazily initialize
+aiLog.get().info('Agent action', { agentId, action });
+moveLog.get().debug('Path found', { waypoints: path.length });
+```
+
+### Console Output
+
+Logs display with:
+- **Text prefixes** per level ([TRC], [DBG], [INF], [WRN], [ERR], [FTL])
+- **Category labels** (AI, SIM, WS, RND, AUD, MOV, etc.)
+- **Color coding** by log level (cyan=DEBUG, green=INFO, yellow=WARN, red=ERROR)
+- **Timestamp** in HH:mm:ss.SSS format
+- **Structured context** pretty-printed below the message
+
+### File Logging (Server Only)
+
+Single JSON log file stored in `logs/`:
+- Max 1 file (no rotation)
+- Max 1GB file size
+- Buffered writes for performance
+- Named as `simulation.log`
+
+### Browser Console
+
+Set log level at runtime:
+```javascript
+window.setLogLevel('DEBUG');  // Show debug and above
+window.setLogLevel('WARN');   // Only warnings and errors
+```
+
+---
+
 ## Implementation Status
 
 > This section documents what is **currently implemented** in the Agentic Among Us simulation versus what is documented above but not yet active.
 
-### ✅ Fully Implemented
+### Fully Implemented
 
 | System | Details |
 |--------|---------|
+| **Universal Logging System** | Structured JSON logging with color-coded console output, single 1GB log file, log levels (TRACE-FATAL), 22 categories (AI, SIMULATION, WEBSOCKET, RENDER, AUDIO, MOVEMENT, TASK, KILL, VENT, MEETING, SABOTAGE, MEMORY, VISION, ZONE, HTTP, SYSTEM, PERF, GOD, SPEECH, THOUGHT, ERROR, GENERAL), lazy-loaded shared loggers, separate client/server transports, text prefixes instead of emojis |
 | **Movement & Physics** | A* pathfinding, steering behaviors, collision avoidance, wall-whisker detection |
 | **Navigation Mesh** | Full Skeld map with walkable zones, room labels, hallways |
 | **Vision System** | Configurable vision radius, line-of-sight calculations |
@@ -547,13 +645,14 @@ Map Settings:
 | **Impostor Task Faking** | Wait at task location for appropriate duration without progress |
 | **Zone Detection** | Agents know their current room/hallway location |
 | **Agent Memory** | Observations, suspicion levels, conversation history, alibi tracking |
-| **Thought System** | Internal reasoning triggered by events (room entry, spotting agents, etc.). Thoughts shown as cloud-shaped bubble with trailing circles above player. Toggleable via 💭 button. |
-| **Thinking Indicator** | Animated "..." dots shown when agent is waiting for LLM response. Toggleable via ⋯ button. |
-| **Speech System** | Agents speak to nearby players, vision-based hearing (same radius and line-of-sight as vision - can't hear through walls). Speech shown as rectangular bubble with tail pointer above player. Toggleable via 💬 button. |
+| **Thought System** | Internal reasoning triggered by events (room entry, spotting agents, etc.). Thoughts shown as cloud-shaped bubble with trailing circles above player. Toggleable via THT button. |
+| **Thinking Indicator** | Animated "..." dots shown when agent is waiting for LLM response. Toggleable via ... button. |
+| **Speech System** | Agents speak to nearby players, vision-based hearing (same radius and line-of-sight as vision - can't hear through walls). Speech shown as rectangular bubble with tail pointer above player. Toggleable via SPK button. |
 | **Social Actions** | Buddy up, follow, avoid, confront, spread rumors, defend self |
 | **AI Decision Making** | LLM-powered with 10 goal types (see below) |
 | **Kill Sound Effects** | Audio plays on new body detection with browser autoplay unlock |
 | **Vent Sound Effects** | Audio plays on vent enter/exit events (vent-in and vent-out sounds) |
+| **Hearing System** | Visual ear icon with directional sound waves when agents hear speech. HeardSpeechEvent emitted for each listener. "Recently Heard" section in agent info panel shows what agent heard with direct-address highlighting. |
 | **God Mode** | Divine control system allowing observers to override agent behavior (see below) |
 
 ### God Mode System (Active)
@@ -569,18 +668,18 @@ Bypass the LLM entirely and force an agent to perform a specific action:
 **Available Commands:**
 | Command | All Agents | Impostor Only | Description |
 |---------|------------|---------------|-------------|
-| `wander` | ✅ | | Random exploration |
-| `idle` | ✅ | | Stop and wait |
-| `go_to_task` | ✅ | | Navigate to selected task |
-| `speak` | ✅ | | Say something to nearby agents |
-| `follow` | ✅ | | Follow a target agent |
-| `avoid` | ✅ | | Stay away from target agent |
-| `vent` | | ✅ | Enter nearest vent |
-| `kill` | | ✅ | Kill nearest crewmate in range |
-| `hunt` | | ✅ | Seek isolated targets |
-| `flee` | | ✅ | Run from current location |
-| `alibi` | | ✅ | Create an alibi by faking task |
-| `self_report` | | ✅ | Report own kill |
+| `wander` | Yes | | Random exploration |
+| `idle` | Yes | | Stop and wait |
+| `go_to_task` | Yes | | Navigate to selected task |
+| `speak` | Yes | | Say something to nearby agents |
+| `follow` | Yes | | Follow a target agent |
+| `avoid` | Yes | | Stay away from target agent |
+| `vent` | | Yes | Enter nearest vent |
+| `kill` | | Yes | Kill nearest crewmate in range |
+| `hunt` | | Yes | Seek isolated targets |
+| `flee` | | Yes | Run from current location |
+| `alibi` | | Yes | Create an alibi by faking task |
+| `self_report` | | Yes | Report own kill |
 
 #### Whispers (Prompt Injection)
 Inject a divine whisper into the agent's next LLM prompt:
@@ -598,7 +697,7 @@ Add persistent behavioral modifications:
 
 #### UI Access
 - Click on any agent to open their info panel
-- Select the "Control" tab (shows ✨ when god mode is active)
+- Select the "Control" tab (shows * when god mode is active)
 - Quick command buttons for common actions
 - Task dropdown for GO_TO_TASK commands
 - Custom message input for SPEAK commands
@@ -644,34 +743,35 @@ idle_random             - Periodic thoughts while idle
 heard_speech            - Heard another agent speak
 passed_agent_closely    - Brief proximity encounter
 task_in_action_radius   - Task location nearby
+witnessed_suspicious_behavior - Saw suspicious activity (venting, near body, etc.)
 target_entered_kill_range - IMPOSTOR ONLY: Crewmate entered kill range, forces immediate decision
 near_vent              - IMPOSTOR ONLY: Near a vent, might consider using it
 entered_vent           - IMPOSTOR ONLY: Just entered a vent
-exited_vent            - IMPOSTOR ONLY: Just exited a vent  
+exited_vent            - IMPOSTOR ONLY: Just exited a vent
 witnessed_vent_activity - Crewmate/Impostor: Saw someone enter/exit a vent
 alone_with_vent        - IMPOSTOR ONLY: Alone in a room with a vent
 ```
 
-### ❌ Not Yet Implemented
+### Not Yet Implemented
 
 | System | Status | Notes |
 |--------|--------|-------|
-| **Kill Mechanics** | 🔶 Partial | KillSystem class exists with cooldowns, range checks, witnesses; kills can be attempted but game state doesn't update victims to DEAD |
-| **Body Discovery** | ❌ | No corpses, no report button |
-| **Emergency Meetings** | ❌ | Button location exists but non-functional |
-| **Discussion Phase** | ❌ | No meeting chat or accusations |
-| **Voting System** | ❌ | No vote casting or counting |
-| **Ejection** | ❌ | No player removal |
-| **Sabotage (Reactor)** | ❌ | Timer and fix mechanics not active |
-| **Sabotage (O2)** | ❌ | Timer and fix mechanics not active |
-| **Sabotage (Lights)** | ❌ | Vision reduction not implemented |
-| **Sabotage (Comms)** | ❌ | Task hiding not implemented |
-| **Door System** | ❌ | Doors don't close or block movement |
-| **Vent System** | 🔶 Partial | VentSystem class implemented with entry/exit/travel mechanics, witness detection, cooldowns. Integration with AI agents pending |
-| **Win Conditions** | ❌ | Game runs indefinitely |
-| **Ghost Mode** | ❌ | Dead players cannot continue |
-| **Security Cameras** | ❌ | No camera monitoring |
-| **Admin Table** | ❌ | No player location display |
+| **Kill Mechanics** | Partial | KillSystem class exists with cooldowns, range checks, witnesses; kills can be attempted but game state doesn't update victims to DEAD |
+| **Body Discovery** | No | No corpses, no report button |
+| **Emergency Meetings** | No | Button location exists but non-functional |
+| **Discussion Phase** | No | No meeting chat or accusations |
+| **Voting System** | No | No vote casting or counting |
+| **Ejection** | No | No player removal |
+| **Sabotage (Reactor)** | No | Timer and fix mechanics not active |
+| **Sabotage (O2)** | No | Timer and fix mechanics not active |
+| **Sabotage (Lights)** | No | Vision reduction not implemented |
+| **Sabotage (Comms)** | No | Task hiding not implemented |
+| **Door System** | No | Doors don't close or block movement |
+| **Vent System** | Partial | VentSystem class implemented with entry/exit/travel mechanics, witness detection, cooldowns. Integration with AI agents pending |
+| **Win Conditions** | No | Game runs indefinitely |
+| **Ghost Mode** | No | Dead players cannot continue |
+| **Security Cameras** | No | No camera monitoring |
+| **Admin Table** | No | No player location display |
 
 ### Current Simulation Configuration
 
@@ -688,12 +788,12 @@ LLM Performance:   ~180 tokens/sec, ~300-400ms per decision
 ### Map Data Available
 
 The simulation has full Skeld map data including:
-- ✅ All walkable zone polygons with obstacle holes
-- ✅ Room and hallway labels (14 named areas)
-- ✅ 30+ task locations with types and durations
-- ✅ Vent positions and connections (defined but not usable)
-- ✅ Door positions (defined but non-functional)
-- ✅ Camera locations (defined but not active)
+- All walkable zone polygons with obstacle holes
+- Room and hallway labels (14 named areas)
+- 30+ task locations with types and durations
+- Vent positions and connections (defined but not usable)
+- Door positions (defined but non-functional)
+- Camera locations (defined but not active)
 
 ### Agent Capabilities Summary
 

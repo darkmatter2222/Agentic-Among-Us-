@@ -723,6 +723,17 @@
   padding: 12px;
 }
 
+/* Directly addressed hearing indicator */
+.conversation-item.directly-addressed {
+  border-left-color: #f8c38a;
+  background: rgba(248, 195, 138, 0.1);
+}
+
+.heard-icon {
+  margin-right: 4px;
+  font-size: 0.9rem;
+}
+
 /* Suspicion List */
 .suspicion-list {
   display: flex;

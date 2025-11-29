@@ -4,6 +4,8 @@
  * Connects to llama.cpp server at http://192.168.86.48:8080
  */
 
+import { aiLogger } from '../logging/index.ts';
+
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
   content: string;
@@ -125,7 +127,7 @@ export class AIModelClient {
         if (error.name === 'AbortError') {
           throw new Error(`AI Model request timed out after ${this.timeout}ms`);
         }
-        console.error('AI Model API Error:', error);
+        aiLogger.error('AI Model API Error', { error });
         throw error;
       }
       throw new Error('Unknown error communicating with AI model');
@@ -207,7 +209,7 @@ export class AIModelClient {
       );
       return response.toLowerCase().includes('ok');
     } catch (error) {
-      console.error('AI Model connection test failed:', error);
+      aiLogger.error('AI Model connection test failed', { error });
       return false;
     }
   }

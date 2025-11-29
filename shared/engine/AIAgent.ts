@@ -12,6 +12,7 @@ import type { Pathfinder } from './Pathfinder.ts';
 import { PathSmoother } from './PathSmoother.ts';
 import { AgentMemory, type ObservationEntry, type ConversationEntry, type SuspicionRecord } from './AgentMemory.ts';
 import type { PlayerRole, PlayerState } from '../types/game.types.ts';
+import { aiLog, speechLog, taskLog, killLog, moveLog, godLog } from '../logging/index.ts';
 import type { 
   TaskAssignment, 
   AIContext, 
@@ -234,7 +235,7 @@ export class AIAgent {
   initializeRole(roleConfig: AIAgentRoleConfig): void {
     this.aiState.role = roleConfig.role;
     this.aiState.assignedTasks = roleConfig.assignedTasks;
-    console.log(`[${this.config.id}] Initialized as ${roleConfig.role} with ${roleConfig.assignedTasks.length} tasks`);
+    aiLog.get().info('Agent initialized', { agentId: this.config.id, role: roleConfig.role, taskCount: roleConfig.assignedTasks.length });
   }
   
   /**
@@ -297,28 +298,38 @@ export class AIAgent {
     // Trigger thought/reaction for important messages
     const lowerMsg = message.toLowerCase();
     const isAddressed = lowerMsg.includes(this.config.name.toLowerCase());
+    const isQuestion = lowerMsg.includes('?');
     const isImportant = lowerMsg.includes('sus') || lowerMsg.includes('impostor') || lowerMsg.includes('vent') ||
                         lowerMsg.includes('where') || lowerMsg.includes('saw') || lowerMsg.includes('help') ||
-                        lowerMsg.includes('?'); // Questions deserve responses
-    
-    if (isAddressed || isImportant) {
-      // Likely being addressed or something important - force immediate trigger check
-      this.behaviorState.lastTriggerCheckTime = 0;
-      
-      // Higher chance to respond when directly addressed
-      if (isAddressed) {
-        this.shouldRespondToConversation = true;
-      } else {
-        // Random chance to join conversation on important topics
-        this.shouldRespondToConversation = Math.random() < 0.6; // 60% chance
-      }
-    } else {
-      // Small talk - lower response chance
-      this.shouldRespondToConversation = Math.random() < 0.35; // 35% chance
-    }
-  }
+                        lowerMsg.includes('kill') || lowerMsg.includes('body') || lowerMsg.includes('dead');
+    const isGreeting = lowerMsg.includes('hi') || lowerMsg.includes('hello') || lowerMsg.includes('hey') ||
+                       lowerMsg.includes('sup') || lowerMsg.includes('yo ');
 
-  // ========== Main Update Loop ==========
+    // Always force immediate trigger check when hearing speech
+    this.behaviorState.lastTriggerCheckTime = 0;
+
+    if (isAddressed) {
+      // Directly addressed by name - always respond
+      this.shouldRespondToConversation = true;
+      speechLog.get().debug('Directly addressed, will respond', { agentName: this.config.name, speakerName });
+    } else if (isQuestion) {
+      // Questions deserve high response rate
+      this.shouldRespondToConversation = Math.random() < 0.85;
+      speechLog.get().debug('Heard question', { agentName: this.config.name, speakerName, shouldRespond: this.shouldRespondToConversation });
+    } else if (isImportant) {
+      // Important game-related content
+      this.shouldRespondToConversation = Math.random() < 0.75;
+      speechLog.get().debug('Heard important message', { agentName: this.config.name, speakerName, shouldRespond: this.shouldRespondToConversation });
+    } else if (isGreeting) {
+      // Greetings should get responses
+      this.shouldRespondToConversation = Math.random() < 0.70;
+      speechLog.get().debug('Heard greeting', { agentName: this.config.name, speakerName, shouldRespond: this.shouldRespondToConversation });
+    } else {
+      // General conversation - still respond most of the time
+      this.shouldRespondToConversation = Math.random() < 0.55;
+      speechLog.get().debug('Heard general talk', { agentName: this.config.name, speakerName, shouldRespond: this.shouldRespondToConversation });
+    }
+  }  // ========== Main Update Loop ==========
   
   /**
    * Update AI agent (called each frame) - NON-BLOCKING
@@ -633,7 +644,7 @@ export class AIAgent {
       this.behaviorState.isThinking = true;
       // Fire and forget - don't await
       this.decideNextActionAsync().catch(err => {
-        console.warn(`[${this.config.id}] Decision error:`, err);
+        aiLog.get().warn('Decision error', { agentId: this.config.id, error: err as Error });
       }).finally(() => {
         this.behaviorState.isThinking = false;
       });
@@ -668,7 +679,7 @@ export class AIAgent {
    * Execute an AI decision
    */
   private async executeDecision(decision: AIDecision): Promise<void> {
-    console.log(`[${this.config.id}] Decision: ${decision.goalType} - ${decision.reasoning}`);
+    aiLog.get().info('Decision made', { agentId: this.config.id, goalType: decision.goalType, reasoning: decision.reasoning });
     
     if (decision.thought) {
       this.aiState.currentThought = decision.thought;
@@ -696,10 +707,10 @@ export class AIAgent {
         
       case 'SPEAK':
         if (decision.speech) {
-          console.log(`[${this.config.id}] SPEAK: Executing speech - "${decision.speech.substring(0, 50)}..."`);
+          speechLog.get().info('Executing speech', { agentId: this.config.id, speechPreview: decision.speech.substring(0, 50) });
           this.speak(decision.speech);
         } else {
-          console.warn(`[${this.config.id}] SPEAK: No speech content in decision!`);
+          speechLog.get().warn('No speech content in decision', { agentId: this.config.id });
         }
         this.behaviorState.nextDecisionTime = Date.now() + 2000;
         break;
@@ -723,11 +734,11 @@ export class AIAgent {
       // ===== Impostor-only actions =====
       case 'KILL':
         // Request the kill through the callback
-        console.log(`[KILL-ACTION] ${this.config.name} attempting KILL on target: ${decision.killTarget || 'none'}, callback set: ${!!this.killRequestCallback}`);
+        killLog.get().info('Attempting kill', { agentName: this.config.name, target: decision.killTarget || 'none', hasCallback: !!this.killRequestCallback });
         if (decision.killTarget && this.killRequestCallback) {
           const targetId = decision.killTarget;
           const success = this.killRequestCallback(this.config.id, targetId);
-          console.log(`[KILL-ACTION] ${this.config.name} kill result: ${success ? 'SUCCESS' : 'FAILED'}`);
+          killLog.get().info('Kill result', { agentName: this.config.name, success });
           
           if (success) {
             // Kill succeeded - the callback should have called onKillSuccess
@@ -739,11 +750,11 @@ export class AIAgent {
           }
         } else if (decision.killTarget) {
           // No callback set, just track intent
-          console.log(`[KILL-ACTION] ${this.config.name} no callback set - tracking intent only`);
+          killLog.get().debug('No callback set, tracking intent only', { agentName: this.config.name });
           this.behaviorState.targetAgentId = decision.killTarget;
           this.behaviorState.currentGoal = `Kill target: ${decision.killTarget}`;
         } else {
-          console.log(`[KILL-ACTION] ${this.config.name} KILL goal but no target specified!`);
+          killLog.get().warn('Kill goal but no target specified', { agentName: this.config.name });
         }
         break;
         
@@ -823,7 +834,7 @@ export class AIAgent {
     } else {
       // Can't path to this task - try another task first
       attemptedTasks.add(taskIndex);
-      console.warn(`[${this.config.id}] Cannot reach task ${task.taskType} in ${task.room}, trying alternatives...`);
+      taskLog.get().warn('Cannot reach task, trying alternatives', { agentId: this.config.id, taskType: task.taskType, room: task.room });
       
       // Try to find another reachable task
       for (let i = 0; i < this.aiState.assignedTasks.length; i++) {
@@ -835,14 +846,14 @@ export class AIAgent {
         const currentPos = this.movementController.getPosition();
         const testPath = this.pathfinder.findPath(currentPos, altTask.position);
         if (testPath.success) {
-          console.log(`[${this.config.id}] Found reachable alternative task: ${altTask.taskType} in ${altTask.room}`);
+          taskLog.get().info('Found reachable alternative task', { agentId: this.config.id, taskType: altTask.taskType, room: altTask.room });
           return this.goToTask(i, attemptedTasks);
         }
         attemptedTasks.add(i);
       }
       
       // No reachable tasks - wander to a safe location
-      console.warn(`[${this.config.id}] No reachable tasks found, wandering instead`);
+      taskLog.get().warn('No reachable tasks found, wandering instead', { agentId: this.config.id });
       this.wanderRandomly();
     }
   }  /**
@@ -1104,7 +1115,7 @@ export class AIAgent {
     this.addRecentEvent(`Killed ${victimName}`);
     this.memory.recordMyLie(`I wasn't near ${victimName}`); // Pre-record potential alibi lie
     
-    console.log(`[${this.config.id}] Kill animation started for ${victimName}`);
+    killLog.get().debug('Kill animation started', { agentId: this.config.id, victimName });
     
     // Force immediate decision after kill animation
     this.behaviorState.nextDecisionTime = now + 600;
@@ -1429,7 +1440,7 @@ export class AIAgent {
     // Last resort: try to navigate to nearest reachable nav node
     const escapeNode = this.pathfinder.findNearestReachableNode(currentPosition);
     if (escapeNode && escapeNode.distance > 10) {
-      console.log(`[${this.config.id}] Wander failed, escaping to nearest nav node at (${escapeNode.node.position.x.toFixed(1)}, ${escapeNode.node.position.y.toFixed(1)})`);
+      moveLog.get().debug('Wander failed, escaping to nearest nav node', { agentId: this.config.id, x: escapeNode.node.position.x.toFixed(1), y: escapeNode.node.position.y.toFixed(1) });
       const success = this.navigateTo(escapeNode.node.position);
       if (success) {
         this.behaviorState.currentGoal = 'Finding safe position';
@@ -1438,7 +1449,7 @@ export class AIAgent {
     }
 
     // Complete failure - log and wait for next decision cycle
-    console.warn(`[${this.config.id}] Cannot find any reachable destination from (${currentPosition.x.toFixed(1)}, ${currentPosition.y.toFixed(1)})`);
+    moveLog.get().warn('Cannot find any reachable destination', { agentId: this.config.id, x: currentPosition.x.toFixed(1), y: currentPosition.y.toFixed(1) });
     this.behaviorState.nextDecisionTime = Date.now() + 2000;
     this.stateMachine.transitionTo(PlayerActivityState.IDLE, 'No reachable destination');
   }  /**
@@ -1453,9 +1464,9 @@ export class AIAgent {
       // Enhanced logging with diagnostic info
       const reason = pathResult.failureReason ?? 'Unknown reason';
       const debug = pathResult.debugInfo;
-      console.warn(`[${this.config.id}] Path not found: ${reason}`);
+      moveLog.get().warn('Path not found', { agentId: this.config.id, reason });
       if (debug) {
-        console.warn(`[${this.config.id}] Debug: startWalkable=${debug.startWalkable}, endWalkable=${debug.endWalkable}, startConn=${debug.startConnections}, endConn=${debug.endConnections}, explored=${debug.nodesExplored}`);
+        moveLog.get().debug('Path debug info', { agentId: this.config.id, startWalkable: debug.startWalkable, endWalkable: debug.endWalkable, startConn: debug.startConnections, endConn: debug.endConnections, explored: debug.nodesExplored });
       }
       return false;
     }
@@ -1492,7 +1503,7 @@ export class AIAgent {
     this.behaviorState.currentGoal = `Doing ${task.taskType}`;
     
     this.addRecentEvent(`Started task: ${task.taskType}`);
-    console.log(`[${this.config.id}] Started task: ${task.taskType} (${task.duration}ms)`);
+    taskLog.get().info('Started task', { agentId: this.config.id, taskType: task.taskType, durationMs: task.duration });
   }
   
   /**
@@ -1534,7 +1545,7 @@ export class AIAgent {
     
     const completedCount = this.aiState.assignedTasks.filter(t => t.isCompleted).length;
     this.addRecentEvent(`Completed task: ${task.taskType}`);
-    console.log(`[${this.config.id}] Completed task: ${task.taskType} (${completedCount}/${this.aiState.assignedTasks.length})`);
+    taskLog.get().info('Completed task', { agentId: this.config.id, taskType: task.taskType, completed: completedCount, total: this.aiState.assignedTasks.length });
     
     // Small delay before next decision
     this.behaviorState.idleTimeRemaining = 1000 + Math.random() * 2000;
@@ -1579,7 +1590,7 @@ export class AIAgent {
     const currentPos = this.movementController.getPosition();
     const currentZone = this.getCurrentZone() ?? 'unknown';
     
-    console.warn(`[${this.config.id}] Movement stuck at (${currentPos.x.toFixed(1)}, ${currentPos.y.toFixed(1)}) in ${currentZone}`);
+    moveLog.get().warn('Movement stuck', { agentId: this.config.id, x: currentPos.x.toFixed(1), y: currentPos.y.toFixed(1), zone: currentZone });
     
     this.movementController.stop();
     this.movementController.clearStuck();
@@ -1588,7 +1599,7 @@ export class AIAgent {
     const escapeTarget = this.pathfinder.findNearestReachableNode(currentPos);
     
     if (escapeTarget && escapeTarget.distance > 5) {
-      console.log(`[${this.config.id}] Attempting escape to nearest nav node at (${escapeTarget.node.position.x.toFixed(1)}, ${escapeTarget.node.position.y.toFixed(1)}), distance: ${escapeTarget.distance.toFixed(1)}`);
+      moveLog.get().debug('Attempting escape to nearest nav node', { agentId: this.config.id, x: escapeTarget.node.position.x.toFixed(1), y: escapeTarget.node.position.y.toFixed(1), distance: escapeTarget.distance.toFixed(1) });
       
       // Try to navigate to the escape point
       const pathResult = this.pathfinder.findPath(currentPos, escapeTarget.node.position);
@@ -1601,7 +1612,7 @@ export class AIAgent {
         this.behaviorState.nextDecisionTime = Date.now() + 3000; // Give time to escape
         return;
       } else {
-        console.warn(`[${this.config.id}] Escape path failed: ${pathResult.failureReason ?? 'Unknown'}`);
+        moveLog.get().warn('Escape path failed', { agentId: this.config.id, reason: pathResult.failureReason ?? 'Unknown' });
       }
     }
     
@@ -1636,37 +1647,40 @@ export class AIAgent {
     if (!this.triggerCallback) return;
 
     const context = this.buildAIContext();
-    
+
     // Include pending conversation reply info for the trigger callback
     if (this.shouldRespondToConversation && this.pendingConversationReply) {
-      // Pass conversation context to the trigger callback
-      const pendingReply = this.pendingConversationReply;
-      (context as AIContext & { pendingReply?: { speakerId: string; speakerName: string; message: string; zone: string | null; timestamp: number } }).pendingReply = pendingReply;
+      // Pass conversation context to the trigger callback (now properly typed in AIContext)
+      context.pendingReply = this.pendingConversationReply;
+      speechLog.get().debug('Passing pendingReply', { agentName: this.config.name, from: this.pendingConversationReply.speakerName });
+    } else if (this.pendingConversationReply) {
+      speechLog.get().debug('Has pendingReply but shouldRespond=false', { agentName: this.config.name });
     }
-    
-    const result = await this.triggerCallback(context);
 
-    if (result.thought) {
+    const result = await this.triggerCallback(context);    if (result.thought) {
       this.aiState.currentThought = result.thought.thought;
       this.aiState.lastThoughtTime = Date.now();
     }
-    
+
     if (result.speech) {
       this.speak(result.speech.message);
-      
+      speechLog.get().info('Agent spoke', { agentName: this.config.name, messagePreview: result.speech.message.substring(0, 50) });
+
       // If we had a pending conversation, clear it after speaking
       if (this.shouldRespondToConversation && this.pendingConversationReply) {
+        speechLog.get().debug('Clearing pendingReply after speech', { agentName: this.config.name });
         this.pendingConversationReply = null;
         this.shouldRespondToConversation = false;
       }
     }
-    
+
     // Clear old pending replies (older than 10 seconds)
     if (this.pendingConversationReply && Date.now() - this.pendingConversationReply.timestamp > 10000) {
+      speechLog.get().debug('Clearing expired pendingReply (>10s old)', { agentName: this.config.name });
       this.pendingConversationReply = null;
       this.shouldRespondToConversation = false;
     }
-  }  // ========== Speech ==========
+  }// ========== Speech ==========
   
   /**
    * Say something out loud
@@ -1674,7 +1688,7 @@ export class AIAgent {
   speak(message: string): void {
     this.aiState.recentSpeech = message;
     this.aiState.lastSpeechTime = Date.now();
-    console.log(`[${this.config.id}] Says: "${message}"`);
+    speechLog.get().info('Says', { agentId: this.config.id, message });
     
     // Broadcast speech to nearby agents
     if (this.speechBroadcastCallback) {
@@ -1749,21 +1763,28 @@ export class AIAgent {
         location: this.aiState.witnessedKill.location,
         timestamp: this.aiState.witnessedKill.timestamp,
       } : null,
+      // Recently heard messages from nearby agents
+      recentlyHeard: this.memory.getRecentConversations(5).map(c => ({
+        speakerName: c.speakerName,
+        message: c.message,
+        timestamp: c.timestamp,
+        wasDirectlyAddressed: c.message.toLowerCase().includes(this.config.name.toLowerCase()),
+      })),
       // God mode - divine intervention from observer
       godMode: (this.behaviorState.lastWhisper || this.behaviorState.guidingPrinciples.length > 0) ? {
         whisper: this.behaviorState.lastWhisper,
         guidingPrinciples: this.behaviorState.guidingPrinciples,
       } : undefined,
     };
-    
+
     // Add impostor-specific context
     if (this.aiState.role === 'IMPOSTOR') {
       context.impostorContext = this.buildImpostorContext();
     }
-    
+
     return context;
   }
-  
+
   /**
    * Build impostor-specific context for AI decisions
    */
@@ -2053,7 +2074,7 @@ export class AIAgent {
    * The agent will execute this command and return to normal thinking when done
    */
   async injectGodCommand(command: import('../types/protocol.types.ts').GodModeCommand): Promise<void> {
-    console.log(`[${this.config.id}] GOD MODE: Received command - ${command.action}`, command);
+    godLog.get().info('Received command', { agentId: this.config.id, action: command.action, command });
 
     // Set god mode active
     this.behaviorState.godModeActive = true;
@@ -2061,7 +2082,7 @@ export class AIAgent {
 
     // Convert GodModeCommand to AIDecision and execute
     const decision = this.godCommandToDecision(command);
-    console.log(`[${this.config.id}] GOD MODE: Converted to decision -`, decision);
+    godLog.get().debug('Converted to decision', { agentId: this.config.id, decision });
     this.behaviorState.godModeCommand = `${command.action}${this.getCommandDetails(command)}`;
 
     // Execute the decision
@@ -2216,7 +2237,7 @@ export class AIAgent {
    * This gets injected into the agent's next LLM prompt
    */
   receiveWhisper(whisper: string): void {
-    console.log(`[${this.config.id}] GOD MODE: Received whisper - "${whisper.substring(0, 50)}..."`);
+    godLog.get().info('Received whisper', { agentId: this.config.id, whisperPreview: whisper.substring(0, 50) });
     this.behaviorState.lastWhisper = whisper;
     this.behaviorState.lastWhisperTimestamp = Date.now();
     
@@ -2235,7 +2256,7 @@ export class AIAgent {
    * These persist and influence all future LLM decisions
    */
   setGuidingPrinciples(principles: string[]): void {
-    console.log(`[${this.config.id}] GOD MODE: Setting ${principles.length} guiding principles`);
+    godLog.get().info('Setting guiding principles', { agentId: this.config.id, principleCount: principles.length });
     this.behaviorState.guidingPrinciples = principles;
   }
 
@@ -2245,7 +2266,7 @@ export class AIAgent {
   addGuidingPrinciple(principle: string): void {
     if (!this.behaviorState.guidingPrinciples.includes(principle)) {
       this.behaviorState.guidingPrinciples.push(principle);
-      console.log(`[${this.config.id}] GOD MODE: Added principle - "${principle}"`);
+      godLog.get().info('Added principle', { agentId: this.config.id, principle });
     }
   }
 
@@ -2262,7 +2283,7 @@ export class AIAgent {
    * Clear all god mode state - return to normal LLM control
    */
   clearGodMode(): void {
-    console.log(`[${this.config.id}] GOD MODE: Cleared - returning to normal control`);
+    godLog.get().info('Cleared - returning to normal control', { agentId: this.config.id });
     this.behaviorState.godModeActive = false;
     this.behaviorState.godModeCommand = null;
     // Note: We don't clear whispers or principles - those persist until explicitly cleared

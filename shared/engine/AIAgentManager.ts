@@ -15,6 +15,7 @@ import type { PlayerRole } from '../types/game.types.ts';
 import type { TaskAssignment, AIContext, AIDecision } from '../types/simulation.types.ts';
 import { KillSystem, type KillSystemConfig, type DeadBody, type KillEvent, type WitnessRecord } from './KillSystem.ts';
 import { VentSystem, type VentSystemConfig, type VentEvent, type VentState, type VentWitness } from './VentSystem.ts';
+import { simLog, killLog, speechLog, zoneLog, moveLog } from '../logging/index.ts';
 
 // ========== Configuration ==========
 
@@ -70,17 +71,20 @@ export class AIAgentManager {
   private impostorIds: Set<string>;
   private killSystem: KillSystem;
   private ventSystem: VentSystem;
-  
+
   // AI Decision callbacks (can be set externally for LLM integration)
   private decisionCallback: AIDecisionCallback | null = null;
   private triggerCallback: AITriggerCallback | null = null;
-  
+
+  // Callback for when agents hear speech (for visual feedback)
+  private heardSpeechCallback: ((event: import('../types/simulation.types.ts').HeardSpeechEvent) => void) | null = null;
+
   constructor(config: AgentManagerConfig) {
     // Build navigation mesh
-    console.log('Building navigation mesh...');
+    simLog.get().info('Building navigation mesh...');
     this.navMeshBuilder = new NavMeshBuilder();
     const navMesh = this.navMeshBuilder.buildFromWalkableZones(config.walkableZones);
-    console.log(`Navigation mesh built with ${navMesh.nodes.size} nodes`);
+    simLog.get().info('Navigation mesh built', { nodeCount: navMesh.nodes.size });
     
     // Initialize pathfinder
     this.pathfinder = new Pathfinder(navMesh, config.walkableZones);
@@ -88,7 +92,7 @@ export class AIAgentManager {
     // Initialize zone detector
     this.zoneDetector = new ZoneDetector(config.walkableZones, config.labeledZones);
     const zones = this.zoneDetector.getAllZones();
-    console.log(`Zone detector initialized with ${zones.length} zones`);
+    zoneLog.get().info('Zone detector initialized', { zoneCount: zones.length });
     
     // Initialize destination selector
     this.destinationSelector = new DestinationSelector(config.walkableZones, config.tasks, navMesh);
@@ -132,8 +136,8 @@ export class AIAgentManager {
       this.killSystem.initializeImpostor(impostorId);
     }
     
-    console.log(`Created ${this.agents.length} AI agents (${numImpostors} impostors)`);
-    console.log(`Kill system initialized with ${this.impostorIds.size} impostors`);
+    simLog.get().info('Created AI agents', { count: this.agents.length, impostors: numImpostors });
+    killLog.get().info('Kill system initialized', { impostorCount: this.impostorIds.size });
   }
   
   /**
@@ -145,13 +149,20 @@ export class AIAgentManager {
   ): void {
     this.decisionCallback = decisionCallback;
     this.triggerCallback = triggerCallback;
-    
+
     // Propagate to all agents
     for (const agent of this.agents) {
       agent.setAICallbacks(decisionCallback, triggerCallback);
     }
   }
-  
+
+  /**
+   * Set callback for when agents hear speech (for visual feedback on client)
+   */
+  setHeardSpeechCallback(callback: (event: import('../types/simulation.types.ts').HeardSpeechEvent) => void): void {
+    this.heardSpeechCallback = callback;
+  }
+
   /**
    * Create AI agents with randomly assigned roles and tasks
    */
@@ -219,7 +230,7 @@ export class AIAgentManager {
       const zoneEvent = this.zoneDetector.updatePlayerPosition(agent.getId(), startPosition);
       if (zoneEvent) {
         agent.getStateMachine().updateLocation(zoneEvent.toZone, zoneEvent.zoneType);
-        console.log(`${agent.getId()} (${agentName}, ${role}) entered ${zoneEvent.toZone}`);
+        zoneLog.get().debug('Agent entered zone', { agentId: agent.getId(), agentName, role, zone: zoneEvent.toZone });
       }
     }
   }
@@ -345,12 +356,12 @@ export class AIAgentManager {
     const target = this.getAgent(targetId);
     
     if (!impostor || !target) {
-      console.warn(`Kill attempt failed: Invalid agents (impostor: ${impostorId}, target: ${targetId})`);
+      killLog.get().warn('Kill attempt failed: Invalid agents', { impostorId, targetId });
       return null;
     }
     
     if (target.getPlayerState() !== 'ALIVE') {
-      console.warn(`Kill attempt failed: Target ${targetId} is already dead`);
+      killLog.get().warn('Kill attempt failed: Target is already dead', { targetId });
       return null;
     }
     
@@ -393,7 +404,7 @@ export class AIAgentManager {
     );
     
     if (!killAttempt.success || !killAttempt.body) {
-      console.log(`Kill attempt failed: ${killAttempt.reason}`);
+      killLog.get().debug('Kill attempt failed', { reason: killAttempt.reason });
       return null;
     }
     
@@ -438,9 +449,9 @@ export class AIAgentManager {
       }
     }
     
-    console.log(`[KILL] ${impostor.getName()} killed ${target.getName()} in ${zone?.name || 'Unknown'}`);
+    killLog.get().info('Kill executed', { impostor: impostor.getName(), target: target.getName(), zone: zone?.name || 'Unknown' });
     if ((killAttempt.witnesses || []).length > 0) {
-      console.log(`[KILL] Witnesses: ${killAttempt.witnesses!.map(w => w.witnessId).join(', ')}`);
+      killLog.get().debug('Kill witnesses', { witnesses: killAttempt.witnesses!.map(w => w.witnessId) });
     }
     
     return killEvent;
@@ -530,7 +541,7 @@ export class AIAgentManager {
   private handleKillRequest(killerId: string, targetId: string): boolean {
     // Only impostors can request kills
     if (!this.impostorIds.has(killerId)) {
-      console.warn(`Kill request denied: ${killerId} is not an impostor`);
+      killLog.get().warn('Kill request denied: not an impostor', { killerId });
       return false;
     }
     
@@ -564,17 +575,17 @@ export class AIAgentManager {
   private broadcastSpeech(speakerId: string, message: string, zone: string | null): void {
     const speaker = this.agents.find(a => a.getId() === speakerId);
     if (!speaker) {
-      console.warn(`[SPEECH] broadcastSpeech: Speaker ${speakerId} not found`);
+      speechLog.get().warn('broadcastSpeech: Speaker not found', { speakerId });
       return;
     }
 
     // Dead agents can't speak
     if (speaker.getPlayerState() === 'DEAD') {
-      console.log(`[SPEECH] broadcastSpeech: Speaker ${speaker.getName()} is dead, can't speak`);
+      speechLog.get().debug('broadcastSpeech: Speaker is dead', { speakerName: speaker.getName() });
       return;
     }
 
-    console.log(`[SPEECH] ${speaker.getName()} broadcasting: "${message.substring(0, 50)}..." in zone ${zone}`);
+    speechLog.get().info('Broadcasting speech', { speakerName: speaker.getName(), messagePreview: message.substring(0, 50), zone });
 
     const speakerPos = speaker.getPosition();
     let listenersReached = 0;
@@ -599,11 +610,27 @@ export class AIAgentManager {
         // Listener can hear the speech (they can see the speaker)
         listener.hearSpeech(speakerId, speaker.getName(), message, zone);
         listenersReached++;
+
+        // Emit heard event for visual feedback on client
+        if (this.heardSpeechCallback) {
+          const isDirectlyAddressed = message.toLowerCase().includes(listener.getName().toLowerCase());
+          this.heardSpeechCallback({
+            id: `heard-${Date.now()}-${listener.getId()}`,
+            listenerId: listener.getId(),
+            listenerName: listener.getName(),
+            speakerId: speakerId,
+            speakerName: speaker.getName(),
+            timestamp: Date.now(),
+            message: message.substring(0, 100), // Truncate for event
+            distance: distance,
+            isDirectlyAddressed,
+          });
+        }
       }
     }
-    
-    console.log(`[SPEECH] ${speaker.getName()}'s message reached ${listenersReached} listeners`);
-  }  /**
+
+    speechLog.get().debug('Speech reached listeners', { speakerName: speaker.getName(), listenersReached });
+  }/**
    * Get all agents
    */
   getAgents(): AIAgent[] {

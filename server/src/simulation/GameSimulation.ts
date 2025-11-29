@@ -1,10 +1,11 @@
 import { AIAgentManager } from '@shared/engine/AIAgentManager.ts';
 import { serializeWorld, type SerializeWorldOptions } from '@shared/engine/serialization.ts';
 import { WALKABLE_ZONES, LABELED_ZONES, TASKS, VENTS } from '@shared/data/poly3-map.ts';
-import type { WorldSnapshot, ThoughtEvent, SpeechEvent, AIContext, GameTimerSnapshot } from '@shared/types/simulation.types.ts';
+import type { WorldSnapshot, ThoughtEvent, SpeechEvent, HeardSpeechEvent, AIContext, GameTimerSnapshot } from '@shared/types/simulation.types.ts';
 import { AIDecisionService } from '../ai/AIDecisionService.js';
 import type { KillEvent } from '@shared/engine/KillSystem.ts';
 import type { VentEvent } from '@shared/engine/VentSystem.ts';
+import { simulationLogger, aiLogger, systemLogger } from '../logging/index.js';
 
 export interface SimulationOptions {
   numAgents?: number;
@@ -32,6 +33,7 @@ export class GameSimulation {
   private gamePhase: 'INITIALIZING' | 'PLAYING' | 'MEETING' | 'GAME_OVER';
   private recentThoughts: ThoughtEvent[];
   private recentSpeech: SpeechEvent[];
+  private recentHeard: HeardSpeechEvent[];
   private recentKills: KillEvent[];
   private recentVentEvents: VentEvent[];
   
@@ -57,10 +59,10 @@ export class GameSimulation {
     if (this.options.enableAI) {
       this.aiService = new AIDecisionService(this.options.aiServerUrl);
       this.setupAICallbacks();
-      console.log(`AI Decision Service initialized with server: ${this.options.aiServerUrl}`);
+      aiLogger.info('AI Decision Service initialized', { serverUrl: this.options.aiServerUrl });
     } else {
       this.aiService = null;
-      console.log('AI Decision Service disabled, using fallback behavior');
+      aiLogger.info('AI Decision Service disabled, using fallback behavior');
     }
 
     this.lastTimestamp = Date.now();
@@ -68,25 +70,23 @@ export class GameSimulation {
     this.gamePhase = 'PLAYING';
     this.recentThoughts = [];
     this.recentSpeech = [];
+    this.recentHeard = [];
     this.recentKills = [];
     this.recentVentEvents = [];
-    
+
     // Initialize game timer
     this.gameDurationMs = this.options.gameDurationMs;
     this.gameStartTime = Date.now();
-    
+
     // Log game setup
     this.logGameStart();
-  }
-  
-  private logGameStart(): void {
+  }  private logGameStart(): void {
     const durationMinutes = Math.floor(this.gameDurationMs / 60000);
-    console.log('='.repeat(50));
-    console.log('🎮 NEW GAME STARTED');
-    console.log(`⏱️  Duration: ${durationMinutes} minutes`);
-    console.log(`👥 Agents: ${this.options.numAgents}`);
-    console.log(`🔪 Impostors: ${this.manager.getImpostorIds().join(', ')}`);
-    console.log('='.repeat(50));
+    simulationLogger.info('NEW GAME STARTED', {
+      durationMinutes,
+      numAgents: this.options.numAgents,
+      impostors: this.manager.getImpostorIds(),
+    });
   }
 
   /**
@@ -99,6 +99,11 @@ export class GameSimulation {
     for (const agent of this.manager.getAgents()) {
       this.aiService.initializeAgent(agent.getId());
     }
+
+    // Set up callback for heard speech events (for visual feedback)
+    this.manager.setHeardSpeechCallback((event) => {
+      this.addHeardEvent(event);
+    });
 
     // Set up callbacks
     this.manager.setAICallbacks(
@@ -176,9 +181,7 @@ export class GameSimulation {
    * Restart the game with new agents and impostors
    */
   restart(): void {
-    console.log('\n' + '🔄'.repeat(25));
-    console.log('⏰ GAME TIMER EXPIRED - RESTARTING GAME');
-    console.log('🔄'.repeat(25) + '\n');
+    simulationLogger.info('GAME TIMER EXPIRED - RESTARTING GAME');
     
     // Create fresh manager with new impostor selection
     this.manager = new AIAgentManager({
@@ -199,23 +202,22 @@ export class GameSimulation {
       }
       this.setupAICallbacks();
     }
-    
+
     // Reset game state
     this.lastTimestamp = Date.now();
     this.tick = 0;
     this.gamePhase = 'PLAYING';
     this.recentThoughts = [];
     this.recentSpeech = [];
+    this.recentHeard = [];
     this.recentKills = [];
     this.recentVentEvents = [];
-    
+
     // Reset timer
     this.gameStartTime = Date.now();
-    
-    this.logGameStart();
-  }
 
-  step(timestamp = Date.now()): WorldSnapshot {
+    this.logGameStart();
+  }  step(timestamp = Date.now()): WorldSnapshot {
     // Check if game should restart
     if (this.isTimerExpired()) {
       this.restart();
@@ -273,6 +275,7 @@ export class GameSimulation {
       taskProgress: this.manager.getTaskProgress(),
       recentThoughts: this.recentThoughts,
       recentSpeech: this.recentSpeech,
+      recentHeard: this.recentHeard,
       llmQueueStats: this.aiService?.getQueueStats(),
       bodies: this.manager.getBodies(),
       recentKills: this.recentKills,
@@ -291,7 +294,19 @@ export class GameSimulation {
       this.recentVentEvents = this.recentVentEvents.slice(-10);
     }
 
+    // Clear old heard events (keep only last 20)
+    if (this.recentHeard.length > 20) {
+      this.recentHeard = this.recentHeard.slice(-20);
+    }
+
     return serializeWorld(this.manager.getAgents(), this.tick, timestamp, options);
+  }
+
+  /**
+   * Add a heard speech event (called when an agent hears another agent speak)
+   */
+  addHeardEvent(event: HeardSpeechEvent): void {
+    this.recentHeard.push(event);
   }
 
   getAgentManager(): AIAgentManager {

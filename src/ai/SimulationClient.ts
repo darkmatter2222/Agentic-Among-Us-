@@ -1,6 +1,7 @@
 import type { ServerMessage, WorldDelta, ClientMessage, GodModeCommand } from '@shared/types/protocol.types.ts';
 import type { AgentSnapshot, WorldSnapshot } from '@shared/types/simulation.types.ts';
 import type { LLMTraceEvent } from '@shared/types/llm-trace.types.ts';
+import { websocketLogger } from '../logging/index.ts';
 
 type WorldListener = (snapshot: WorldSnapshot) => void;
 type ConnectionState = 'connecting' | 'connected' | 'disconnected' | 'stale' | 'reconnecting';
@@ -46,7 +47,7 @@ export class SimulationClient {
         attempt: this.reconnectAttempts
       });
     } catch (error) {
-      console.error('Failed to open simulation socket:', error);
+      websocketLogger.error('Failed to open simulation socket', { error });
       this.updateConnectionState('disconnected');
       this.scheduleReconnect();
       return;
@@ -73,7 +74,7 @@ export class SimulationClient {
     });
 
     this.socket.addEventListener('close', (event) => {
-      console.warn('[simulation] websocket closed', {
+      websocketLogger.warn('WebSocket closed', {
         code: event.code,
         reason: event.reason,
         wasClean: event.wasClean,
@@ -91,7 +92,7 @@ export class SimulationClient {
     });
 
     this.socket.addEventListener('error', (error) => {
-      console.error('[simulation] websocket error', error);
+      websocketLogger.error('WebSocket error', { error });
       // Don't update state here - the close event will follow
     });
   }
@@ -128,7 +129,7 @@ export class SimulationClient {
     }
     
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.warn('[simulation] max reconnect attempts reached', this.reconnectAttempts);
+      websocketLogger.warn('Max reconnect attempts reached', { attempts: this.reconnectAttempts });
       return;
     }
     
@@ -212,7 +213,7 @@ export class SimulationClient {
       rawData
         .text()
         .then(text => this.handleMessage(text))
-        .catch(error => console.warn('Failed to decode blob payload', error));
+        .catch(error => websocketLogger.warn('Failed to decode blob payload', { error }));
       return;
     }
 
@@ -231,7 +232,7 @@ export class SimulationClient {
       try {
         message = JSON.parse(payload) as ServerMessage;
     } catch (error) {
-      console.warn('Failed to parse simulation payload', error);
+      websocketLogger.warn('Failed to parse simulation payload', { error });
       return;
     }
 
@@ -258,7 +259,7 @@ export class SimulationClient {
         break;
       }
       case 'error': {
-        console.error('Simulation server error:', message.payload);
+        websocketLogger.error('Simulation server error', { payload: message.payload });
         break;
       }
       case 'llm-trace': {
@@ -273,7 +274,7 @@ export class SimulationClient {
         break;
       }
       default:
-        console.warn('Unhandled simulation message type', (message as { type: string }).type);
+        websocketLogger.warn('Unhandled simulation message type', { type: (message as { type: string }).type });
     }
   }
 
@@ -285,7 +286,7 @@ export class SimulationClient {
       hasWorld: Boolean(this.world)
     });
     if (!this.world) {
-      console.warn('Received delta before initial snapshot');
+      websocketLogger.warn('Received delta before initial snapshot');
       return;
     }
 
@@ -361,7 +362,7 @@ export class SimulationClient {
 
     if (deltaById.size > 0) {
       for (const entry of deltaById.values()) {
-        console.warn('Delta referenced unknown agent, ignoring', entry.id);
+        websocketLogger.warn('Delta referenced unknown agent', { agentId: entry.id });
       }
     }
 
@@ -405,7 +406,7 @@ export class SimulationClient {
     this.heartbeatMonitorId = window.setInterval(() => {
       const elapsed = Date.now() - this.lastHeartbeatAt;
       if (elapsed > this.heartbeatTimeoutMs) {
-        console.warn('[simulation] heartbeat timeout, triggering reconnect');
+        websocketLogger.warn('Heartbeat timeout, triggering reconnect');
         this.updateConnectionState('stale');
         this.disconnectSocket();
         this.scheduleReconnect();
@@ -466,14 +467,14 @@ export class SimulationClient {
    */
   private sendMessage(message: ClientMessage): boolean {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      console.warn('[simulation] Cannot send message - not connected');
+      websocketLogger.warn('Cannot send message - not connected');
       return false;
     }
     try {
       this.socket.send(JSON.stringify(message));
       return true;
     } catch (error) {
-      console.error('[simulation] Failed to send message', error);
+      websocketLogger.error('Failed to send message', { error });
       return false;
     }
   }

@@ -4,6 +4,7 @@
  */
 
 import type { Point } from '@shared/data/poly3-map.ts';
+import { simulationLogger, zoneLogger } from '../logging/index.ts';
 import { NavMeshBuilder } from './NavMesh.ts';
 import { Pathfinder } from './Pathfinder.ts';
 import { ZoneDetector } from './ZoneDetector.ts';
@@ -27,10 +28,10 @@ export class AIAgentManager {
   
   constructor(config: AgentManagerConfig) {
     // Build navigation mesh
-    console.log('Building navigation mesh...');
+    simulationLogger.info('Building navigation mesh...');
     this.navMeshBuilder = new NavMeshBuilder();
     const navMesh = this.navMeshBuilder.buildFromWalkableZones(config.walkableZones);
-    console.log(`Navigation mesh built with ${navMesh.nodes.size} nodes`);
+    simulationLogger.info('Navigation mesh built', { nodeCount: navMesh.nodes.size });
     
     // Initialize pathfinder
     this.pathfinder = new Pathfinder(navMesh, config.walkableZones);
@@ -38,7 +39,7 @@ export class AIAgentManager {
     // Initialize zone detector
     this.zoneDetector = new ZoneDetector(config.walkableZones, config.labeledZones);
     const zones = this.zoneDetector.getAllZones();
-    console.log(`Zone detector initialized with ${zones.length} zones`);
+    zoneLogger.info('Zone detector initialized', { zoneCount: zones.length });
     
     // Initialize destination selector
     this.destinationSelector = new DestinationSelector(config.walkableZones, config.tasks, navMesh);
@@ -46,7 +47,7 @@ export class AIAgentManager {
     // Create agents
     this.agents = [];
     this.createAgents(config.numAgents, zones);
-    console.log(`Created ${this.agents.length} AI agents`);
+    simulationLogger.info('Created AI agents', { count: this.agents.length });
   }
   
   /**
@@ -96,14 +97,14 @@ export class AIAgentManager {
       this.agents.push(agent);
       
       // Initialize zone detection for starting position
-      const zoneEvent = this.zoneDetector.updatePlayerPosition(agent.getId(), startPosition);
+const zoneEvent = this.zoneDetector.updatePlayerPosition(agent.getId(), startPosition);
       if (zoneEvent) {
         agent.getStateMachine().updateLocation(zoneEvent.toZone, zoneEvent.zoneType);
-        console.log(`${agent.getId()} entered ${zoneEvent.toZone} (${zoneEvent.zoneType})`);
+        zoneLogger.debug('Agent entered zone', { agentId: agent.getId(), zone: zoneEvent.toZone, zoneType: zoneEvent.zoneType });
       }
     }
   }
-  
+
   /**
    * Update all agents (call every frame)
    */
@@ -119,12 +120,10 @@ export class AIAgentManager {
       if (zoneEvent) {
         // Zone changed
         agent.getStateMachine().updateLocation(zoneEvent.toZone, zoneEvent.zoneType);
-        console.log(`${agent.getId()} entered ${zoneEvent.toZone} (${zoneEvent.zoneType})`);
+        zoneLogger.debug('Agent entered zone', { agentId: agent.getId(), zone: zoneEvent.toZone, zoneType: zoneEvent.zoneType });
       }
     }
-  }
-  
-  /**
+  }  /**
    * Get all agents
    */
   getAgents(): AIAgent[] {

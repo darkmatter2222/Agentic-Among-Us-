@@ -5,12 +5,14 @@
  */
 
 import * as PIXI from 'pixi.js';
-import type { AgentSnapshot, SpeechEvent, ThoughtEvent } from '@shared/types/simulation.types.ts';
+import { renderLogger } from '../logging/index.ts';
+import type { AgentSnapshot, SpeechEvent, ThoughtEvent, HeardSpeechEvent } from '@shared/types/simulation.types.ts';
 import { VisionBoxRenderer, type LightsStateCallback } from './VisionBoxRenderer.ts';
 import { ActionRadiusRenderer } from './ActionRadiusRenderer.ts';
 import { PathLineRenderer } from './PathLineRenderer.ts';
 import { SpeechBubbleRenderer } from './SpeechBubbleRenderer.ts';
 import { ThinkingBubbleRenderer } from './ThinkingBubbleRenderer.ts';
+import { HearingIndicatorRenderer } from './HearingIndicatorRenderer.ts';
 import type { RoomLightingRenderer } from './RoomLightingRenderer.ts';
 
 export interface AgentVisuals {
@@ -73,16 +75,21 @@ export class AIAgentVisualRenderer {
   private agentVisuals: Map<string, AgentVisualState>;
   private speechBubbleRenderer: SpeechBubbleRenderer;
   private thinkingBubbleRenderer: ThinkingBubbleRenderer;
+  private hearingIndicatorRenderer: HearingIndicatorRenderer;
   private showVisionBoxes: boolean = false;
   private showActionRadius: boolean = false;
   private showPaths: boolean = true;
   private showSpeechBubbles: boolean = true;
   private showThoughtBubbles: boolean = true;
   private showThinkingBubbles: boolean = true;
+  private showHearingIndicators: boolean = true;
 
   // Lighting reference for color confidence calculations
   private lightingRenderer: RoomLightingRenderer | null = null;
   private lightsStateCallback: LightsStateCallback | null = null;
+
+  // Track processed heard events to avoid duplicates
+  private processedHeardEvents: Set<string> = new Set();
 
   constructor() {
     this.container = new PIXI.Container();
@@ -98,6 +105,12 @@ export class AIAgentVisualRenderer {
     this.thinkingBubbleRenderer = new ThinkingBubbleRenderer({
       offsetY: -55,
     });
+    this.hearingIndicatorRenderer = new HearingIndicatorRenderer({
+      duration: 1200,
+      size: 10,
+      offsetY: -35,
+    });
+    this.container.addChild(this.hearingIndicatorRenderer.getContainer());
     this.container.addChild(this.thinkingBubbleRenderer.getContainer());
     this.container.addChild(this.speechBubbleRenderer.getContainer());
   }
@@ -115,13 +128,13 @@ export class AIAgentVisualRenderer {
     }
   }
 
-  syncAgents(snapshots: AgentSnapshot[], recentSpeech?: SpeechEvent[], recentThoughts?: ThoughtEvent[]): void {
+  syncAgents(snapshots: AgentSnapshot[], recentSpeech?: SpeechEvent[], recentThoughts?: ThoughtEvent[], recentHeard?: HeardSpeechEvent[]): void {
     const activeIds = new Set<string>();
 
     // Log any dead agents received
     const deadSnapshots = snapshots.filter(s => s.playerState === 'DEAD');
     if (deadSnapshots.length > 0) {
-      console.log(`[RENDER] Received ${deadSnapshots.length} dead agent(s):`, deadSnapshots.map(s => s.name));
+      renderLogger.debug('Received dead agents', { count: deadSnapshots.length, names: deadSnapshots.map(s => s.name) });
     }
 
     for (const snapshot of snapshots) {
@@ -140,12 +153,12 @@ export class AIAgentVisualRenderer {
 
       // Debug logging
       if (snapshot.playerState === 'DEAD') {
-        console.log(`[RENDER] Agent ${snapshot.id} is DEAD, wasDead=${wasDead}, isDead=${state.isDead}`);
+        renderLogger.debug('Agent is DEAD', { agentId: snapshot.id, wasDead, isDead: state.isDead });
       }
 
       // If just died, switch to dead body graphics
       if (state.isDead && !wasDead) {
-        console.log(`[RENDER] Agent ${snapshot.id} just died! Showing dead body.`);
+        renderLogger.info('Agent just died - showing dead body', { agentId: snapshot.id });
         this.showDeadBody(state);
       }
 
@@ -223,6 +236,34 @@ export class AIAgentVisualRenderer {
             { x: state.visuals.spriteContainer.x, y: state.visuals.spriteContainer.y }
           );
           state.lastThoughtTime = thought.timestamp;
+        }
+      }
+    }
+
+    // Show hearing indicators for agents who heard speech
+    if (this.showHearingIndicators && recentHeard) {
+      for (const heardEvent of recentHeard) {
+        // Skip if we've already processed this event
+        if (this.processedHeardEvents.has(heardEvent.id)) continue;
+        this.processedHeardEvents.add(heardEvent.id);
+
+        const listenerState = this.agentVisuals.get(heardEvent.listenerId);
+        const speakerState = this.agentVisuals.get(heardEvent.speakerId);
+        
+        if (listenerState && speakerState) {
+          this.hearingIndicatorRenderer.showHearing(
+            heardEvent.listenerId,
+            { x: listenerState.visuals.spriteContainer.x, y: listenerState.visuals.spriteContainer.y },
+            { x: speakerState.visuals.spriteContainer.x, y: speakerState.visuals.spriteContainer.y }
+          );
+        }
+      }
+      
+      // Clean up old processed events (keep last 100)
+      if (this.processedHeardEvents.size > 100) {
+        const entries = Array.from(this.processedHeardEvents);
+        for (let i = 0; i < entries.length - 100; i++) {
+          this.processedHeardEvents.delete(entries[i]);
         }
       }
     }
@@ -501,7 +542,7 @@ export class AIAgentVisualRenderer {
     } else {
       this.thinkingBubbleRenderer.getContainer().visible = false;
     }
-    
+
     // Update speech bubbles with current agent positions
     if (this.showSpeechBubbles) {
       this.speechBubbleRenderer.update(deltaTime, agentPositions);
@@ -509,9 +550,15 @@ export class AIAgentVisualRenderer {
     } else {
       this.speechBubbleRenderer.getContainer().visible = false;
     }
-  }
 
-  toggleVisionBoxes(show?: boolean): void {
+    // Update hearing indicators with current agent positions
+    if (this.showHearingIndicators) {
+      this.hearingIndicatorRenderer.update(deltaTime, agentPositions);
+      this.hearingIndicatorRenderer.getContainer().visible = true;
+    } else {
+      this.hearingIndicatorRenderer.getContainer().visible = false;
+    }
+  }  toggleVisionBoxes(show?: boolean): void {
     this.showVisionBoxes = show ?? !this.showVisionBoxes;
   }
 
@@ -535,6 +582,10 @@ export class AIAgentVisualRenderer {
     this.showThinkingBubbles = show ?? !this.showThinkingBubbles;
   }
 
+  toggleHearingIndicators(show?: boolean): void {
+    this.showHearingIndicators = show ?? !this.showHearingIndicators;
+  }
+
   // Getter methods for current toggle states
   isShowingVisionBoxes(): boolean { return this.showVisionBoxes; }
   isShowingActionRadius(): boolean { return this.showActionRadius; }
@@ -542,6 +593,7 @@ export class AIAgentVisualRenderer {
   isShowingSpeechBubbles(): boolean { return this.showSpeechBubbles; }
   isShowingThoughtBubbles(): boolean { return this.showThoughtBubbles; }
   isShowingThinkingBubbles(): boolean { return this.showThinkingBubbles; }
+  isShowingHearingIndicators(): boolean { return this.showHearingIndicators; }
 
   getContainer(): PIXI.Container {
     return this.container;
@@ -993,7 +1045,7 @@ export class AIAgentVisualRenderer {
 
     // If agent is already dead when we create their visual, show dead body immediately
     if (state.isDead) {
-      console.log(`[RENDER] Agent ${snapshot.id} created as already dead - showing dead body immediately`);
+      renderLogger.debug('Agent created as already dead - showing dead body immediately', { agentId: snapshot.id });
       this.showDeadBody(state);
     }    return state;
   }
@@ -1004,13 +1056,13 @@ export class AIAgentVisualRenderer {
    * No blood pool - just the clean body graphic
    */
   private showDeadBody(state: AgentVisualState): void {
-    console.log(`[RENDER] showDeadBody() called - hiding live body, showing dead body graphics`);
+    renderLogger.debug('showDeadBody() called - hiding live body, showing dead body graphics');
     const visuals = state.visuals;
     const color = visuals.bodyColor;
     const sizeMultiplier = AIAgentVisualRenderer.SIZE_MULTIPLIER;
     const size = 14 * sizeMultiplier;
 
-    console.log(`[RENDER] showDeadBody - bodyGraphics.visible was: ${visuals.bodyGraphics.visible}, deadBodyGraphics.visible was: ${visuals.deadBodyGraphics.visible}`);
+    renderLogger.trace('showDeadBody - visibility state', { bodyGraphicsVisible: visuals.bodyGraphics.visible, deadBodyGraphicsVisible: visuals.deadBodyGraphics.visible });
 
     // Hide live body parts
     visuals.bodyGraphics.visible = false;
@@ -1138,7 +1190,7 @@ export class AIAgentVisualRenderer {
     visuals.deadBodyGraphics.drawCircle(boneEndX, boneY + boneThickness * 0.45, boneThickness * 0.6);
     visuals.deadBodyGraphics.lineStyle(0);
 
-    console.log(`[RENDER] showDeadBody - COMPLETE. bodyGraphics.visible: ${visuals.bodyGraphics.visible}, deadBodyGraphics.visible: ${visuals.deadBodyGraphics.visible}, bloodPool.visible: ${visuals.bloodPool.visible}`);
+    renderLogger.debug('showDeadBody complete', { bodyGraphicsVisible: visuals.bodyGraphics.visible, deadBodyGraphicsVisible: visuals.deadBodyGraphics.visible, bloodPoolVisible: visuals.bloodPool.visible });
   }/**
    * Darken a color by a factor (0-1)
    */

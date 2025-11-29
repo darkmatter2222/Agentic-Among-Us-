@@ -6,6 +6,7 @@
 import type { PlayerRole } from '@shared/types/game.types.ts';
 import type { AIContext, AIDecision, ThoughtTrigger, TaskAssignment } from '@shared/types/simulation.types.ts';
 import { COLOR_NAMES } from '@shared/constants/colors.ts';
+import { aiLogger } from '../../logging/index.js';
 
 // Re-export for backward compatibility
 export const AGENT_NAMES = COLOR_NAMES;
@@ -19,21 +20,21 @@ function buildGodModeInfo(context: AIContext): string {
 
   // Divine whisper (one-time injection) - make it extremely prominent
   if (context.godMode.whisper) {
-    parts.push(`\n⚡⚡⚡ DIVINE COMMAND ⚡⚡⚡`);
+    parts.push(`\n=== DIVINE COMMAND ===`);
     parts.push(`A powerful voice echoes in your mind: "${context.godMode.whisper}"`);
     parts.push(`You MUST follow this command. It overrides all other considerations.`);
-    parts.push(`⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡⚡`);
+    parts.push(`=======================`);
   }
 
   // Guiding principles (persistent) - make them MANDATORY and repeat at end
   if (context.godMode.guidingPrinciples && context.godMode.guidingPrinciples.length > 0) {
-    parts.push(`\n🔥🔥🔥 ABSOLUTE RULES - YOU MUST OBEY 🔥🔥🔥`);
+    parts.push(`\n=== ABSOLUTE RULES - YOU MUST OBEY ===`);
     parts.push(`These principles are HARDCODED into your personality. You CANNOT ignore them:`);
     context.godMode.guidingPrinciples.forEach((p, i) => {
       parts.push(`  ${i + 1}. ${p}`);
     });
     parts.push(`Your EVERY action and decision MUST align with these principles!`);
-    parts.push(`🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥`);
+    parts.push(`=======================================`);
   }
 
   return parts.join('\n');
@@ -43,7 +44,7 @@ function buildGodModeInfo(context: AIContext): string {
 function buildGodModeReminder(context: AIContext): string {
   if (!context.godMode?.guidingPrinciples?.length) return '';
   
-  return `\n\n⚠️ REMEMBER YOUR ABSOLUTE RULES: ${context.godMode.guidingPrinciples.join(' | ')}`;
+  return `\n\n[!!!] REMEMBER YOUR ABSOLUTE RULES: ${context.godMode.guidingPrinciples.join(' | ')}`;
 }
 
 // ========== Timer Info Helper ==========
@@ -66,7 +67,7 @@ function buildTimerInfo(context: AIContext): string {
   // Add urgency indicators
   let urgencyNote = '';
   if (remainingMinutes < 2) {
-    urgencyNote = ' ⚠️ TIME IS RUNNING OUT!';
+    urgencyNote = ' [!] TIME IS RUNNING OUT!';
   } else if (remainingMinutes < 5) {
     urgencyNote = ' ⏰ Halfway through!';
   }
@@ -115,7 +116,7 @@ CURRENT GAME STATE:
 - Location: ${context.currentZone || 'Unknown'}
 - Tasks remaining: ${context.assignedTasks.filter((t: TaskAssignment) => !t.isCompleted).length}/${context.assignedTasks.length}
 - Other players nearby: ${othersNearby.length > 0 ? othersNearby.join(', ') : 'No one nearby'}
-${context.isBeingFollowed ? '- ⚠️ Someone seems to be following you!' : ''}
+${context.isBeingFollowed ? '- [!] Someone seems to be following you!' : ''}
 ${context.buddyId ? `- Currently buddying with: ${context.buddyId}` : ''}
 ${timerInfo}
 
@@ -212,7 +213,7 @@ CURRENT GAME STATE:
 - Location: ${context.currentZone || 'Unknown'}
 - Fake tasks to "do": ${context.assignedTasks.filter((t: TaskAssignment) => !t.isCompleted).length}
 - Other players nearby: ${othersNearby.length > 0 ? othersNearby.join(', ') : 'No one nearby - OPPORTUNITY!'}
-${context.isBeingFollowed ? '- ⚠️ Someone is following you - act natural, DO NOT KILL!' : ''}
+${context.isBeingFollowed ? '- [!] Someone is following you - act natural, DO NOT KILL!' : ''}
 ${timerInfo}
 
 ${memoryInfo}
@@ -250,11 +251,11 @@ function getImpostorUrgency(context: AIContext): string {
   // Calculate urgency based on time remaining and kill count
   if (remainingMinutes < 2) {
     if (killCount === 0) {
-      return `\n🚨 CRITICAL URGENCY: Less than 2 minutes left and NO KILLS!
+      return `\n[CRITICAL] CRITICAL URGENCY: Less than 2 minutes left and NO KILLS!
 You MUST kill someone NOW or the round ends with crewmates winning!
 Take risks - being caught is better than losing to the timer!`;
     }
-    return `\n⚠️ HIGH URGENCY: Less than 2 minutes remaining!
+    return `\n[!] HIGH URGENCY: Less than 2 minutes remaining!
 Consider aggressive plays - time is running out!`;
   } else if (remainingMinutes < 5) {
     if (killCount === 0) {
@@ -266,7 +267,7 @@ Follow crewmates to dead-end rooms like Electrical or MedBay.`;
 Look for more kill opportunities while blending in.`;
   } else if (elapsedMs > 2 * 60 * 1000 && killCount === 0) {
     // More than 2 minutes in with no kills
-    return `\n💡 TIP: You've been playing safe for a while with no kills.
+    return `\nTIP: You've been playing safe for a while with no kills.
 Start following crewmates to isolated areas.
 Good hunting spots: Electrical, MedBay, Reactor, Engine rooms.`;
   }
@@ -287,7 +288,7 @@ function buildSuspicionInfo(context: AIContext): string {
   if (entries.length === 0) return '';
   
   const lines = entries.map(([agentId, level]) => {
-    const status = level > 70 ? '🔴 HIGH' : level > 55 ? '🟡 Medium' : level < 40 ? '🟢 Trusted' : '';
+    const status = level > 70 ? '[HIGH]' : level > 55 ? '[MED]' : level < 40 ? '[LOW]' : '';
     return `  - ${agentId.replace('agent_', '')}: ${level}% ${status}`;
   });
   
@@ -319,7 +320,7 @@ function buildImpostorKillInfo(context: AIContext): string {
   if (imp.killCooldownRemaining > 0) {
     lines.push(`⏱️ Kill cooldown: ${imp.killCooldownRemaining.toFixed(1)}s remaining - CANNOT KILL YET`);
   } else {
-    lines.push(`✅ Kill READY - You can kill now!`);
+    lines.push(`[READY] Kill READY - You can kill now!`);
   }
   
   // Targets in range
@@ -328,42 +329,42 @@ function buildImpostorKillInfo(context: AIContext): string {
       const isolated = t.isIsolated ? ' (ISOLATED!)' : ' (has witnesses)';
       return `${t.name}${isolated}`;
     }).join(', ');
-    lines.push(`🎯 Targets in kill range: ${targetInfo}`);
+    lines.push(`[TGT] Targets in kill range: ${targetInfo}`);
     
     // Highlight isolated targets
     const isolatedTargets = imp.targetsInKillRange.filter(t => t.isIsolated);
     if (isolatedTargets.length > 0 && imp.canKill) {
-      lines.push(`💀 OPPORTUNITY: ${isolatedTargets.map(t => t.name).join(', ')} - alone and vulnerable!`);
+      lines.push(`[OPPORTUNITY] OPPORTUNITY: ${isolatedTargets.map(t => t.name).join(', ')} - alone and vulnerable!`);
     }
   } else {
-    lines.push(`❌ No targets in range - move closer to a crewmate`);
+    lines.push(`[X] No targets in range - move closer to a crewmate`);
   }
   
   // Kill count
-  lines.push(`☠️ Kills so far: ${imp.killCount}`);
+  lines.push(`Kills so far: ${imp.killCount}`);
   
   // Fellow impostors - IMPORTANT: show names so AI doesn't try to kill them
   if (imp.fellowImpostors && imp.fellowImpostors.length > 0) {
     const fellowNames = imp.fellowImpostors.map(f => f.name).join(', ');
-    lines.push(`🤝 YOUR TEAMMATES (IMPOSTORS): ${fellowNames} - DO NOT KILL THEM!`);
+    lines.push(`YOUR TEAMMATES (IMPOSTORS): ${fellowNames} - DO NOT KILL THEM!`);
   }
   
   // Nearby bodies warning
   if (imp.nearbyBodies.length > 0) {
-    lines.push(`⚠️ DANGER - Bodies nearby: ${imp.nearbyBodies.map(b => b.victimName).join(', ')} - GET AWAY!`);
+    lines.push(`[!] DANGER - Bodies nearby: ${imp.nearbyBodies.map(b => b.victimName).join(', ')} - GET AWAY!`);
   }
   
   // Summary - make kill recommendation more explicit
   if (imp.canKill && imp.targetsInKillRange.some(t => t.isIsolated)) {
     const isolatedTarget = imp.targetsInKillRange.find(t => t.isIsolated)!;
-    lines.push(`\n🔪🔪🔪 KILL NOW! Use: GOAL: KILL and TARGET: ${isolatedTarget.name}`);
+    lines.push(`\n*** KILL NOW! Use: GOAL: KILL and TARGET: ${isolatedTarget.name}`);
     lines.push(`${isolatedTarget.name} is ISOLATED - this is your chance!`);
   } else if (!imp.canKill && imp.killCooldownRemaining > 0) {
     lines.push(`\n⏳ Kill on cooldown (${imp.killCooldownRemaining.toFixed(0)}s). Fake tasks or wander.`);
   } else if (imp.targetsInKillRange.length > 0 && !imp.targetsInKillRange.some(t => t.isIsolated)) {
-    lines.push(`\n👀 Targets nearby but NOT isolated - wait for them to separate!`);
+    lines.push(`\nTargets nearby but NOT isolated - wait for them to separate!`);
   } else {
-    lines.push(`\n🔍 No targets in range. HUNT: follow a crewmate to a dead-end room.`);
+    lines.push(`\nNo targets in range. HUNT: follow a crewmate to a dead-end room.`);
   }
   
   return `KILL STATUS:\n${lines.join('\n')}`; 
@@ -373,7 +374,15 @@ export function buildThoughtPrompt(context: AIContext, trigger: ThoughtTrigger):
   const basePrompt = context.role === 'IMPOSTOR'
     ? `You are ${context.agentName}. YOUR NAME IS ${context.agentName}. You are secretly an IMPOSTOR.`
     : `You are ${context.agentName}. YOUR NAME IS ${context.agentName}. You are a loyal CREWMATE.`;
-  const triggerContext = getThoughtTriggerContext(trigger);
+  
+  // For heard_speech trigger, include who said what
+  let triggerContext: string;
+  if (trigger === 'heard_speech' && context.heardSpeechFrom && context.heardSpeechMessage) {
+    triggerContext = `${context.heardSpeechFrom} just said to you: "${context.heardSpeechMessage}"`;
+  } else {
+    triggerContext = getThoughtTriggerContext(trigger);
+  }
+  
   // Only crewmates have suspicions - impostors know who everyone is
   const suspicionInfo = context.role === 'CREWMATE' ? (context.suspicionContext || '') : '';
   const godModeInfo = buildGodModeInfo(context);
@@ -415,9 +424,18 @@ Stay in character. Be genuine. Keep it SHORT.`;
     ? `\nYour suspicions: ${context.suspicionContext.substring(0, 200)}`
     : '';
 
-  const recentConvoHint = context.recentConversations && context.recentConversations.length > 0
-    ? `\nJust heard: "${context.recentConversations[context.recentConversations.length - 1]?.message || ''}"`
-    : '';
+  // Build conversation context - prioritize pending reply over recent conversations
+  let recentConvoHint = '';
+  if (context.heardSpeechFrom && context.heardSpeechMessage) {
+    // Direct pending reply - this is who we're responding to
+    recentConvoHint = `\n${context.heardSpeechFrom} just said to you: "${context.heardSpeechMessage.substring(0, 100)}${context.heardSpeechMessage.length > 100 ? '...' : ''}"`;
+  } else if (context.recentConversations && context.recentConversations.length > 0) {
+    // Fall back to recent conversations with speaker attribution
+    const lastConvo = context.recentConversations[context.recentConversations.length - 1];
+    if (lastConvo) {
+      recentConvoHint = `\n${lastConvo.speakerName} just said: "${lastConvo.message.substring(0, 100)}${lastConvo.message.length > 100 ? '...' : ''}"`;
+    }
+  }
 
   const godModeInfo = buildGodModeInfo(context);
 
@@ -459,12 +477,13 @@ function getThoughtTriggerContext(trigger: ThoughtTrigger): string {
     'heard_speech': 'You overheard someone talking nearby.',
     'passed_agent_closely': 'You just passed very close to another player.',
     'task_in_action_radius': 'You noticed a task location is within reach.',
-    'target_entered_kill_range': '🔪 KILL OPPORTUNITY! A crewmate just walked into your kill range. You have seconds to decide: Strike now? Use them as an alibi? Let them pass to avoid suspicion?',
+    'target_entered_kill_range': '[KILL] KILL OPPORTUNITY! A crewmate just walked into your kill range. You have seconds to decide: Strike now? Use them as an alibi? Let them pass to avoid suspicion?',
     'near_vent': 'You noticed a vent nearby. Consider if venting could help you escape or reposition.',
     'entered_vent': 'You just entered a vent! You can travel to connected vents unseen.',
     'exited_vent': 'You just emerged from a vent. Check if anyone saw you!',
-    'witnessed_vent_activity': '⚠️ You just saw someone use a vent! Only impostors can vent!',
+    'witnessed_vent_activity': '[!] You just saw someone use a vent! Only impostors can vent!',
     'alone_with_vent': 'You are alone in a room with a vent. This could be your chance to move unseen.',
+    'witnessed_suspicious_behavior': 'You noticed someone acting suspiciously - following others, loitering near vents, or avoiding tasks.',
   };
   return contexts[trigger] || 'Something happened.';
 }
@@ -488,14 +507,13 @@ export function parseAIResponse(response: string, context: AIContext): AIDecisio
     const imp = context.impostorContext;
     if (imp) {
       const targetsStr = imp.targetsInKillRange.map(t => `${t.name}(${t.isIsolated ? 'ISOLATED' : 'witnesses'})`).join(', ');
-      console.log(`[IMPOSTOR-STATE] ${context.agentName}: canKill=${imp.canKill}, cooldown=${imp.killCooldownRemaining.toFixed(1)}s, targets=[${targetsStr}], visible=[${context.visibleAgents.map(a => a.name).join(',')}]`);
+      aiLogger.debug('Impostor state', { agentName: context.agentName, canKill: imp.canKill, cooldownRemaining: imp.killCooldownRemaining.toFixed(1), targets: targetsStr, visibleAgents: context.visibleAgents.map(a => a.name) });
       
       if (imp.canKill && imp.targetsInKillRange.length > 0) {
-        console.log(`[IMPOSTOR-DECISION] ${context.agentName} has targets in range. AI response: ${response.substring(0, 200)}`);
-        console.log(`[IMPOSTOR-DECISION] goalMatch: ${goalMatch?.[1] || 'none'}, killTargetMatch: ${killTargetMatch?.[1] || 'none'}`);
+        aiLogger.debug('Impostor decision', { agentName: context.agentName, hasTargets: true, responsePreview: response.substring(0, 200), goalMatch: goalMatch?.[1] || 'none', killTargetMatch: killTargetMatch?.[1] || 'none' });
       }
     } else {
-      console.log(`[IMPOSTOR-STATE] ${context.agentName}: NO impostorContext!`);
+      aiLogger.warn('No impostor context', { agentName: context.agentName });
     }
   }
 

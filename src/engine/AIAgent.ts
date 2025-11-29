@@ -10,6 +10,7 @@ import type { Zone } from './ZoneDetector.ts';
 import type { DestinationSelector } from './DestinationSelector.ts';
 import type { Pathfinder } from './Pathfinder.ts';
 import { PathSmoother } from './PathSmoother.ts';
+import { movementLogger, aiLogger } from '../logging/index.ts';
 
 export interface AIAgentConfig {
   id: string;
@@ -123,7 +124,7 @@ export class AIAgent {
   private decideToMove(): void {
     const currentPosition = this.movementController.getPosition();
     
-    console.log(`[${this.config.id}] Deciding to move from`, currentPosition);
+    movementLogger.debug('Deciding to move', { agentId: this.config.id, from: currentPosition });
     
     const maxAttempts = 5;
     let lastFailureReason: 'no-destination' | 'no-path' | null = null;
@@ -144,7 +145,7 @@ export class AIAgent {
         continue;
       }
       
-      console.log(`[${this.config.id}] Selected destination (attempt ${attempt + 1}):`, destination);
+      movementLogger.debug('Selected destination', { agentId: this.config.id, attempt: attempt + 1, destination });
       
       const pathResult = this.pathfinder.findPath(currentPosition, destination);
       
@@ -153,11 +154,11 @@ export class AIAgent {
         continue;
       }
       
-      console.log(`[${this.config.id}] Path found with ${pathResult.path.length} waypoints`);
+      movementLogger.debug('Path found', { agentId: this.config.id, waypoints: pathResult.path.length });
       
       const smoothPath = this.pathSmoother.smoothPath(pathResult.path);
       
-      console.log(`[${this.config.id}] Smoothed path has ${smoothPath.points.length} points`);
+      movementLogger.debug('Smoothed path', { agentId: this.config.id, points: smoothPath.points.length });
       
       this.movementController.setPath(smoothPath);
       this.stateMachine.transitionTo(PlayerActivityState.WALKING, 'Moving to destination');
@@ -167,9 +168,9 @@ export class AIAgent {
     }
     
     if (lastFailureReason === 'no-destination') {
-      console.log(`[${this.config.id}] Could not find destination`);
+      movementLogger.warn('Could not find destination', { agentId: this.config.id });
     } else if (lastFailureReason === 'no-path') {
-      console.warn(`[${this.config.id}] Pathfinding failed after ${maxAttempts} attempts`);
+      movementLogger.warn('Pathfinding failed', { agentId: this.config.id, maxAttempts });
     }
     
     this.behaviorState.nextDecisionTime = Date.now() + 2000;
@@ -191,7 +192,7 @@ export class AIAgent {
    * Recover from pathfinding or steering issues when agent stalls against geometry
    */
   private handleMovementStuck(): void {
-    console.warn(`[${this.config.id}] Movement stuck, replanning destination`);
+    movementLogger.warn('Movement stuck, replanning destination', { agentId: this.config.id });
     this.movementController.stop();
     this.movementController.clearStuck();
     this.stateMachine.transitionTo(PlayerActivityState.IDLE, 'Movement stuck - replanning');

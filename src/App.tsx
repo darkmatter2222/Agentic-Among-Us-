@@ -5,11 +5,12 @@ import { Poly3MapRenderer } from './rendering/Poly3MapRenderer';
 import { RoomLightingRenderer } from './rendering/RoomLightingRenderer';
 import { AIAgentVisualRenderer } from './rendering/AIAgentVisualRenderer';
 import { getSimulationClient } from './ai/SimulationClient';
-import type { WorldSnapshot, SpeechEvent, ThoughtEvent, GameTimerSnapshot } from '@shared/types/simulation.types.ts';
+import type { WorldSnapshot, SpeechEvent, ThoughtEvent, HeardSpeechEvent, GameTimerSnapshot } from '@shared/types/simulation.types.ts';
 import type { LLMQueueStats } from '@shared/types/protocol.types.ts';
 import type { LLMTraceEvent } from '@shared/types/llm-trace.types.ts';
 import { AgentInfoPanel, type AgentSummary } from './components/AgentInfoPanel';
 import { LLMTimelinePanel } from './components/LLMTimelinePanel';
+import { audioLogger, systemLogger, renderLogger } from './logging/index.ts';
 
 // Maximum number of LLM trace events to keep in the timeline
 const MAX_TRACE_EVENTS = 200;
@@ -23,6 +24,7 @@ function App() {
   const latestSnapshotRef = useRef<WorldSnapshot | null>(null);
   const recentSpeechRef = useRef<SpeechEvent[]>([]);
   const recentThoughtsRef = useRef<ThoughtEvent[]>([]);
+  const recentHeardRef = useRef<HeardSpeechEvent[]>([]);
   const gameRendererRef = useRef<GameRenderer | null>(null);
   const mapRendererRef = useRef<Poly3MapRenderer | null>(null);
   const lightingRendererRef = useRef<RoomLightingRenderer | null>(null);
@@ -70,10 +72,10 @@ function App() {
 
     // Add event listeners for debugging
     audio.addEventListener('canplaythrough', () => {
-      console.log('[AUDIO] Kill sound loaded and ready to play');
+      audioLogger.info('Kill sound loaded and ready to play');
     });
     audio.addEventListener('error', (e) => {
-      console.error('[AUDIO] Error loading kill sound:', e);
+      audioLogger.error('Error loading kill sound', { error: e });
     });
 
     // Force load the audio
@@ -90,7 +92,7 @@ function App() {
           audio.pause();
           audio.currentTime = 0;
           audioUnlockedRef.current = true;
-          console.log('[AUDIO] Audio unlocked by user interaction');
+          audioLogger.info('Audio unlocked by user interaction');
         }).catch(() => {
           // Still locked, will try again on next interaction
         });
@@ -122,10 +124,10 @@ function App() {
     ventInAudioRef.current = ventInAudio;
 
     ventInAudio.addEventListener('canplaythrough', () => {
-      console.log('[AUDIO] Vent-in sound loaded and ready to play');
+      audioLogger.info('Vent-in sound loaded and ready to play');
     });
     ventInAudio.addEventListener('error', (e) => {
-      console.error('[AUDIO] Error loading vent-in sound:', e);
+      audioLogger.error('Error loading vent-in sound', { error: e });
     });
     ventInAudio.load();
 
@@ -136,10 +138,10 @@ function App() {
     ventOutAudioRef.current = ventOutAudio;
 
     ventOutAudio.addEventListener('canplaythrough', () => {
-      console.log('[AUDIO] Vent-out sound loaded and ready to play');
+      audioLogger.info('Vent-out sound loaded and ready to play');
     });
     ventOutAudio.addEventListener('error', (e) => {
-      console.error('[AUDIO] Error loading vent-out sound:', e);
+      audioLogger.error('Error loading vent-out sound', { error: e });
     });
     ventOutAudio.load();
 
@@ -185,7 +187,7 @@ function App() {
   useEffect(() => {
     // Prevent double initialization during React Strict Mode or HMR
     if (initializingRef.current) {
-      console.warn('[App] Already initializing, skipping...');
+      systemLogger.warn('Already initializing, skipping...');
       return;
     }
     initializingRef.current = true;
@@ -203,11 +205,12 @@ function App() {
       const snapshot = latestSnapshotRef.current;
       if (!snapshot) return;
       if (snapshot.tick === lastAppliedTick) return;
-      agentVisualRendererRef.current.syncAgents(snapshot.agents, recentSpeechRef.current, recentThoughtsRef.current);
+      agentVisualRendererRef.current.syncAgents(snapshot.agents, recentSpeechRef.current, recentThoughtsRef.current, recentHeardRef.current);
       lastAppliedTick = snapshot.tick;
-      // Clear speech and thought events after they've been processed
+      // Clear speech, thought, and heard events after they've been processed
       recentSpeechRef.current = [];
       recentThoughtsRef.current = [];
+      recentHeardRef.current = [];
     };
 
     const animate = () => {
@@ -229,7 +232,7 @@ function App() {
 
     const initializeScene = async () => {
       if (!canvasRef.current) {
-        console.error('Canvas ref is null');
+        systemLogger.error('Canvas ref is null');
         initializingRef.current = false;
         return;
       }
@@ -312,6 +315,11 @@ function App() {
         recentThoughtsRef.current = snapshot.recentThoughts;
       }
 
+      // Capture heard events
+      if (snapshot.recentHeard && snapshot.recentHeard.length > 0) {
+        recentHeardRef.current = snapshot.recentHeard;
+      }
+
       // Detect new kills and play sound
       if (snapshot.bodies && snapshot.bodies.length > 0) {
         const currentBodyIds = new Set(snapshot.bodies.map(b => b.id));
@@ -321,15 +329,15 @@ function App() {
         for (const bodyId of currentBodyIds) {
           if (!previousBodyIds.has(bodyId)) {
             // New body detected - play kill sound
-            console.log(`[AUDIO] New body detected: ${bodyId}, attempting to play kill sound`);
+            audioLogger.info('New body detected, attempting to play kill sound', { bodyId });
             if (killAudioRef.current) {
               killAudioRef.current.currentTime = 0;
               killAudioRef.current.play()
                 .then(() => {
-                  console.log('[AUDIO] Kill sound playing successfully');
+                  audioLogger.debug('Kill sound playing successfully');
                 })
                 .catch((err) => {
-                  console.warn('[AUDIO] Failed to play kill sound:', err.message, '- user interaction required to unlock audio');
+                  audioLogger.warn('Failed to play kill sound - user interaction required', { error: err.message });
                 });
             }
             break; // Only play once per update even if multiple new bodies
@@ -347,21 +355,21 @@ function App() {
             seenVentEventIdsRef.current.add(ventEvent.id);
             
             if (ventEvent.eventType === 'ENTER') {
-              console.log(`[AUDIO] Vent ENTER detected: ${ventEvent.playerName} at ${ventEvent.ventId}`);
+              audioLogger.info('Vent ENTER detected', { playerName: ventEvent.playerName, ventId: ventEvent.ventId });
               if (ventInAudioRef.current) {
                 ventInAudioRef.current.currentTime = 0;
                 ventInAudioRef.current.play()
-                  .then(() => console.log('[AUDIO] Vent-in sound playing'))
-                  .catch((err) => console.warn('[AUDIO] Failed to play vent-in sound:', err.message));
+                  .then(() => audioLogger.debug('Vent-in sound playing'))
+                  .catch((err) => audioLogger.warn('Failed to play vent-in sound', { error: err.message }));
               }
               break; // Only play one sound per tick
             } else if (ventEvent.eventType === 'EXIT') {
-              console.log(`[AUDIO] Vent EXIT detected: ${ventEvent.playerName} at ${ventEvent.ventId}`);
+              audioLogger.info('Vent EXIT detected', { playerName: ventEvent.playerName, ventId: ventEvent.ventId });
               if (ventOutAudioRef.current) {
                 ventOutAudioRef.current.currentTime = 0;
                 ventOutAudioRef.current.play()
-                  .then(() => console.log('[AUDIO] Vent-out sound playing'))
-                  .catch((err) => console.warn('[AUDIO] Failed to play vent-out sound:', err.message));
+                  .then(() => audioLogger.debug('Vent-out sound playing'))
+                  .catch((err) => audioLogger.warn('Failed to play vent-out sound', { error: err.message }));
               }
               break; // Only play one sound per tick
             }
@@ -380,7 +388,7 @@ function App() {
         // Debug: log dead agents
         const deadAgents = snapshot.agents.filter(a => a.playerState === 'DEAD');
         if (deadAgents.length > 0) {
-          console.log(`[APP] Dead agents: ${deadAgents.map(a => a.id).join(', ')}`);
+          renderLogger.debug('Dead agents', { ids: deadAgents.map(a => a.id) });
         }
         
         setAgentSummaries(
@@ -404,6 +412,7 @@ function App() {
             memoryContext: agent.memoryContext,
             suspicionContext: agent.suspicionContext,
             recentConversations: agent.recentConversations,
+            recentlyHeard: agent.recentlyHeard,
             isBeingFollowed: agent.isBeingFollowed,
             buddyId: agent.buddyId,
             // Kill status (impostors only)
@@ -687,9 +696,9 @@ function App() {
     const zoomY = (viewportHeight * padding) / mapHeight;
     const zoom = Math.min(zoomX, zoomY);
 
-    console.log('[CenterMap] Viewport size:', viewportWidth, 'x', viewportHeight);
-    console.log('[CenterMap] Map size:', mapWidth, 'x', mapHeight);
-    console.log('[CenterMap] Calculated zoom:', zoom);
+    renderLogger.debug('CenterMap - Viewport size', { width: viewportWidth, height: viewportHeight });
+    renderLogger.debug('CenterMap - Map size', { width: mapWidth, height: mapHeight });
+    renderLogger.debug('CenterMap - Calculated zoom', { zoom });
 
     const camera = gameRenderer.getCamera();
 
@@ -798,7 +807,7 @@ function App() {
             onClick={handleToggleLights} 
             title="Toggle Lights (Sabotage)"
           >
-            💡
+            LBL
           </button>
           <div className="control-divider" />
           <button 
@@ -806,7 +815,7 @@ function App() {
             onClick={handleToggleVisionBoxes} 
             title="Toggle Vision Boxes"
           >
-            👁
+            VIS
           </button>
           <button 
             className={`control-btn ${showActionRadius ? 'active' : ''}`}
@@ -820,21 +829,21 @@ function App() {
             onClick={handleToggleThoughtBubbles}
             title="Toggle Thought Bubbles (cloud)"
           >
-            💭
+            THT
           </button>
           <button
             className={`control-btn ${showThinkingBubbles ? 'active' : ''}`}
             onClick={handleToggleThinkingBubbles}
             title="Toggle Thinking Bubbles (dots)"
           >
-            ⋯
+            ...
           </button>
           <button
             className={`control-btn ${showSpeechBubbles ? 'active' : ''}`}
             onClick={handleToggleSpeechBubbles}
             title="Toggle Speech Bubbles"
           >
-            💬
+            SPK
           </button>
         </div>
         {/* Game Timer Display */}
@@ -852,7 +861,7 @@ function App() {
             onClick={handleStopFollowing}
             title="Stop following agent"
           >
-            ✕
+            X
           </button>
         )}
         <div

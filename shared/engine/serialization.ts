@@ -10,6 +10,7 @@ import type {
   WorldSnapshot,
   ThoughtEvent,
   SpeechEvent,
+  HeardSpeechEvent,
   BodySnapshot,
   KillEventSnapshot,
 } from '../types/simulation.types.ts';
@@ -88,6 +89,12 @@ export function serializeAgent(agent: AIAgent, timestamp: number, killStatus?: K
     memoryContext: agent.getMemoryContext ? agent.getMemoryContext() : undefined,
     suspicionContext: agent.getSuspicionContext ? agent.getSuspicionContext() : undefined,
     recentConversations,
+    // Recently heard with direct-address detection
+    recentlyHeard: recentConversations.map(conv => ({
+      ...conv,
+      wasDirectlyAddressed: agent.getName ? 
+        conv.message.toLowerCase().includes(agent.getName().toLowerCase()) : false,
+    })),
     isBeingFollowed: typeof agent.isBeingFollowed === 'function' ? agent.isBeingFollowed() : false,
     buddyId: agent.getBuddyId ? agent.getBuddyId() : null,
 
@@ -120,6 +127,7 @@ export interface SerializeWorldOptions {
   taskProgress?: number;
   recentThoughts?: ThoughtEvent[];
   recentSpeech?: SpeechEvent[];
+  recentHeard?: HeardSpeechEvent[];
   llmQueueStats?: import('../types/protocol.types.ts').LLMQueueStats;
   bodies?: DeadBody[];
   recentKills?: KillEvent[];
@@ -187,6 +195,7 @@ export function serializeWorld(
     recentVentEvents: options.recentVentEvents?.map(serializeVentEvent) ?? [],
     recentThoughts: options.recentThoughts ?? [],
     recentSpeech: options.recentSpeech ?? [],
+    recentHeard: options.recentHeard ?? [],
     taskProgress: options.taskProgress ?? 0,
     llmQueueStats: options.llmQueueStats,
   };

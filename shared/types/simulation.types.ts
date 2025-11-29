@@ -29,7 +29,8 @@ export type ThoughtTrigger =
   | 'entered_vent'               // Impostor-only: just entered a vent
   | 'exited_vent'                // Impostor-only: just exited a vent
   | 'witnessed_vent_activity'    // Crewmate/Impostor: saw someone enter/exit a vent
-  | 'alone_with_vent';           // Impostor-only: alone in a room with a vent
+  | 'alone_with_vent'            // Impostor-only: alone in a room with a vent
+  | 'witnessed_suspicious_behavior';  // Saw someone acting sus (following, loitering, etc.)
 
 export interface SpeechEvent {
   id: string;
@@ -39,6 +40,22 @@ export interface SpeechEvent {
   targetAgentId?: string; // If speaking to specific agent, otherwise broadcast
   position: Point;
   hearingRadius: number;
+}
+
+/**
+ * Event emitted when an agent hears speech from another agent
+ * Used for visual feedback on the client side
+ */
+export interface HeardSpeechEvent {
+  id: string;
+  listenerId: string;      // Agent who heard the speech
+  listenerName: string;
+  speakerId: string;       // Agent who spoke
+  speakerName: string;
+  timestamp: number;
+  message: string;         // What was said (may be truncated)
+  distance: number;        // How far away the speaker was
+  isDirectlyAddressed: boolean;  // Was the listener mentioned by name?
 }
 
 export interface TaskAssignment {
@@ -108,6 +125,12 @@ export interface AgentSnapshot {
     speakerName: string;
     message: string;
     timestamp: number;
+  }>;
+  recentlyHeard?: Array<{
+    speakerName: string;
+    message: string;
+    timestamp: number;
+    wasDirectlyAddressed: boolean;
   }>;
   isBeingFollowed?: boolean;
   buddyId?: string | null;
@@ -210,6 +233,7 @@ export interface WorldSnapshot {
   playersInVents?: string[]; // Player IDs currently in vents
   recentThoughts?: ThoughtEvent[];
   recentSpeech?: SpeechEvent[];
+  recentHeard?: HeardSpeechEvent[];  // Recent hearing events for visual feedback
   taskProgress?: number; // 0-100 percentage of total tasks completed
   llmQueueStats?: import('./protocol.types.ts').LLMQueueStats; // LLM queue monitoring
 }
@@ -366,6 +390,26 @@ export interface AIContext {
     location: string | null;
     timestamp: number;
   } | null;
+
+  // ===== Pending conversation reply - speech this agent just heard =====
+  pendingReply?: {
+    speakerId: string;
+    speakerName: string;
+    message: string;
+    zone: string | null;
+    timestamp: number;
+  } | null;
+  // Enhanced heard speech context for thought generation
+  heardSpeechFrom?: string;     // Name of who spoke
+  heardSpeechMessage?: string;  // What they said
+
+  // ===== Recently heard messages (for context in prompts) =====
+  recentlyHeard?: Array<{
+    speakerName: string;
+    message: string;
+    timestamp: number;
+    wasDirectlyAddressed: boolean;
+  }>;
 
   // ===== God Mode context (divine intervention from observer) =====
   godMode?: {

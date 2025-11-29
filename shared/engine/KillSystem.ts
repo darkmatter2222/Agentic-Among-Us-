@@ -11,6 +11,7 @@
 
 import type { Point } from '../data/poly3-map.ts';
 import type { PlayerRole, PlayerState } from '../types/game.types.ts';
+import { killLog } from '../logging/index.ts';
 
 // ========== Configuration ==========
 
@@ -348,7 +349,7 @@ export class KillSystem {
     state.lastKillTime = now;
     state.killCount++;
     
-    console.log(`[KillSystem] ${impostorName} killed ${targetName} in ${zone || 'unknown'}. Witnesses: ${witnesses.length}`);
+    killLog.get().info('Kill executed', { impostor: impostorName, target: targetName, zone: zone || 'unknown', witnessCount: witnesses.length });
     
     return {
       success: true,

@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import './LLMTimelinePanel.css';
 import type { LLMTraceEvent } from '@shared/types/llm-trace.types.ts';
+import { errorLogger } from '../logging/index.ts';
 
 const MAX_EVENTS = 200;
 
@@ -48,12 +49,12 @@ function getResultSummary(event: LLMTraceEvent): string {
   
   if (event.requestType === 'thought') {
     const thought = event.rawResponse.substring(0, 50);
-    return `💭 ${thought}${event.rawResponse.length > 50 ? '...' : ''}`;
+    return `[THT] ${thought}${event.rawResponse.length > 50 ? '...' : ''}`;
   }
   
   if (event.requestType === 'speech' || event.requestType === 'conversation') {
     const speech = event.rawResponse.substring(0, 50);
-    return `💬 ${speech}${event.rawResponse.length > 50 ? '...' : ''}`;
+    return `[SPK] ${speech}${event.rawResponse.length > 50 ? '...' : ''}`;
   }
   
   return event.rawResponse.substring(0, 50);
@@ -61,11 +62,11 @@ function getResultSummary(event: LLMTraceEvent): string {
 
 function getRequestTypeIcon(type: LLMTraceEvent['requestType']): string {
   switch (type) {
-    case 'decision': return '🎯';
-    case 'thought': return '💭';
-    case 'speech': return '💬';
-    case 'conversation': return '🗣️';
-    default: return '📝';
+    case 'decision': return '[D]';
+    case 'thought': return '[T]';
+    case 'speech': return '[S]';
+    case 'conversation': return '[C]';
+    default: return '[?]';
   }
 }
 
@@ -285,7 +286,7 @@ function TraceDetailModal({
       setCopiedField(fieldName);
       setTimeout(() => setCopiedField(null), 2000);
     } catch (err) {
-      console.error('Failed to copy:', err);
+      errorLogger.error('Failed to copy', { error: err });
     }
   }, []);
 
@@ -356,7 +357,7 @@ function TraceDetailModal({
               onClick={copyAllAsJson}
               title="Copy all data as JSON"
             >
-              {copiedField === 'all' ? '✓ Copied' : '📋 Copy All JSON'}
+              {copiedField === 'all' ? '[OK] Copied' : '[+] Copy All JSON'}
             </button>
             <button className="llm-trace-modal-close" onClick={onClose}>×</button>
           </div>
@@ -455,7 +456,7 @@ function TraceDetailModal({
                     <div className="metric">
                       <span className="label">Status</span>
                       <span className={`value ${event.success ? 'success' : 'error'}`}>
-                        {event.success ? '✓ Success' : '✗ Failed'}
+                        {event.success ? '[OK] Success' : '[X] Failed'}
                       </span>
                     </div>
                     {event.promptTokens !== undefined && (
@@ -495,7 +496,7 @@ function TraceDetailModal({
                     className={`copy-btn ${copiedField === 'systemPrompt' ? 'copied' : ''}`}
                     onClick={() => copyToClipboard(event.systemPrompt, 'systemPrompt')}
                   >
-                    {copiedField === 'systemPrompt' ? '✓' : '📋'}
+                    {copiedField === 'systemPrompt' ? '[OK]' : '[+]'}
                   </button>
                 </div>
                 <pre className="prompt-text">{event.systemPrompt}</pre>
@@ -507,7 +508,7 @@ function TraceDetailModal({
                     className={`copy-btn ${copiedField === 'userPrompt' ? 'copied' : ''}`}
                     onClick={() => copyToClipboard(event.userPrompt, 'userPrompt')}
                   >
-                    {copiedField === 'userPrompt' ? '✓' : '📋'}
+                    {copiedField === 'userPrompt' ? '[OK]' : '[+]'}
                   </button>
                 </div>
                 <pre className="prompt-text">{event.userPrompt}</pre>
@@ -524,7 +525,7 @@ function TraceDetailModal({
                     className={`copy-btn ${copiedField === 'rawResponse' ? 'copied' : ''}`}
                     onClick={() => copyToClipboard(event.rawResponse, 'rawResponse')}
                   >
-                    {copiedField === 'rawResponse' ? '✓' : '📋'}
+                    {copiedField === 'rawResponse' ? '[OK]' : '[+]'}
                   </button>
                 </div>
                 <pre className="prompt-text">{event.rawResponse}</pre>
@@ -569,7 +570,7 @@ function TraceDetailModal({
                       <li key={i} className={task.isCompleted ? 'completed' : ''}>
                         <span className="task-type">{task.taskType}</span>
                         <span className="task-room">{task.room}</span>
-                        {task.isCompleted && <span className="task-check">✓</span>}
+                        {task.isCompleted && <span className="task-check">[OK]</span>}
                       </li>
                     ))}
                   </ul>
@@ -692,7 +693,17 @@ export function LLMTimelinePanel({ width = 320, events }: LLMTimelinePanelProps)
   
   const filteredEvents = chronologicalEvents.filter(e => {
     if (filter === 'all') return true;
-    if (filter === 'speech') return e.requestType === 'speech' || e.requestType === 'conversation';
+    if (filter === 'speech') {
+      // Include speech/conversation events AND decisions that generated speech
+      return e.requestType === 'speech' || 
+             e.requestType === 'conversation' ||
+             (e.requestType === 'decision' && e.parsedDecision?.speech);
+    }
+    if (filter === 'decision') {
+      // For decision filter, exclude decisions that are primarily speech
+      // to avoid duplication when user switches between tabs
+      return e.requestType === 'decision' && !e.parsedDecision?.speech;
+    }
     return e.requestType === filter;
   });
 
@@ -707,7 +718,7 @@ export function LLMTimelinePanel({ width = 320, events }: LLMTimelinePanelProps)
       setCopiedFiltered(true);
       setTimeout(() => setCopiedFiltered(false), 2000);
     } catch (err) {
-      console.error('Failed to copy events:', err);
+      errorLogger.error('Failed to copy events', { error: err });
     }
   }, [displayEvents]);
   
@@ -730,7 +741,7 @@ export function LLMTimelinePanel({ width = 320, events }: LLMTimelinePanelProps)
   return (
     <div className="llm-timeline-panel" style={{ width }}>
       <div className="panel-header">
-        <h3>🧠 LLM Timeline</h3>
+        <h3>LLM Timeline</h3>
         <div className="header-actions">
           <span className="event-count">{events.length} events</span>
           <button 
@@ -754,19 +765,19 @@ export function LLMTimelinePanel({ width = 320, events }: LLMTimelinePanelProps)
           className={`filter-btn ${filter === 'decision' ? 'active' : ''}`}
           onClick={() => setFilter('decision')}
         >
-          🎯 Decisions
+          [D] Decisions
         </button>
         <button 
           className={`filter-btn ${filter === 'thought' ? 'active' : ''}`}
           onClick={() => setFilter('thought')}
         >
-          💭 Thoughts
+          [T] Thoughts
         </button>
         <button 
           className={`filter-btn ${filter === 'speech' ? 'active' : ''}`}
           onClick={() => setFilter('speech')}
         >
-          💬 Speech
+          [S] Speech
         </button>
         <button
           className={`copy-filtered-btn ${copiedFiltered ? 'copied' : ''}`}
@@ -774,7 +785,7 @@ export function LLMTimelinePanel({ width = 320, events }: LLMTimelinePanelProps)
           disabled={displayEvents.length === 0}
           title={`Copy ${displayEvents.length} ${filter} events as JSON`}
         >
-          {copiedFiltered ? '✓' : '📋'}
+          {copiedFiltered ? '[OK]' : '[+]'}
         </button>
       </div>
 

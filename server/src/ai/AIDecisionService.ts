@@ -24,6 +24,7 @@ import {
   parseAIResponse
 } from './prompts/AgentPrompts.js';
 import { getLLMQueue, type LLMQueueStats } from './LLMQueue.js';
+import { aiLogger, speechLogger, thoughtLogger } from '../logging/index.js';
 
 // ========== Speech Validation Helpers ==========
 
@@ -290,7 +291,7 @@ export class AIDecisionService {
       try {
         listener(trace);
       } catch (error) {
-        console.error('[AIDecisionService] Error in trace listener:', error);
+        aiLogger.error('Error in trace listener', { error: error as Error });
       }
     }
   }
@@ -342,21 +343,40 @@ export class AIDecisionService {
     }
 
     const now = Date.now();
-    
-    // Check if there's a pending conversation reply
-    const pendingReply = (context as AIContext & { pendingReply?: { speakerId: string; speakerName: string; message: string; zone: string | null; timestamp: number } }).pendingReply;
-    
+
+    // Check if there's a pending conversation reply (now properly typed in AIContext)
+    const pendingReply = context.pendingReply;
+
     // Get dynamic cooldowns based on current LLM capacity
     const cooldowns = this.getEffectiveCooldowns();
     const canSpeak = now - state.lastSpeechTime >= cooldowns.speechCooldown;
-    
-    // Handle conversation replies with priority
+
+    // Handle conversation replies with priority - OBSERVATION → THOUGHT → DECISION → ACTION
     if (pendingReply && canSpeak) {
-      // Check if we're already in a conversation with this speaker
-      let conversation = this.getActiveConversationForAgent(context.agentId);
+      speechLogger.debug('Processing reply', { agentName: context.agentName, from: pendingReply.speakerName, messagePreview: pendingReply.message.substring(0, 40) });
       
+      // STEP 1: Generate a THOUGHT about what we just heard (observation processing)
+      // Pass the pending reply info so the thought can be about the conversation
+      const thoughtContext = {
+        ...context,
+        // Enhance context with pending reply details for better thought generation
+        heardSpeechFrom: pendingReply.speakerName,
+        heardSpeechMessage: pendingReply.message,
+      };
+
+      thoughtLogger.debug('Generating thought about heard speech', { agentName: context.agentName, step: 1 });
+      const thought = await this.generateThought(thoughtContext as AIContext, 'heard_speech', now);
+      if (thought) {
+        state.lastThoughtTime = now;
+        thoughtLogger.debug('Thought generated', { agentName: context.agentName, thoughtPreview: thought.thought.substring(0, 50) });
+      }
+
+      // STEP 2: Check if we're in a conversation with this speaker
+      let conversation = this.getActiveConversationForAgent(context.agentId);
+
       if (!conversation) {
         // Start a new conversation
+        speechLogger.debug('Starting new conversation', { agentName: context.agentName, targetName: pendingReply.speakerName, step: 2 });
         const convId = this.startConversation(
           pendingReply.speakerId,
           pendingReply.speakerName,
@@ -367,27 +387,30 @@ export class AIDecisionService {
         conversation = this.activeConversations.get(convId) || null;
       } else {
         // Add their message to existing conversation
+        speechLogger.debug('Adding to existing conversation', { agentName: context.agentName, conversationId: conversation.id, step: 2 });
         this.addConversationReply(conversation.id, pendingReply.speakerId, pendingReply.speakerName, pendingReply.message);
       }
-      
+
       if (conversation && conversation.isActive) {
-        // Generate our reply
+        // STEP 3: Generate our spoken reply based on the thought we had
+        speechLogger.debug('Generating speech reply', { agentName: context.agentName, step: 3 });
         const speech = await this.generateConversationReply(context, conversation, now);
         if (speech) {
           state.lastSpeechTime = now;
-          
-          // Also generate a thought about the conversation
-          const thought = await this.generateThought(context, 'heard_speech', now);
-          if (thought) {
-            state.lastThoughtTime = now;
-          }
-          
+          speechLogger.info('Agent spoke', { agentName: context.agentName, messagePreview: speech.message.substring(0, 50) });
+          // Return both thought and speech - thought happened first, speech is the action
           return { thought, speech };
         }
+        speechLogger.debug('No speech generated', { agentName: context.agentName });
+        // Even if we don't speak, we still thought about it
+        return { thought };
       }
-    }
-
-    // Normal trigger processing
+      speechLogger.debug('Conversation not active', { agentName: context.agentName });
+      // Conversation not active, but we still processed the observation with a thought
+      return { thought };
+    } else if (pendingReply && !canSpeak) {
+      speechLogger.debug('Has pending reply but on cooldown', { agentName: context.agentName });
+    }// Normal trigger processing
     const triggers = this.detectTriggers(context, state, now);
 
     // No triggers? No AI call needed
@@ -449,7 +472,7 @@ export class AIDecisionService {
 
       return { thought, speech };
     } catch (error) {
-      console.error(`[AIDecisionService] Error generating AI content for ${context.agentId}:`, error);
+      aiLogger.error('Error generating AI content', { agentId: context.agentId, error: error as Error });
       return {};
     }
   }  /**
@@ -524,7 +547,7 @@ export class AIDecisionService {
          error.message.includes('timed out') ||
          error.message.includes('Queue cleared'));
       if (!isExpectedError) {
-        console.error(`[AIDecisionService] Decision error for ${context.agentId}:`, error);
+        aiLogger.error('Decision error', { agentId: context.agentId, error: error as Error });
       }
       // Fallback to simple task-doing behavior
       return this.fallbackDecision(context);
@@ -663,10 +686,23 @@ export class AIDecisionService {
     const othersNearby = context.canSpeakTo.filter(name =>
       name.toLowerCase() !== context.agentName.toLowerCase()
     );
-    const userPrompt = `Current thought: ${currentThought || 'Nothing in particular'}
+    
+    // Build context-aware user prompt
+    let userPrompt: string;
+    if (context.heardSpeechFrom && context.heardSpeechMessage) {
+      // Responding to something someone said - emphasize this
+      userPrompt = `Current thought: ${currentThought || 'Nothing in particular'}
+${context.heardSpeechFrom} just said to you: "${context.heardSpeechMessage.substring(0, 80)}${context.heardSpeechMessage.length > 80 ? '...' : ''}"
+
+RESPOND to ${context.heardSpeechFrom}! Reply to what they said.
+You are ${context.agentName}. Keep it brief and natural (1-2 sentences).`;
+    } else {
+      // Normal speech - not responding to anyone specific
+      userPrompt = `Current thought: ${currentThought || 'Nothing in particular'}
 Nearby agents (NOT you): ${othersNearby.join(', ') || 'None'}
 Remember: You are ${context.agentName}. Don't talk about yourself in third person.
 What do you say out loud? Keep it brief and natural (1-2 sentences).`;
+    }
 
     const startTime = Date.now();
     let message: string;
@@ -686,7 +722,7 @@ What do you say out loud? Keep it brief and natural (1-2 sentences).`;
       // Check for invalid mentions (agents not nearby)
       const invalidMentions = findInvalidMentions(message, context.agentName, othersNearby);
       if (invalidMentions.length > 0) {
-        console.warn(`[Speech] ${context.agentName} mentioned agents not nearby: ${invalidMentions.join(', ')} in: "${message}"`);
+        speechLogger.warn('Agent mentioned agents not nearby', { agentName: context.agentName, invalidMentions, message });
         // Don't block the speech, just log for debugging
         // The agent might be sharing information about someone they saw earlier
       }
@@ -830,7 +866,7 @@ Keep it brief (1-2 sentences). Start the conversation!`;
     };
 
     this.pendingSpeech.push(event);
-    console.log(`[Conversation] ${context.agentName} starting conversation with ${targetName}: "${message.substring(0, 50)}..."`);
+    speechLogger.info('Starting conversation', { agentName: context.agentName, targetName, messagePreview: message.substring(0, 50) });
     return event;
   }
 
@@ -936,24 +972,43 @@ THOUGHT: <your internal thought, 1 sentence>`;
    * Build user prompt for thought generation
    */
   private buildThoughtUserPrompt(context: AIContext, trigger: ThoughtTrigger): string {
-    const triggerDescriptions: Record<ThoughtTrigger, string> = {
-      'arrived_at_destination': 'You just arrived at your destination.',
-      'task_completed': 'You just finished a task.',
-      'task_started': 'You just started working on a task.',
-      'agent_spotted': `You just noticed ${context.visibleAgents[0]?.name || 'someone'} nearby.`,
-      'agent_lost_sight': 'Someone you were watching just left your view.',
-      'entered_room': `You just entered ${context.currentZone || 'a new area'}.`,
-      'idle_random': 'You have a moment to think.',
-      'heard_speech': 'You heard someone talking nearby.',
-      'passed_agent_closely': `You just passed close to ${context.visibleAgents.find((a: { name: string; distance: number }) => a.distance < 50)?.name || 'someone'}.`,
-      'task_in_action_radius': 'A task location is nearby.',
-      'target_entered_kill_range': '\u{1F52A} A crewmate just entered your kill range! Quick - decide: kill them, use them as an alibi, or let them pass?'
-    };
+    // Build dynamic trigger description
+    let triggerDescription: string;
+    
+    if (trigger === 'heard_speech' && context.heardSpeechFrom && context.heardSpeechMessage) {
+      // Enhanced description for heard speech - include WHO said WHAT
+      triggerDescription = `${context.heardSpeechFrom} just said: "${context.heardSpeechMessage.substring(0, 100)}${context.heardSpeechMessage.length > 100 ? '...' : ''}"`;
+    } else {
+      const triggerDescriptions: Partial<Record<ThoughtTrigger, string>> = {
+        'arrived_at_destination': 'You just arrived at your destination.',
+        'task_completed': 'You just finished a task.',
+        'task_started': 'You just started working on a task.',
+        'agent_spotted': `You just noticed ${context.visibleAgents[0]?.name || 'someone'} nearby.`,
+        'agent_lost_sight': 'Someone you were watching just left your view.',
+        'entered_room': `You just entered ${context.currentZone || 'a new area'}.`,
+        'idle_random': 'You have a moment to think.',
+        'heard_speech': 'You heard someone talking nearby.',
+        'passed_agent_closely': `You just passed close to ${context.visibleAgents.find((a: { name: string; distance: number }) => a.distance < 50)?.name || 'someone'}.`,
+        'task_in_action_radius': 'A task location is nearby.',
+        'target_entered_kill_range': '\u{1F52A} A crewmate just entered your kill range! Quick - decide: kill them, use them as an alibi, or let them pass?',
+        'near_vent': 'You noticed a vent nearby.',
+        'entered_vent': 'You just entered a vent!',
+        'exited_vent': 'You just exited a vent.',
+        'witnessed_vent_activity': 'You just saw someone use a vent!',
+        'alone_with_vent': 'You are alone near a vent.',
+      };
+      triggerDescription = triggerDescriptions[trigger] || 'Something happened.';
+    }
 
-    return `${triggerDescriptions[trigger]}
+    // For heard_speech, add response guidance
+    const responseGuidance = trigger === 'heard_speech' 
+      ? `\nConsider: Do I respond? What should I say back? Is this suspicious? Should I engage or walk away?`
+      : '';
+
+    return `${triggerDescription}
 Location: ${context.currentZone || 'Hallway'}
 Tasks done: ${context.assignedTasks.filter((t: TaskAssignment) => t.isCompleted).length}/${context.assignedTasks.length}
-Visible agents: ${context.visibleAgents.map((a: { name: string }) => a.name).join(', ') || 'None'}
+Visible agents: ${context.visibleAgents.map((a: { name: string }) => a.name).join(', ') || 'None'}${responseGuidance}
 
 What are you thinking? (One brief internal thought, stay in character)`;
   }
@@ -1015,7 +1070,8 @@ What are you thinking? (One brief internal thought, stay in character)`;
    * Fallback thought when AI fails
    */
   private fallbackThought(context: AIContext, trigger: ThoughtTrigger): string {
-    const fallbacks: Record<ThoughtTrigger, string[]> = {
+    // Use Partial since not all triggers need fallbacks
+    const fallbacks: Partial<Record<ThoughtTrigger, string[]>> = {
       'arrived_at_destination': ['Here we go.', 'Made it.', 'Time to get to work.'],
       'task_completed': ['One down.', 'Task done!', 'That\'s progress.'],
       'task_started': ['Let me focus on this.', 'Okay, let\'s do this.'],
@@ -1023,10 +1079,17 @@ What are you thinking? (One brief internal thought, stay in character)`;
       'agent_lost_sight': ['Where did they go?', 'They left.', 'Gone.'],
       'entered_room': [`${context.currentZone || 'New area'}...`, 'Different scenery.'],
       'idle_random': ['Hmm...', 'What next?', 'Thinking...', 'Stay focused.'],
-      'heard_speech': ['What was that?', 'Someone said something.'],
+      'heard_speech': context.heardSpeechFrom 
+        ? [`${context.heardSpeechFrom} is talking to me...`, `What does ${context.heardSpeechFrom} want?`, `Should I respond to ${context.heardSpeechFrom}?`]
+        : ['What was that?', 'Someone said something.', 'Did they say something to me?'],
       'passed_agent_closely': ['Hey there.', 'Passing by.', 'Excuse me.'],
       'task_in_action_radius': ['Task nearby.', 'Could work on this.'],
-      'target_entered_kill_range': ['They\'re right here...', 'Perfect opportunity?', 'Kill or wait?', 'Now or never...']
+      'target_entered_kill_range': ['They\'re right here...', 'Perfect opportunity?', 'Kill or wait?', 'Now or never...'],
+      'near_vent': ['Vent nearby...', 'Could use that vent.'],
+      'entered_vent': ['In the vent now.', 'Safe in here.'],
+      'exited_vent': ['Out of the vent.', 'Anyone see that?'],
+      'witnessed_vent_activity': ['Did I just see that?!', 'They vented!', 'Impostor!'],
+      'alone_with_vent': ['No one around...', 'Vent opportunity.'],
     };
     const options = fallbacks[trigger] || ['...'];
     return options[Math.floor(Math.random() * options.length)];
@@ -1113,7 +1176,7 @@ What are you thinking? (One brief internal thought, stay in character)`;
     };
 
     this.activeConversations.set(convId, conversation);
-    console.log(`[Conversation] Started: ${initiatorName} â†’ ${targetName} (max ${maxTurns} turns): "${initialMessage.substring(0, 50)}..."`);
+    speechLogger.info('Conversation started', { initiator: initiatorName, target: targetName, maxTurns, messagePreview: initialMessage.substring(0, 50) });
     
     return convId;
   }
@@ -1166,7 +1229,7 @@ What are you thinking? (One brief internal thought, stay in character)`;
     });
     conv.lastActivityTime = Date.now();
 
-    console.log(`[Conversation] ${speakerName} (turn ${conv.turns.length}/${conv.maxTurns}): "${message.substring(0, 50)}..."`);
+    speechLogger.debug('Conversation turn', { speakerName, turn: conv.turns.length, maxTurns: conv.maxTurns, messagePreview: message.substring(0, 50) });
 
     // Check if conversation should end
     if (conv.turns.length >= conv.maxTurns) {
@@ -1183,7 +1246,7 @@ What are you thinking? (One brief internal thought, stay in character)`;
     const conv = this.activeConversations.get(convId);
     if (conv) {
       conv.isActive = false;
-      console.log(`[Conversation] Ended (${reason}): ${conv.participants.join(' & ')} after ${conv.turns.length} turns`);
+      speechLogger.info('Conversation ended', { reason, participants: conv.participants, totalTurns: conv.turns.length });
       
       // Clean up old conversations (keep for 30 seconds for reference)
       setTimeout(() => {

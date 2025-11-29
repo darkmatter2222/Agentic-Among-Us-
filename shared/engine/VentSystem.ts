@@ -13,6 +13,7 @@
 
 import type { Point } from '../data/poly3-map.ts';
 import type { Vent } from '../data/poly3-map.ts';
+import { ventLog } from '../logging/index.ts';
 
 // ========== Configuration ==========
 
@@ -132,7 +133,7 @@ export class VentSystem {
       });
     });
 
-    console.log(`[VentSystem] Initialized with ${vents.length} vents`);
+    ventLog.get().info('VentSystem initialized', { ventCount: vents.length });
   }
 
   /**
@@ -257,7 +258,7 @@ export class VentSystem {
   ): VentEvent | null {
     const validation = this.canEnterVent(playerId, playerPosition, playerRole, ventId, currentTime);
     if (!validation.canVent) {
-      console.log(`[VentSystem] Entry denied for ${playerName}: ${validation.reason}`);
+      ventLog.get().debug('Vent entry denied', { playerName, reason: validation.reason });
       return null;
     }
 
@@ -293,7 +294,7 @@ export class VentSystem {
 
     this.ventEvents.push(event);
 
-    console.log(`[VentSystem] ${playerName} entered vent ${ventId} in ${vent.room ?? 'unknown'}. Witnesses: ${witnesses.length}`);
+    ventLog.get().info('Player entered vent', { playerName, ventId, room: vent.room ?? 'unknown', witnessCount: witnesses.length });
 
     // Schedule animation end
     setTimeout(() => {
@@ -317,7 +318,7 @@ export class VentSystem {
   ): VentEvent | null {
     const validation = this.canExitVent(playerId, destinationVentId, currentTime);
     if (!validation.canVent) {
-      console.log(`[VentSystem] Exit denied for ${playerName}: ${validation.reason}`);
+      ventLog.get().debug('Vent exit denied', { playerName, reason: validation.reason });
       return null;
     }
 
@@ -378,7 +379,7 @@ export class VentSystem {
     // Set cooldown
     this.playerCooldowns.set(playerId, currentTime + this.config.cooldownTime * 1000);
 
-    console.log(`[VentSystem] ${playerName} exiting vent ${destinationVentId} in ${destinationVent.room ?? 'unknown'}. Witnesses: ${witnesses.length}`);
+    ventLog.get().info('Player exiting vent', { playerName, ventId: destinationVentId, room: destinationVent.room ?? 'unknown', witnessCount: witnesses.length });
 
     // Schedule state clear after animation
     setTimeout(() => {
@@ -422,7 +423,7 @@ export class VentSystem {
 
     this.playersInVents.set(playerId, toVentId);
 
-    console.log(`[VentSystem] ${playerId} traveled from ${currentVentId} to ${toVentId}`);
+    ventLog.get().debug('Player traveled through vents', { playerId, from: currentVentId, to: toVentId });
 
     return true;
   }
@@ -635,7 +636,7 @@ export class VentSystem {
       state.animationStartTime = null;
     }
 
-    console.log('[VentSystem] Reset');
+    ventLog.get().debug('VentSystem reset');
   }
 }
 

@@ -6,6 +6,7 @@
 import type { Point } from '@shared/data/poly3-map.ts';
 import { isPointWalkable, WALKABLE_ZONES, OBSTACLES } from '@shared/data/poly3-map.ts';
 import type { SmoothPath } from './PathSmoother.ts';
+import { movementLogger } from '../logging/index.ts';
 
 export interface MovementState {
   currentPosition: Point;
@@ -42,7 +43,7 @@ export class MovementController {
 
   constructor(startPosition: Point, speed?: number) {
     if (!isPointWalkable(startPosition.x, startPosition.y, WALKABLE_ZONES, OBSTACLES)) {
-      console.error(`[MovementController] Starting position (${startPosition.x.toFixed(1)}, ${startPosition.y.toFixed(1)}) is NOT WALKABLE!`);      
+      movementLogger.error('Starting position is not walkable', { x: startPosition.x.toFixed(1), y: startPosition.y.toFixed(1) });      
     }    const resolvedSpeed = speed ?? this.defaultSpeed;
 
     this.state = {

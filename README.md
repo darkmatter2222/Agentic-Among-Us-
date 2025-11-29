@@ -2,7 +2,7 @@
 
 An AI-powered simulation of **Among Us** where autonomous LLM-driven agents play as Crewmates and Impostors. Watch AI agents navigate The Skeld, complete tasks, form alliances, spread rumors, and (eventually) eliminate each other—all powered by large language models.
 
-## 🎮 What Is This?
+## What Is This?
 
 This project creates a fully autonomous Among Us simulation where:
 - **8 AI agents** (6 Crewmates, 2 Impostors) make real-time decisions using LLM reasoning
@@ -11,38 +11,39 @@ This project creates a fully autonomous Among Us simulation where:
 - Full **pathfinding and collision avoidance** on The Skeld map
 - Real-time **visualization** via React + PixiJS client
 
-## ✅ Currently Implemented
+## Currently Implemented
 
 | Feature | Status | Details |
 |---------|--------|---------|
-| **Movement & Pathfinding** | ✅ Complete | A* on visibility graph, steering behaviors, collision avoidance |
-| **Navigation Mesh** | ✅ Complete | Full Skeld map with walkable zones, rooms, and hallways |
-| **Task System** | ✅ Complete | Task assignment, navigation, execution with realistic durations |
-| **Vision System** | ✅ Complete | Agents see only within configurable vision radius |
-| **AI Decision Making** | ✅ Complete | LLM-powered goals: tasks, wandering, following, avoiding, confronting |
-| **Agent Memory** | ✅ Complete | Observations, suspicion tracking, conversation history |
-| **Speech System** | ✅ Complete | Agents speak to nearby players (💬 rectangular bubble, toggleable) |
-| **Social Actions** | ✅ Complete | Buddy up, follow, avoid, confront, spread rumors, defend self |
-| **Thought System** | ✅ Complete | Internal reasoning shown as cloud bubbles (💭 toggleable) |
-| **Thinking Indicator** | ✅ Complete | Animated "..." dots shown during LLM calls (⋯ toggleable) |
-| **Impostor Task Faking** | ✅ Complete | Impostors fake tasks without contributing to task bar |
-| **WebSocket Streaming** | ✅ Complete | Real-time state sync with delta compression |
-| **PixiJS Visualization** | ✅ Complete | Map, agents, vision cones, paths, speech bubbles, info panels |
+| **Movement & Pathfinding** | Complete | A* on visibility graph, steering behaviors, collision avoidance |
+| **Navigation Mesh** | Complete | Full Skeld map with walkable zones, rooms, and hallways |
+| **Task System** | Complete | Task assignment, navigation, execution with realistic durations |
+| **Vision System** | Complete | Agents see only within configurable vision radius |
+| **AI Decision Making** | Complete | LLM-powered goals: tasks, wandering, following, avoiding, confronting |
+| **Agent Memory** | Complete | Observations, suspicion tracking, conversation history |
+| **Speech System** | Complete | Agents speak to nearby players (rectangular bubble, toggleable) |
+| **Social Actions** | Complete | Buddy up, follow, avoid, confront, spread rumors, defend self |
+| **Thought System** | Complete | Internal reasoning shown as cloud bubbles (toggleable) |
+| **Thinking Indicator** | Complete | Animated "..." dots shown during LLM calls (toggleable) |
+| **Impostor Task Faking** | Complete | Impostors fake tasks without contributing to task bar |
+| **WebSocket Streaming** | Complete | Real-time state sync with delta compression |
+| **PixiJS Visualization** | Complete | Map, agents, vision cones, paths, speech bubbles, info panels |
+| **Logging System** | Complete | Structured JSON logging with color-coded console output, single 1GB log file |
 
-## 🚧 Planned / Not Yet Implemented
+## Planned / Not Yet Implemented
 
 | Feature | Status |
 |---------|--------|
-| Kill System | 🔶 Partial (KillSystem class exists, full integration pending) |
-| Body Discovery & Reporting | ❌ Not implemented |
-| Emergency Meetings | ❌ Not implemented |
-| Discussion & Voting | ❌ Not implemented |
-| Ejection Mechanics | ❌ Not implemented |
-| Sabotage System | ❌ Not implemented |
-| Vent System | ❌ Not implemented |
-| Door System | ❌ Not implemented |
-| Win Conditions | ❌ Not implemented |
-| Ghost Mode | ❌ Not implemented |
+| Kill System | Partial (KillSystem class exists, full integration pending) |
+| Body Discovery & Reporting | Not implemented |
+| Emergency Meetings | Not implemented |
+| Discussion & Voting | Not implemented |
+| Ejection Mechanics | Not implemented |
+| Sabotage System | Not implemented |
+| Vent System | Partial (VentSystem class exists, AI integration pending) |
+| Door System | Not implemented |
+| Win Conditions | Not implemented |
+| Ghost Mode | Not implemented |
 
 ---
 

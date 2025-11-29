@@ -1,6 +1,7 @@
 import { performance } from 'node:perf_hooks';
 import type { GameSimulation } from './GameSimulation.js';
 import type { WorldSnapshot } from '@shared/types/simulation.types.ts';
+import { simulationLogger, perfLogger } from '../logging/index.js';
 
 export interface SimulationLoopOptions {
   tickRate?: number;
@@ -101,7 +102,7 @@ export class SimulationLoop {
       try {
         listener(snapshot);
       } catch (error) {
-        console.error('[SimulationLoop] Snapshot listener error:', error);
+        simulationLogger.error('Snapshot listener error', { error: error as Error });
       }
     }
 
@@ -116,7 +117,7 @@ export class SimulationLoop {
       try {
         listener(metrics);
       } catch (error) {
-        console.error('[SimulationLoop] Metrics listener error:', error);
+        perfLogger.error('Metrics listener error', { error: error as Error });
       }
     }
   }
