@@ -4,9 +4,49 @@
 
 ---
 
-## ⚠️ Development Notes
+## 📝 Document Maintenance Requirements
 
-**DO NOT** stop or start the server when making changes to this document or reviewing issues. The simulation runs continuously and server restarts will disrupt live testing.
+**IMPORTANT**: When making ANY changes to the codebase, AI agents MUST update this document (`agents.md`) to reflect those changes. This includes:
+
+- Adding new features to the [Implementation Status](#implementation-status) section
+- Moving features from "Not Yet Implemented" to "Fully Implemented" when completed
+- Updating configuration values if they change
+- Adding new AI decision types or thought triggers
+- Documenting any new systems, renderers, or mechanics
+
+**This document is the source of truth for what the simulation can and cannot do.** Keeping it accurate ensures future AI agents can work effectively.
+
+---
+
+## ⚠️ Development Notes & Do's/Don'ts
+
+### ❌ DON'T DO
+
+1. **DO NOT stop or start the server** when making changes to this document, reviewing issues, or debugging. The simulation runs continuously and server restarts will disrupt live testing.
+
+2. **DO NOT stop or start the client** unless explicitly instructed by the user. Hot module replacement handles most changes.
+
+3. **DO NOT restart services to "test" changes** - this disrupts live observation and debugging sessions.
+
+4. **DO NOT modify `docker-manage/` scripts without user consent** - these control the LLM infrastructure.
+
+5. **DO NOT delete or overwrite map data files** (`shared/data/`) without backup.
+
+6. **DO NOT change WebSocket port configurations** without updating all dependent files.
+
+### ✅ DO
+
+1. **DO update this `agents.md` file** whenever you make changes to the codebase.
+
+2. **DO check the Implementation Status section** before implementing features - it may already exist.
+
+3. **DO use the existing type system** in `shared/types/` for new features.
+
+4. **DO follow the existing code patterns** in `shared/engine/` for game logic.
+
+5. **DO test changes by observing the running simulation** rather than restarting services.
+
+6. **DO commit changes with clear, descriptive messages** explaining what was modified.
 
 ---
 
@@ -513,6 +553,7 @@ Map Settings:
 
 ### AI Decision Types (Active)
 
+**Crewmate & Impostor Goals:**
 ```
 GO_TO_TASK     - Navigate to assigned task location
 WANDER         - Random exploration of the map
@@ -524,6 +565,15 @@ SPREAD_RUMOR   - Share suspicions with other agents
 DEFEND_SELF    - Provide alibis when accused
 SPEAK          - General conversation
 IDLE           - Wait and observe surroundings
+```
+
+**Impostor-Only Goals:**
+```
+KILL           - Eliminate a crewmate (requires target in range, cooldown ready)
+HUNT           - Actively seek isolated targets for kills
+SELF_REPORT    - Report own kill to appear innocent
+FLEE_BODY      - Get away from body after a kill
+CREATE_ALIBI   - Position near witnesses/tasks after kill for cover
 ```
 
 ### Thought Triggers (Active)
@@ -546,7 +596,7 @@ target_entered_kill_range - IMPOSTOR ONLY: Crewmate entered kill range, forces i
 
 | System | Status | Notes |
 |--------|--------|-------|
-| **Kill Mechanics** | ❌ | Impostors cannot eliminate crewmates yet |
+| **Kill Mechanics** | 🔶 Partial | KillSystem class exists with cooldowns, range checks, witnesses; kills can be attempted but game state doesn't update victims to DEAD |
 | **Body Discovery** | ❌ | No corpses, no report button |
 | **Emergency Meetings** | ❌ | Button location exists but non-functional |
 | **Discussion Phase** | ❌ | No meeting chat or accusations |

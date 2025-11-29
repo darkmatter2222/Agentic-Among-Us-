@@ -316,75 +316,103 @@ class PlayerSprite {
     this.impostorIndicator.ellipse(0, 0, bodyRadiusX + blackBorderWidth + 1.5, bodyRadiusY + blackBorderWidth + 1.5);
     this.impostorIndicator.stroke({ width: 2, color: 0xFF0000, alpha: 0.85 });
   }/**
-   * Draw dead body - Among Us style fallen corpse with bone sticking out
-   * Based on the canonical dead body appearance: body on side, split open, bone visible
+   * Draw dead body - Clean Among Us style: body cut in half with bone sticking out
+   * No blood pool - just the clean body graphic
    */
   private drawDeadBody(color: number): void {
     const sizeMultiplier = PlayerSprite.SIZE_MULTIPLIER;
     const size = 0.5 * this.scale * sizeMultiplier;
-    const darkerColor = this.darkenColor(color, 0.3);
-    
-    // Blood pool underneath (dark red, spread out)
+    const darkerColor = this.darkenColor(color, 0.22);
+    const darkestColor = this.darkenColor(color, 0.40);
+    const visorColor = 0x030405; // Dark visor
+
+    // NO BLOOD POOL - clear the shadow
     this.shadow.clear();
-    this.shadow.ellipse(0, size * 0.2, size * 2.0, size * 1.2);
-    this.shadow.fill({ color: 0x8B0000, alpha: 0.85 });
-    
-    // Blood splatter details
-    this.shadow.circle(size * 1.2, size * 0.1, size * 0.3);
-    this.shadow.fill({ color: 0x8B0000, alpha: 0.7 });
-    this.shadow.circle(-size * 0.9, size * 0.5, size * 0.25);
-    this.shadow.fill({ color: 0x8B0000, alpha: 0.6 });
-    this.shadow.circle(size * 0.7, size * 0.7, size * 0.2);
-    this.shadow.fill({ color: 0x8B0000, alpha: 0.5 });
-    
-    // Lower half of body (fallen away, on the right)
-    // Draw as a half-bean shape rotated
-    this.graphics.ellipse(size * 0.8, size * 0.1, size * 0.55, size * 0.45);
+
+    // ===== UPPER HALF (LEFT SIDE) - Main body torso with backpack and visor =====
+    // Main upper body shape (large bean/pill shape - the torso)
+    this.graphics.ellipse(-size * 0.45, 0, size * 0.75, size * 0.55);
     this.graphics.fill(color);
-    // Darker inner part (exposed interior)
-    this.graphics.ellipse(size * 0.5, size * 0.1, size * 0.25, size * 0.35);
+
+    // Backpack (darker rounded hump on top of body)
+    this.graphics.ellipse(-size * 0.85, -size * 0.05, size * 0.35, size * 0.42);
     this.graphics.fill(darkerColor);
-    
-    // Upper half of body (main torso, on its side)
-    // Bean-shaped body laying sideways
-    this.graphics.ellipse(-size * 0.3, -size * 0.1, size * 0.7, size * 0.55);
-    this.graphics.fill(color);
-    
-    // Backpack on the upper half
-    this.graphics.roundRect(-size * 1.1, -size * 0.35, size * 0.35, size * 0.5, size * 0.1);
-    this.graphics.fill(darkerColor);
-    this.graphics.stroke({ width: 1, color: 0x000000, alpha: 0.3 });
-    
-    // Visor on upper half (dark opening, sideways)
-    const visorColor = this.darkenColor(color, 0.5);
-    this.graphics.ellipse(-size * 0.1, -size * 0.25, size * 0.35, size * 0.25);
+
+    // Subtle shadow under backpack edge
+    this.graphics.ellipse(-size * 0.65, size * 0.15, size * 0.15, size * 0.25);
+    this.graphics.fill(darkestColor);
+
+    // Visor (dark curved shape on front of head area)
+    this.graphics.ellipse(-size * 0.25, -size * 0.25, size * 0.35, size * 0.2);
     this.graphics.fill(visorColor);
-    // Visor highlight
-    this.graphics.ellipse(-size * 0.0, -size * 0.35, size * 0.1, size * 0.06);
-    this.graphics.fill({ color: 0xFFFFFF, alpha: 0.4 });
     
-    // Bone sticking out between the halves
-    // Main bone shaft
-    this.graphics.roundRect(size * 0.05, -size * 0.15, size * 0.55, size * 0.15, size * 0.02);
-    this.graphics.fill(0xF5F5DC); // Bone white/cream color
-    this.graphics.stroke({ width: 1, color: 0xD4D4AA, alpha: 0.8 });
-    
-    // Bone knob on left (inside body)
-    this.graphics.circle(size * 0.05, -size * 0.08, size * 0.12);
-    this.graphics.fill(0xF5F5DC);
-    this.graphics.circle(size * 0.05, -size * 0.08, size * 0.08);
-    this.graphics.fill(0xE8E8D0);
-    
-    // Bone knob on right (sticking out)
-    this.graphics.circle(size * 0.6, -size * 0.08, size * 0.14);
-    this.graphics.fill(0xF5F5DC);
-    this.graphics.circle(size * 0.6, -size * 0.08, size * 0.09);
-    this.graphics.fill(0xE8E8D0);
-    
-    // Body outline on upper half
-    this.graphics.ellipse(-size * 0.3, -size * 0.1, size * 0.7, size * 0.55);
+    // Visor highlight/reflection
+    this.graphics.ellipse(-size * 0.15, -size * 0.32, size * 0.1, size * 0.05);
+    this.graphics.fill({ color: 0xFFFFFF, alpha: 0.25 });
+
+    // Cut/exposed interior on upper half
+    this.graphics.ellipse(size * 0.2, size * 0.05, size * 0.15, size * 0.4);
+    this.graphics.fill(darkestColor);
+
+    // Upper half body outline
+    this.graphics.ellipse(-size * 0.45, 0, size * 0.75, size * 0.55);
     this.graphics.stroke({ width: 1.5, color: 0x000000, alpha: 0.4 });
-  }  /**
+
+    // ===== LOWER HALF (RIGHT SIDE) - Bottom portion separated =====
+    // Main lower body portion
+    this.graphics.ellipse(size * 0.85, size * 0.1, size * 0.45, size * 0.35);
+    this.graphics.fill(color);
+
+    // Exposed interior on lower half
+    this.graphics.ellipse(size * 0.5, size * 0.08, size * 0.12, size * 0.28);
+    this.graphics.fill(darkestColor);
+
+    // Lower half outline
+    this.graphics.ellipse(size * 0.85, size * 0.1, size * 0.45, size * 0.35);
+    this.graphics.stroke({ width: 1.5, color: 0x000000, alpha: 0.4 });
+
+    // ===== BONE (Single white bone sticking out between halves) =====
+    const boneWhite = 0xFCFBFC;
+    const boneGray = 0xC3C3C3;
+    const boneStartX = size * 0.15;
+    const boneEndX = size * 0.55;
+    const boneY = size * 0.05;
+    const boneThickness = size * 0.1;
+
+    // Draw bone shaft
+    this.graphics.roundRect(
+      boneStartX, 
+      boneY - boneThickness / 2, 
+      boneEndX - boneStartX, 
+      boneThickness, 
+      boneThickness * 0.3
+    );
+    this.graphics.fill(boneWhite);
+
+    // Left bone knob (partially hidden in body)
+    this.graphics.circle(boneStartX, boneY - boneThickness * 0.4, boneThickness * 0.55);
+    this.graphics.fill(boneWhite);
+    this.graphics.circle(boneStartX, boneY + boneThickness * 0.4, boneThickness * 0.55);
+    this.graphics.fill(boneWhite);
+
+    // Right bone knob (visible, sticking out)
+    this.graphics.circle(boneEndX, boneY - boneThickness * 0.45, boneThickness * 0.6);
+    this.graphics.fill(boneWhite);
+    this.graphics.circle(boneEndX, boneY + boneThickness * 0.45, boneThickness * 0.6);
+    this.graphics.fill(boneWhite);
+
+    // Subtle shading on bone knobs
+    this.graphics.circle(boneEndX + boneThickness * 0.15, boneY - boneThickness * 0.3, boneThickness * 0.25);
+    this.graphics.fill(boneGray);
+    this.graphics.circle(boneEndX + boneThickness * 0.15, boneY + boneThickness * 0.5, boneThickness * 0.25);
+    this.graphics.fill(boneGray);
+
+    // Bone outline for definition
+    this.graphics.circle(boneEndX, boneY - boneThickness * 0.45, boneThickness * 0.6);
+    this.graphics.stroke({ width: 1, color: 0xC0C0C0, alpha: 0.5 });
+    this.graphics.circle(boneEndX, boneY + boneThickness * 0.45, boneThickness * 0.6);
+    this.graphics.stroke({ width: 1, color: 0xC0C0C0, alpha: 0.5 });
+  }/**
    * Draw ghost (semi-transparent, floating) - 20% larger
    */
   private drawGhost(color: number): void {

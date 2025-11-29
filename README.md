@@ -32,7 +32,7 @@ This project creates a fully autonomous Among Us simulation where:
 
 | Feature | Status |
 |---------|--------|
-| Kill System | ❌ Not implemented |
+| Kill System | 🔶 Partial (KillSystem class exists, full integration pending) |
 | Body Discovery & Reporting | ❌ Not implemented |
 | Emergency Meetings | ❌ Not implemented |
 | Discussion & Voting | ❌ Not implemented |
@@ -151,16 +151,23 @@ agentrunner/
 ### AI Agent Decision Types
 
 Agents can pursue these goals based on LLM reasoning:
-- `GO_TO_TASK` – Navigate to assigned task
-- `WANDER` – Random exploration
-- `FOLLOW_AGENT` – Tail another agent
-- `AVOID_AGENT` – Stay away from someone
-- `BUDDY_UP` – Team up for safety
-- `CONFRONT` – Question suspicious behavior
-- `SPREAD_RUMOR` – Share suspicions with others
-- `DEFEND_SELF` – Provide alibis when accused
-- `SPEAK` – General conversation
-- `IDLE` – Wait and observe
+- `GO_TO_TASK` — Navigate to assigned task
+- `WANDER` — Random exploration
+- `FOLLOW_AGENT` — Tail another agent
+- `AVOID_AGENT` — Stay away from someone
+- `BUDDY_UP` — Team up for safety
+- `CONFRONT` — Question suspicious behavior
+- `SPREAD_RUMOR` — Share suspicions with others
+- `DEFEND_SELF` — Provide alibis when accused
+- `SPEAK` — General conversation
+- `IDLE` — Wait and observe
+
+**Impostor-Only Goals:**
+- `KILL` — Eliminate a crewmate
+- `HUNT` — Seek isolated targets
+- `SELF_REPORT` — Report own kill
+- `FLEE_BODY` — Escape after kill
+- `CREATE_ALIBI` — Position for cover
 
 ---
 

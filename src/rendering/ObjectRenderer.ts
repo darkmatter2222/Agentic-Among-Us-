@@ -231,50 +231,112 @@ class BodySprite {
   }
 
   /**
-   * Draw dead body (cut in half with bone)
+   * Draw dead body - Clean Among Us style: body cut in half with bone sticking out
+   * No blood pool - just the clean body graphic
    */
   private draw(): void {
     this.graphics.clear();
-    
+
     const size = 0.5 * this.scale;
     const color = this.getPlayerColor();
-    
-    // Blood pool (fades over time)
-    const bloodAlpha = Math.max(0.3, 0.5 - this.age * 0.05);
-    this.graphics.ellipse(0, 0, size * 1.5, size);
-    this.graphics.fill({ color: color, alpha: bloodAlpha });
-    
-    // Top half
-    this.graphics.rect(-size * 0.3, -size * 0.5, size * 0.6, size * 0.4);
+    const darkerColor = this.darkenColor(color, 0.22);
+    const darkestColor = this.darkenColor(color, 0.40);
+    const visorColor = 0x030405; // Dark visor
+
+    // ===== UPPER HALF (LEFT SIDE) - Main body torso with backpack and visor =====
+    // Main upper body shape
+    this.graphics.ellipse(-size * 0.45, 0, size * 0.75, size * 0.55);
     this.graphics.fill(color);
+
+    // Backpack (darker rounded hump on top of body)
+    this.graphics.ellipse(-size * 0.85, -size * 0.05, size * 0.35, size * 0.42);
+    this.graphics.fill(darkerColor);
+
+    // Subtle shadow under backpack edge
+    this.graphics.ellipse(-size * 0.65, size * 0.15, size * 0.15, size * 0.25);
+    this.graphics.fill(darkestColor);
+
+    // Visor (dark curved shape on front of head area)
+    this.graphics.ellipse(-size * 0.25, -size * 0.25, size * 0.35, size * 0.2);
+    this.graphics.fill(visorColor);
     
-    // Bottom half
-    this.graphics.rect(-size * 0.3, size * 0.2, size * 0.6, size * 0.4);
+    // Visor highlight/reflection
+    this.graphics.ellipse(-size * 0.15, -size * 0.32, size * 0.1, size * 0.05);
+    this.graphics.fill({ color: 0xFFFFFF, alpha: 0.25 });
+
+    // Cut/exposed interior on upper half
+    this.graphics.ellipse(size * 0.2, size * 0.05, size * 0.15, size * 0.4);
+    this.graphics.fill(darkestColor);
+
+    // Upper half body outline
+    this.graphics.ellipse(-size * 0.45, 0, size * 0.75, size * 0.55);
+    this.graphics.stroke({ width: 1.5, color: 0x000000, alpha: 0.4 });
+
+    // ===== LOWER HALF (RIGHT SIDE) - Bottom portion separated =====
+    // Main lower body portion
+    this.graphics.ellipse(size * 0.85, size * 0.1, size * 0.45, size * 0.35);
     this.graphics.fill(color);
-    
-    // Bone (white stick)
-    this.graphics.rect(-size * 0.1, -size * 0.1, size * 0.2, size * 0.6);
-    this.graphics.fill(0xFFFFFF);
-    
-    // Bone ends (balls)
-    this.graphics.circle(0, -size * 0.1, size * 0.15);
-    this.graphics.fill(0xFFFFFF);
-    this.graphics.circle(0, size * 0.5, size * 0.15);
-    this.graphics.fill(0xFFFFFF);
-    
-    // Add some dark spots for decay
-    if (this.age > 5) {
-      const numSpots = Math.floor(this.age / 5);
-      for (let i = 0; i < numSpots; i++) {
-        const angle = (i / numSpots) * Math.PI * 2;
-        const dist = size * 0.5;
-        this.graphics.circle(Math.cos(angle) * dist, Math.sin(angle) * dist, 3);
-        this.graphics.fill({ color: 0x000000, alpha: 0.3 });
-      }
-    }
+
+    // Exposed interior on lower half
+    this.graphics.ellipse(size * 0.5, size * 0.08, size * 0.12, size * 0.28);
+    this.graphics.fill(darkestColor);
+
+    // Lower half outline
+    this.graphics.ellipse(size * 0.85, size * 0.1, size * 0.45, size * 0.35);
+    this.graphics.stroke({ width: 1.5, color: 0x000000, alpha: 0.4 });
+
+    // ===== BONE (Single white bone sticking out between halves) =====
+    const boneWhite = 0xFCFBFC;
+    const boneGray = 0xC3C3C3;
+    const boneStartX = size * 0.15;
+    const boneEndX = size * 0.55;
+    const boneY = size * 0.05;
+    const boneThickness = size * 0.1;
+
+    // Draw bone shaft
+    this.graphics.roundRect(
+      boneStartX, 
+      boneY - boneThickness / 2, 
+      boneEndX - boneStartX, 
+      boneThickness, 
+      boneThickness * 0.3
+    );
+    this.graphics.fill(boneWhite);
+
+    // Left bone knob (partially hidden in body)
+    this.graphics.circle(boneStartX, boneY - boneThickness * 0.4, boneThickness * 0.55);
+    this.graphics.fill(boneWhite);
+    this.graphics.circle(boneStartX, boneY + boneThickness * 0.4, boneThickness * 0.55);
+    this.graphics.fill(boneWhite);
+
+    // Right bone knob (visible, sticking out)
+    this.graphics.circle(boneEndX, boneY - boneThickness * 0.45, boneThickness * 0.6);
+    this.graphics.fill(boneWhite);
+    this.graphics.circle(boneEndX, boneY + boneThickness * 0.45, boneThickness * 0.6);
+    this.graphics.fill(boneWhite);
+
+    // Subtle shading on bone knobs
+    this.graphics.circle(boneEndX + boneThickness * 0.15, boneY - boneThickness * 0.3, boneThickness * 0.25);
+    this.graphics.fill(boneGray);
+    this.graphics.circle(boneEndX + boneThickness * 0.15, boneY + boneThickness * 0.5, boneThickness * 0.25);
+    this.graphics.fill(boneGray);
+
+    // Bone outline for definition
+    this.graphics.circle(boneEndX, boneY - boneThickness * 0.45, boneThickness * 0.6);
+    this.graphics.stroke({ width: 1, color: 0xC0C0C0, alpha: 0.5 });
+    this.graphics.circle(boneEndX, boneY + boneThickness * 0.45, boneThickness * 0.6);
+    this.graphics.stroke({ width: 1, color: 0xC0C0C0, alpha: 0.5 });
   }
 
   /**
+   * Darken a color by a factor (0-1)
+   */
+  private darkenColor(color: number, factor: number): number {
+    const r = Math.floor(((color >> 16) & 0xFF) * (1 - factor));
+    const g = Math.floor(((color >> 8) & 0xFF) * (1 - factor));
+    const b = Math.floor((color & 0xFF) * (1 - factor));
+    return (r << 16) | (g << 8) | b;
+  }  /**
    * Get player color value
    */
   private getPlayerColor(): number {
