@@ -550,6 +550,7 @@ Map Settings:
 | **Speech System** | Agents speak to nearby players, proximity-based hearing |
 | **Social Actions** | Buddy up, follow, avoid, confront, spread rumors, defend self |
 | **AI Decision Making** | LLM-powered with 10 goal types (see below) |
+| **Kill Sound Effects** | Audio plays on new body detection with browser autoplay unlock |
 
 ### AI Decision Types (Active)
 

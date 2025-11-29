@@ -199,6 +199,7 @@ export function diffWorldSnapshots(previous: WorldSnapshot | null, current: Worl
     gamePhase: current.gamePhase,
     recentThoughts: current.recentThoughts,
     recentSpeech: current.recentSpeech,
+    bodies: current.bodies,
     llmQueueStats: current.llmQueueStats,
   };
 }

@@ -109,6 +109,8 @@ export interface WorldDelta {
   gamePhase?: 'INITIALIZING' | 'PLAYING' | 'MEETING' | 'GAME_OVER';
   recentThoughts?: import('./simulation.types.ts').ThoughtEvent[];
   recentSpeech?: import('./simulation.types.ts').SpeechEvent[];
+  // Dead bodies on the map for kill detection
+  bodies?: import('./simulation.types.ts').BodySnapshot[];
   // LLM Queue stats for monitoring
   llmQueueStats?: LLMQueueStats;
 }

@@ -52,6 +52,7 @@ function App() {
   // Kill audio - preload for instant playback
   const killAudioRef = useRef<HTMLAudioElement | null>(null);
   const lastKnownBodiesRef = useRef<Set<string>>(new Set());
+  const audioUnlockedRef = useRef<boolean>(false);
 
   // Preload kill sound on mount
   useEffect(() => {
@@ -60,10 +61,44 @@ function App() {
     audio.volume = 0.5;
     killAudioRef.current = audio;
 
+    // Add event listeners for debugging
+    audio.addEventListener('canplaythrough', () => {
+      console.log('[AUDIO] Kill sound loaded and ready to play');
+    });
+    audio.addEventListener('error', (e) => {
+      console.error('[AUDIO] Error loading kill sound:', e);
+    });
+
     // Force load the audio
     audio.load();
 
+    // Unlock audio on first user interaction (required by browser autoplay policies)
+    const unlockAudio = () => {
+      if (audioUnlockedRef.current) return;
+      
+      // Play and immediately pause to unlock audio context
+      const unlockPromise = audio.play();
+      if (unlockPromise) {
+        unlockPromise.then(() => {
+          audio.pause();
+          audio.currentTime = 0;
+          audioUnlockedRef.current = true;
+          console.log('[AUDIO] Audio unlocked by user interaction');
+        }).catch(() => {
+          // Still locked, will try again on next interaction
+        });
+      }
+    };
+
+    // Listen for various user interactions to unlock audio
+    document.addEventListener('click', unlockAudio, { once: false });
+    document.addEventListener('keydown', unlockAudio, { once: false });
+    document.addEventListener('touchstart', unlockAudio, { once: false });
+
     return () => {
+      document.removeEventListener('click', unlockAudio);
+      document.removeEventListener('keydown', unlockAudio);
+      document.removeEventListener('touchstart', unlockAudio);
       if (killAudioRef.current) {
         killAudioRef.current.pause();
         killAudioRef.current = null;
@@ -225,24 +260,24 @@ function App() {
       }
       
       // Detect new kills and play sound
-      // Debug: log bodies
-      if (snapshot.bodies && snapshot.bodies.length > 0) {
-        console.log(`[APP] Bodies detected: ${snapshot.bodies.length}`, snapshot.bodies.map(b => b.id));
-      }
-      
       if (snapshot.bodies && snapshot.bodies.length > 0) {
         const currentBodyIds = new Set(snapshot.bodies.map(b => b.id));
         const previousBodyIds = lastKnownBodiesRef.current;
-        
+
         // Check for any new bodies
         for (const bodyId of currentBodyIds) {
           if (!previousBodyIds.has(bodyId)) {
             // New body detected - play kill sound
+            console.log(`[AUDIO] New body detected: ${bodyId}, attempting to play kill sound`);
             if (killAudioRef.current) {
               killAudioRef.current.currentTime = 0;
-              killAudioRef.current.play().catch(() => {
-                // Ignore autoplay errors - user hasn't interacted yet
-              });
+              killAudioRef.current.play()
+                .then(() => {
+                  console.log('[AUDIO] Kill sound playing successfully');
+                })
+                .catch((err) => {
+                  console.warn('[AUDIO] Failed to play kill sound:', err.message, '- user interaction required to unlock audio');
+                });
             }
             break; // Only play once per update even if multiple new bodies
           }
