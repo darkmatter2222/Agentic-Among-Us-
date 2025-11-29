@@ -557,32 +557,53 @@ export class AIAgentManager {
     return totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0;
   }
   
+  
   /**
    * Broadcast speech from one agent to all agents in hearing range
    */
   private broadcastSpeech(speakerId: string, message: string, zone: string | null): void {
     const speaker = this.agents.find(a => a.getId() === speakerId);
-    if (!speaker) return;
-    
+    if (!speaker) {
+      console.warn(`[SPEECH] broadcastSpeech: Speaker ${speakerId} not found`);
+      return;
+    }
+
+    // Dead agents can't speak
+    if (speaker.getPlayerState() === 'DEAD') {
+      console.log(`[SPEECH] broadcastSpeech: Speaker ${speaker.getName()} is dead, can't speak`);
+      return;
+    }
+
+    console.log(`[SPEECH] ${speaker.getName()} broadcasting: "${message.substring(0, 50)}..." in zone ${zone}`);
+
     const speakerPos = speaker.getPosition();
-    const speechRange = 150; // Same as in AIAgent
-    
+    let listenersReached = 0;
+
     for (const listener of this.agents) {
       if (listener.getId() === speakerId) continue; // Don't broadcast to self
-      
+
+      // Dead agents can't hear
+      if (listener.getPlayerState() === 'DEAD') continue;
+
       const listenerPos = listener.getPosition();
       const dx = listenerPos.x - speakerPos.x;
       const dy = listenerPos.y - speakerPos.y;
       const distance = Math.sqrt(dx * dx + dy * dy);
-      
-      if (distance <= speechRange) {
-        // Listener can hear the speech
+
+      // Speech hearing uses the same criteria as vision:
+      // Must be within listener's vision radius (line of sight is implied by being able to "see" the speaker)
+      // This means speech can't travel through walls or across the map
+      const hearingRange = listener.getVisionRadius();
+
+      if (distance <= hearingRange) {
+        // Listener can hear the speech (they can see the speaker)
         listener.hearSpeech(speakerId, speaker.getName(), message, zone);
+        listenersReached++;
       }
     }
-  }
-  
-  /**
+    
+    console.log(`[SPEECH] ${speaker.getName()}'s message reached ${listenersReached} listeners`);
+  }  /**
    * Get all agents
    */
   getAgents(): AIAgent[] {

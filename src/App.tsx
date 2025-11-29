@@ -5,14 +5,14 @@ import { Poly3MapRenderer } from './rendering/Poly3MapRenderer';
 import { RoomLightingRenderer } from './rendering/RoomLightingRenderer';
 import { AIAgentVisualRenderer } from './rendering/AIAgentVisualRenderer';
 import { getSimulationClient } from './ai/SimulationClient';
-import type { WorldSnapshot, SpeechEvent, GameTimerSnapshot } from '@shared/types/simulation.types.ts';
+import type { WorldSnapshot, SpeechEvent, ThoughtEvent, GameTimerSnapshot } from '@shared/types/simulation.types.ts';
 import type { LLMQueueStats } from '@shared/types/protocol.types.ts';
 import type { LLMTraceEvent } from '@shared/types/llm-trace.types.ts';
 import { AgentInfoPanel, type AgentSummary } from './components/AgentInfoPanel';
 import { LLMTimelinePanel } from './components/LLMTimelinePanel';
 
 // Maximum number of LLM trace events to keep in the timeline
-const MAX_TRACE_EVENTS = 50;
+const MAX_TRACE_EVENTS = 200;
 
 // Vision distance in pixels (matches agent visionRadius config)
 const AGENT_VISION_DISTANCE = 150;
@@ -22,6 +22,7 @@ function App() {
   const mapWrapperRef = useRef<HTMLDivElement>(null);
   const latestSnapshotRef = useRef<WorldSnapshot | null>(null);
   const recentSpeechRef = useRef<SpeechEvent[]>([]);
+  const recentThoughtsRef = useRef<ThoughtEvent[]>([]);
   const gameRendererRef = useRef<GameRenderer | null>(null);
   const mapRendererRef = useRef<Poly3MapRenderer | null>(null);
   const lightingRendererRef = useRef<RoomLightingRenderer | null>(null);
@@ -43,6 +44,7 @@ function App() {
   // Visibility toggle states (all enabled by default)
   const [showVisionBoxes, setShowVisionBoxes] = useState(false);
   const [showActionRadius, setShowActionRadius] = useState(false);
+  const [showThoughtBubbles, setShowThoughtBubbles] = useState(true);
   const [showThinkingBubbles, setShowThinkingBubbles] = useState(true);
   const [showSpeechBubbles, setShowSpeechBubbles] = useState(true);
   const [lightsOn, setLightsOn] = useState(true);
@@ -201,10 +203,11 @@ function App() {
       const snapshot = latestSnapshotRef.current;
       if (!snapshot) return;
       if (snapshot.tick === lastAppliedTick) return;
-      agentVisualRendererRef.current.syncAgents(snapshot.agents, recentSpeechRef.current);
+      agentVisualRendererRef.current.syncAgents(snapshot.agents, recentSpeechRef.current, recentThoughtsRef.current);
       lastAppliedTick = snapshot.tick;
-      // Clear speech events after they've been processed
+      // Clear speech and thought events after they've been processed
       recentSpeechRef.current = [];
+      recentThoughtsRef.current = [];
     };
 
     const animate = () => {
@@ -303,7 +306,12 @@ function App() {
       if (snapshot.recentSpeech && snapshot.recentSpeech.length > 0) {
         recentSpeechRef.current = snapshot.recentSpeech;
       }
-      
+
+      // Capture thought events
+      if (snapshot.recentThoughts && snapshot.recentThoughts.length > 0) {
+        recentThoughtsRef.current = snapshot.recentThoughts;
+      }
+
       // Detect new kills and play sound
       if (snapshot.bodies && snapshot.bodies.length > 0) {
         const currentBodyIds = new Set(snapshot.bodies.map(b => b.id));
@@ -705,6 +713,14 @@ function App() {
     });
   }, []);
 
+  const handleToggleThoughtBubbles = useCallback(() => {
+    setShowThoughtBubbles(prev => {
+      const newValue = !prev;
+      agentVisualRendererRef.current?.toggleThoughtBubbles(newValue);
+      return newValue;
+    });
+  }, []);
+
   const handleToggleThinkingBubbles = useCallback(() => {
     setShowThinkingBubbles(prev => {
       const newValue = !prev;
@@ -793,22 +809,29 @@ function App() {
             👁
           </button>
           <button 
-            className={`control-btn ${showActionRadius ? 'active' : ''}`} 
-            onClick={handleToggleActionRadius} 
+            className={`control-btn ${showActionRadius ? 'active' : ''}`}
+            onClick={handleToggleActionRadius}
             title="Toggle Action Radius"
           >
             ◎
           </button>
-          <button 
-            className={`control-btn ${showThinkingBubbles ? 'active' : ''}`} 
-            onClick={handleToggleThinkingBubbles} 
-            title="Toggle Thinking Bubbles"
+          <button
+            className={`control-btn ${showThoughtBubbles ? 'active' : ''}`}
+            onClick={handleToggleThoughtBubbles}
+            title="Toggle Thought Bubbles (cloud)"
           >
             💭
           </button>
-          <button 
-            className={`control-btn ${showSpeechBubbles ? 'active' : ''}`} 
-            onClick={handleToggleSpeechBubbles} 
+          <button
+            className={`control-btn ${showThinkingBubbles ? 'active' : ''}`}
+            onClick={handleToggleThinkingBubbles}
+            title="Toggle Thinking Bubbles (dots)"
+          >
+            ⋯
+          </button>
+          <button
+            className={`control-btn ${showSpeechBubbles ? 'active' : ''}`}
+            onClick={handleToggleSpeechBubbles}
             title="Toggle Speech Bubbles"
           >
             💬

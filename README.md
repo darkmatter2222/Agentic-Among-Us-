@@ -21,9 +21,10 @@ This project creates a fully autonomous Among Us simulation where:
 | **Vision System** | ✅ Complete | Agents see only within configurable vision radius |
 | **AI Decision Making** | ✅ Complete | LLM-powered goals: tasks, wandering, following, avoiding, confronting |
 | **Agent Memory** | ✅ Complete | Observations, suspicion tracking, conversation history |
-| **Speech System** | ✅ Complete | Agents speak to nearby players, hear within radius |
+| **Speech System** | ✅ Complete | Agents speak to nearby players (💬 rectangular bubble, toggleable) |
 | **Social Actions** | ✅ Complete | Buddy up, follow, avoid, confront, spread rumors, defend self |
-| **Thought System** | ✅ Complete | Internal reasoning triggered by events (entering rooms, spotting agents) |
+| **Thought System** | ✅ Complete | Internal reasoning shown as cloud bubbles (💭 toggleable) |
+| **Thinking Indicator** | ✅ Complete | Animated "..." dots shown during LLM calls (⋯ toggleable) |
 | **Impostor Task Faking** | ✅ Complete | Impostors fake tasks without contributing to task bar |
 | **WebSocket Streaming** | ✅ Complete | Real-time state sync with delta compression |
 | **PixiJS Visualization** | ✅ Complete | Map, agents, vision cones, paths, speech bubbles, info panels |

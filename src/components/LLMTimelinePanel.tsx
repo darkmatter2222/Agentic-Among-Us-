@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import './LLMTimelinePanel.css';
 import type { LLMTraceEvent } from '@shared/types/llm-trace.types.ts';
 
-const MAX_EVENTS = 50;
+const MAX_EVENTS = 200;
 
 interface LLMTimelinePanelProps {
   width?: number;
@@ -672,30 +672,44 @@ export function LLMTimelinePanel({ width = 320, events }: LLMTimelinePanelProps)
   const [filter, setFilter] = useState<'all' | 'decision' | 'thought' | 'speech'>('all');
   const listRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
-  
-  // Auto-scroll to bottom when new events arrive
+  const [copiedFiltered, setCopiedFiltered] = useState(false);
+
+  // Auto-scroll to bottom when new events arrive (newest events at bottom)
   useEffect(() => {
     if (autoScroll && listRef.current) {
       listRef.current.scrollTop = listRef.current.scrollHeight;
     }
   }, [events.length, autoScroll]);
-  
+
   // Check if user scrolled away from bottom
   const handleScroll = useCallback(() => {
     if (!listRef.current) return;
     const { scrollTop, scrollHeight, clientHeight } = listRef.current;
     const isAtBottom = scrollHeight - scrollTop - clientHeight < 50;
     setAutoScroll(isAtBottom);
-  }, []);
+  }, []);  // Events come in newest-first from App.tsx, reverse to show chronologically (oldest at top, newest at bottom)
+  const chronologicalEvents = [...events].reverse();
   
-  const filteredEvents = events.filter(e => {
+  const filteredEvents = chronologicalEvents.filter(e => {
     if (filter === 'all') return true;
     if (filter === 'speech') return e.requestType === 'speech' || e.requestType === 'conversation';
     return e.requestType === filter;
   });
-  
-  // Limit to last MAX_EVENTS
+
+  // Limit to last MAX_EVENTS (newest events at bottom, chronological order)
   const displayEvents = filteredEvents.slice(-MAX_EVENTS);
+
+  // Copy filtered events to clipboard as JSON
+  const handleCopyFiltered = useCallback(async () => {
+    if (displayEvents.length === 0) return;
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(displayEvents, null, 2));
+      setCopiedFiltered(true);
+      setTimeout(() => setCopiedFiltered(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy events:', err);
+    }
+  }, [displayEvents]);
   
   if (isCollapsed) {
     return (
@@ -754,10 +768,18 @@ export function LLMTimelinePanel({ width = 320, events }: LLMTimelinePanelProps)
         >
           💬 Speech
         </button>
+        <button
+          className={`copy-filtered-btn ${copiedFiltered ? 'copied' : ''}`}
+          onClick={handleCopyFiltered}
+          disabled={displayEvents.length === 0}
+          title={`Copy ${displayEvents.length} ${filter} events as JSON`}
+        >
+          {copiedFiltered ? '✓' : '📋'}
+        </button>
       </div>
-      
-      <div 
-        className="timeline-list" 
+
+      <div
+        className="timeline-list"
         ref={listRef}
         onScroll={handleScroll}
       >
@@ -778,7 +800,7 @@ export function LLMTimelinePanel({ width = 320, events }: LLMTimelinePanelProps)
       </div>
       
       {!autoScroll && (
-        <button 
+        <button
           className="scroll-to-bottom"
           onClick={() => {
             if (listRef.current) {
@@ -790,11 +812,11 @@ export function LLMTimelinePanel({ width = 320, events }: LLMTimelinePanelProps)
           ↓ New events
         </button>
       )}
-      
+
       {selectedEvent && (
-        <TraceDetailModal 
-          event={selectedEvent} 
-          onClose={() => setSelectedEvent(null)} 
+        <TraceDetailModal
+          event={selectedEvent}
+          onClose={() =>setSelectedEvent(null)} 
         />
       )}
     </div>

@@ -325,22 +325,27 @@ export class AIAgent {
    */
   update(deltaTime: number): void {
     const now = Date.now();
-    
+
     // Update movement (always happens, never blocked)
     this.movementController.update(deltaTime);
-    
+
     // Update state machine position
     const position = this.movementController.getPosition();
     this.stateMachine.updatePosition(position);
-    
+
     // Update visibility
     this.updateVisibility();
-    
+
+    // Check god mode command completion
+    if (this.behaviorState.godModeActive) {
+      this.checkGodCommandCompletion();
+    }
+
     // Check task completion
     if (this.aiState.isDoingTask) {
       this.updateTaskProgress(now);
     }
-    
+
     // Check if movement finished
     if (this.stateMachine.isMoving() && !this.movementController.isMoving()) {
       this.onArriveAtDestination();
@@ -350,13 +355,12 @@ export class AIAgent {
     if (this.stateMachine.isMoving() && this.movementController.isStuck()) {
       this.handleMovementStuck();
     }
-    
+
     // Make decisions (non-blocking - fires and forgets)
-    if (now >= this.behaviorState.nextDecisionTime && !this.behaviorState.isThinking) {
+    // Don't make new decisions while god mode is active (let the divine command complete)
+    if (now >= this.behaviorState.nextDecisionTime && !this.behaviorState.isThinking && !this.behaviorState.godModeActive) {
       this.makeDecisionAsync();
-    }
-    
-    // Process AI triggers (thoughts, speech) - throttled and non-blocking
+    }    // Process AI triggers (thoughts, speech) - throttled and non-blocking
     // Use variable interval (1.8-2.2s) to prevent agents from synchronizing over time
     const TRIGGER_CHECK_INTERVAL = 1800 + Math.random() * 400;
     if (now - this.behaviorState.lastTriggerCheckTime >= TRIGGER_CHECK_INTERVAL) {
@@ -385,15 +389,21 @@ export class AIAgent {
     const speechRange = 150; // Units for speech hearing
 
     for (const other of this.otherAgents) {
+      // Skip dead agents - can't see or hear them
+      if (other.getPlayerState() === 'DEAD') continue;
+      
       const otherPos = other.getPosition();
       const distance = this.distanceTo(otherPos);
 
+      // Vision uses line-of-sight (already implicit in visionRadius check for this simple version)
       if (distance <= this.config.visionRadius) {
         visibleIds.push(other.getId());
         visibleNames.push(other.getName());
       }
 
-      if (distance <= speechRange) {
+      // Speech hearing uses SAME criteria as vision - within vision radius
+      // Speech can only be heard if you can see the speaker (line of sight + distance)
+      if (distance <= this.config.visionRadius) {
         speechRangeNames.push(other.getName()); // Use color name for natural speech
       }
     }    // Detect changes for triggers
@@ -686,7 +696,10 @@ export class AIAgent {
         
       case 'SPEAK':
         if (decision.speech) {
+          console.log(`[${this.config.id}] SPEAK: Executing speech - "${decision.speech.substring(0, 50)}..."`);
           this.speak(decision.speech);
+        } else {
+          console.warn(`[${this.config.id}] SPEAK: No speech content in decision!`);
         }
         this.behaviorState.nextDecisionTime = Date.now() + 2000;
         break;
@@ -2034,29 +2047,29 @@ export class AIAgent {
 
   // ==================== GOD MODE METHODS ====================
 
+
   /**
    * Inject a god mode command - immediately executes an action, bypassing LLM
    * The agent will execute this command and return to normal thinking when done
    */
   async injectGodCommand(command: import('../types/protocol.types.ts').GodModeCommand): Promise<void> {
-    console.log(`[${this.config.id}] GOD MODE: Received command - ${command.action}`);
-    
+    console.log(`[${this.config.id}] GOD MODE: Received command - ${command.action}`, command);
+
     // Set god mode active
     this.behaviorState.godModeActive = true;
     this.behaviorState.isThinking = false;
-    
+
     // Convert GodModeCommand to AIDecision and execute
     const decision = this.godCommandToDecision(command);
+    console.log(`[${this.config.id}] GOD MODE: Converted to decision -`, decision);
     this.behaviorState.godModeCommand = `${command.action}${this.getCommandDetails(command)}`;
-    
+
     // Execute the decision
     await this.executeDecision(decision);
-    
+
     // Set a short decision time so we can check when the action completes
     this.behaviorState.nextDecisionTime = Date.now() + 500;
-  }
-
-  /**
+  }  /**
    * Convert a GodModeCommand to an AIDecision
    */
   private godCommandToDecision(command: import('../types/protocol.types.ts').GodModeCommand): AIDecision {

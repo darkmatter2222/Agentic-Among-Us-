@@ -356,10 +356,9 @@ function GodModeControlPanel({ agent }: { agent: AgentSummary }) {
   const taskPercent = totalTasks > 0 ? (completed / totalTasks) * 100 : 0;
   const colorName = getColorName(agent.color);
 
-  // Get last 10 LLM traces for this agent
+  // Get ALL LLM traces for this agent only
   const agentTraces = llmTraceEvents
-    ?.filter(e => e.agentId === agent.id)
-    .slice(-10) ?? [];
+    ?.filter(e => e.agentId === agent.id) ?? [];
 
   const handleCopyTraces = useCallback(async () => {
     if (agentTraces.length === 0) return;

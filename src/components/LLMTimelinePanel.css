@@ -230,7 +230,7 @@
   color: #6e7681;
 }
 
-/* Scroll to bottom button */
+/* Scroll to bottom button (for new events) */
 .llm-timeline-panel .scroll-to-bottom {
   position: absolute;
   bottom: 12px;
@@ -251,6 +251,36 @@
 .llm-timeline-panel .scroll-to-bottom:hover {
   background: rgba(88, 166, 255, 1);
   transform: translateX(-50%) scale(1.05);
+}
+
+/* Copy filtered button */
+.llm-timeline-panel .copy-filtered-btn {
+  padding: 4px 8px;
+  background: transparent;
+  border: 1px solid #475569;
+  border-radius: 4px;
+  color: #94a3b8;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+  margin-left: auto;
+}
+
+.llm-timeline-panel .copy-filtered-btn:hover:not(:disabled) {
+  background: #334155;
+  border-color: #64748b;
+  color: #fff;
+}
+
+.llm-timeline-panel .copy-filtered-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.llm-timeline-panel .copy-filtered-btn.copied {
+  background: #22c55e;
+  border-color: #22c55e;
+  color: #fff;
 }
 
 /* Modal Styles */

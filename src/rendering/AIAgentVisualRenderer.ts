@@ -5,7 +5,7 @@
  */
 
 import * as PIXI from 'pixi.js';
-import type { AgentSnapshot, SpeechEvent } from '@shared/types/simulation.types.ts';
+import type { AgentSnapshot, SpeechEvent, ThoughtEvent } from '@shared/types/simulation.types.ts';
 import { VisionBoxRenderer, type LightsStateCallback } from './VisionBoxRenderer.ts';
 import { ActionRadiusRenderer } from './ActionRadiusRenderer.ts';
 import { PathLineRenderer } from './PathLineRenderer.ts';
@@ -41,6 +41,7 @@ interface AgentVisualState {
   targetPath: AgentSnapshot['movement']['path'];
   pathDirty: boolean;
   lastSpeechTime: number; // Track when we last showed a speech bubble
+  lastThoughtTime: number; // Track when we last showed a thought bubble
   isThinking: boolean; // Track if agent is waiting for LLM response
   isDead: boolean; // Track if agent is dead
   isImpostor: boolean; // Track if agent is an impostor (for admin indicator)
@@ -76,8 +77,9 @@ export class AIAgentVisualRenderer {
   private showActionRadius: boolean = false;
   private showPaths: boolean = true;
   private showSpeechBubbles: boolean = true;
+  private showThoughtBubbles: boolean = true;
   private showThinkingBubbles: boolean = true;
-  
+
   // Lighting reference for color confidence calculations
   private lightingRenderer: RoomLightingRenderer | null = null;
   private lightsStateCallback: LightsStateCallback | null = null;
@@ -113,7 +115,7 @@ export class AIAgentVisualRenderer {
     }
   }
 
-  syncAgents(snapshots: AgentSnapshot[], recentSpeech?: SpeechEvent[]): void {
+  syncAgents(snapshots: AgentSnapshot[], recentSpeech?: SpeechEvent[], recentThoughts?: ThoughtEvent[]): void {
     const activeIds = new Set<string>();
 
     // Log any dead agents received
@@ -178,21 +180,25 @@ export class AIAgentVisualRenderer {
       // Adjust dynamic radii if they change (should be rare but keeps parity with server).
       state.visuals.visionBox.updateConfig({ size: snapshot.visionRadius * 1.4, color: snapshot.color });
       state.visuals.actionRadius.updateConfig({ radius: snapshot.actionRadius, color: snapshot.color });
-      state.visuals.pathLine.updateConfig({ color: snapshot.color });      // Check for new speech to display
-      const speechTime = snapshot.lastSpeechTime ?? 0;
-      if (speechTime > state.lastSpeechTime && snapshot.recentSpeech) {
-        // New speech detected - show bubble
-        this.speechBubbleRenderer.showSpeech(
-          snapshot.id,
-          snapshot.recentSpeech,
-          { x: state.visuals.spriteContainer.x, y: state.visuals.spriteContainer.y }
-        );
-        state.lastSpeechTime = speechTime;
+      state.visuals.pathLine.updateConfig({ color: snapshot.color });
+
+      // Check for new speech to display (only if speech bubbles are enabled)
+      if (this.showSpeechBubbles) {
+        const speechTime = snapshot.lastSpeechTime ?? 0;
+        if (speechTime > state.lastSpeechTime && snapshot.recentSpeech) {
+          // New speech detected - show bubble
+          this.speechBubbleRenderer.showSpeech(
+            snapshot.id,
+            snapshot.recentSpeech,
+            { x: state.visuals.spriteContainer.x, y: state.visuals.spriteContainer.y }
+          );
+          state.lastSpeechTime = speechTime;
+        }
       }
     }
-    
-    // Also check recentSpeech events from world snapshot
-    if (recentSpeech) {
+
+    // Also check recentSpeech events from world snapshot (only if speech bubbles enabled)
+    if (this.showSpeechBubbles && recentSpeech) {
       for (const speech of recentSpeech) {
         const state = this.agentVisuals.get(speech.speakerId);
         if (state && speech.timestamp > state.lastSpeechTime) {
@@ -206,19 +212,32 @@ export class AIAgentVisualRenderer {
       }
     }
 
+    // Also check recentThoughts events from world snapshot (only if thought bubbles enabled)
+    if (this.showThoughtBubbles && recentThoughts) {
+      for (const thought of recentThoughts) {
+        const state = this.agentVisuals.get(thought.agentId);
+        if (state && thought.timestamp > state.lastThoughtTime) {
+          this.speechBubbleRenderer.showThought(
+            thought.agentId,
+            thought.thought,
+            { x: state.visuals.spriteContainer.x, y: state.visuals.spriteContainer.y }
+          );
+          state.lastThoughtTime = thought.timestamp;
+        }
+      }
+    }
+
     for (const [agentId, state] of this.agentVisuals) {
       if (!activeIds.has(agentId)) {
         state.visuals.spriteContainer.destroy({ children: true });
         state.visuals.visionBox.destroy();
         state.visuals.actionRadius.destroy();
         state.visuals.pathLine.destroy();
-        this.speechBubbleRenderer.removeBubble(agentId);
+        this.speechBubbleRenderer.removeAllBubbles(agentId);
         this.agentVisuals.delete(agentId);
       }
     }
-  }
-
-  update(deltaTime: number): void {
+  }  update(deltaTime: number): void {
     const lerpFactor = Math.min(1, deltaTime * AIAgentVisualRenderer.SMOOTHING_SPEED);
     const agentPositions = new Map<string, { x: number; y: number }>();
     const thinkingAgents = new Set<string>();
@@ -508,6 +527,10 @@ export class AIAgentVisualRenderer {
     this.showSpeechBubbles = show ?? !this.showSpeechBubbles;
   }
 
+  toggleThoughtBubbles(show?: boolean): void {
+    this.showThoughtBubbles = show ?? !this.showThoughtBubbles;
+  }
+
   toggleThinkingBubbles(show?: boolean): void {
     this.showThinkingBubbles = show ?? !this.showThinkingBubbles;
   }
@@ -517,6 +540,7 @@ export class AIAgentVisualRenderer {
   isShowingActionRadius(): boolean { return this.showActionRadius; }
   isShowingPaths(): boolean { return this.showPaths; }
   isShowingSpeechBubbles(): boolean { return this.showSpeechBubbles; }
+  isShowingThoughtBubbles(): boolean { return this.showThoughtBubbles; }
   isShowingThinkingBubbles(): boolean { return this.showThinkingBubbles; }
 
   getContainer(): PIXI.Container {
@@ -948,6 +972,7 @@ export class AIAgentVisualRenderer {
       targetPath: snapshot.movement.path.map(point => ({ ...point })),
       pathDirty: true,
       lastSpeechTime: 0,
+      lastThoughtTime: 0,
       isThinking: snapshot.isThinking ?? false,
       isDead: snapshot.playerState === 'DEAD',
       isImpostor: snapshot.role === 'IMPOSTOR',

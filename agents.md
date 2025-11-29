@@ -547,8 +547,9 @@ Map Settings:
 | **Impostor Task Faking** | Wait at task location for appropriate duration without progress |
 | **Zone Detection** | Agents know their current room/hallway location |
 | **Agent Memory** | Observations, suspicion levels, conversation history, alibi tracking |
-| **Thought System** | Internal reasoning triggered by events (room entry, spotting agents, etc.) |
-| **Speech System** | Agents speak to nearby players, proximity-based hearing |
+| **Thought System** | Internal reasoning triggered by events (room entry, spotting agents, etc.). Thoughts shown as cloud-shaped bubble with trailing circles above player. Toggleable via 💭 button. |
+| **Thinking Indicator** | Animated "..." dots shown when agent is waiting for LLM response. Toggleable via ⋯ button. |
+| **Speech System** | Agents speak to nearby players, vision-based hearing (same radius and line-of-sight as vision - can't hear through walls). Speech shown as rectangular bubble with tail pointer above player. Toggleable via 💬 button. |
 | **Social Actions** | Buddy up, follow, avoid, confront, spread rumors, defend self |
 | **AI Decision Making** | LLM-powered with 10 goal types (see below) |
 | **Kill Sound Effects** | Audio plays on new body detection with browser autoplay unlock |
