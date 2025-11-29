@@ -161,6 +161,12 @@ export class AIAgentVisualRenderer {
         renderLogger.info('Agent just died - showing dead body', { agentId: snapshot.id });
         this.showDeadBody(state);
       }
+      
+      // If resurrected (server restart), restore live body graphics
+      if (!state.isDead && wasDead) {
+        renderLogger.info('Agent resurrected - showing live body', { agentId: snapshot.id });
+        this.showLiveBody(state);
+      }
 
       // Track task progress - store timing data, progress calculated in update()
       const isDoingTask = snapshot.activityState === 'DOING_TASK';
@@ -1191,6 +1197,30 @@ export class AIAgentVisualRenderer {
     visuals.deadBodyGraphics.lineStyle(0);
 
     renderLogger.debug('showDeadBody complete', { bodyGraphicsVisible: visuals.bodyGraphics.visible, deadBodyGraphicsVisible: visuals.deadBodyGraphics.visible, bloodPoolVisible: visuals.bloodPool.visible });
+  }
+
+  /**
+   * Restore live body graphics (called when agent is resurrected, e.g., server restart)
+   * Reverses the effects of showDeadBody()
+   */
+  private showLiveBody(state: AgentVisualState): void {
+    renderLogger.debug('showLiveBody() called - restoring live body graphics');
+    const visuals = state.visuals;
+
+    // Show live body parts
+    visuals.bodyGraphics.visible = true;
+    visuals.leftLeg.visible = true;
+    visuals.rightLeg.visible = true;
+    visuals.shadow.visible = true;
+
+    // Hide dead body graphics
+    visuals.deadBodyGraphics.visible = false;
+    visuals.bloodPool.visible = false;
+
+    renderLogger.debug('showLiveBody complete', { 
+      bodyGraphicsVisible: visuals.bodyGraphics.visible, 
+      deadBodyGraphicsVisible: visuals.deadBodyGraphics.visible 
+    });
   }/**
    * Darken a color by a factor (0-1)
    */

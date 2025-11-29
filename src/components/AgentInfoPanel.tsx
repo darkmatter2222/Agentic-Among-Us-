@@ -99,7 +99,7 @@ function KillStatusIcon({ killStatus }: { killStatus?: AgentSummary['killStatus'
   
   return (
     <span className={className} title={title}>
-      [DEAD]
+      ☠️
     </span>
   );
 }
@@ -192,17 +192,17 @@ function GodModeControlPanel({ agent }: { agent: AgentSummary }) {
       {/* God Mode Status */}
       {agent.godMode?.isActive && (
         <div className="god-mode-active-banner">
-          <span className="god-icon">*</span>
+          <span className="god-icon">⚡</span>
           <span>Divine Control Active: {agent.godMode.currentCommand}</span>
         </div>
       )}
 
       {/* Quick Commands Section */}
       <div className="expanded-card__section">
-        <div className="section-label">Quick Commands</div>
+        <div className="section-label">⚡ Quick Commands</div>
         <div className="god-commands-grid">
           <button className="god-cmd-btn" onClick={() => sendCommand({ action: 'wander' })} title="Make agent wander randomly">
-            Wander
+            🚶 Wander
           </button>
           <button className="god-cmd-btn" onClick={() => sendCommand({ action: 'idle' })} title="Make agent stop and wait">
             ⏸️ Idle
@@ -216,28 +216,28 @@ function GodModeControlPanel({ agent }: { agent: AgentSummary }) {
               }} 
               title="Go to next incomplete task"
             >
-              Do Task
+              📋 Do Task
             </button>
           )}
           {isImpostor && (
             <>
               <button className="god-cmd-btn impostor" onClick={() => sendCommand({ action: 'hunt' })} title="Hunt for isolated targets">
-                [X] Hunt
+                🎯 Hunt
               </button>
               <button className="god-cmd-btn impostor" onClick={() => sendCommand({ action: 'enter-vent' })} title="Enter nearest vent">
-                Vent
+                🕳️ Vent
               </button>
               <button className="god-cmd-btn impostor" onClick={() => sendCommand({ action: 'exit-vent' })} title="Exit current vent">
-                [^] Exit Vent
+                ↗️ Exit Vent
               </button>
               <button className="god-cmd-btn impostor" onClick={() => sendCommand({ action: 'flee-body' })} title="Flee from the body">
-                Flee
+                🏃 Flee
               </button>
               <button className="god-cmd-btn impostor" onClick={() => sendCommand({ action: 'create-alibi' })} title="Create an alibi">
-                Alibi
+                🎭 Alibi
               </button>
               <button className="god-cmd-btn impostor danger" onClick={() => sendCommand({ action: 'self-report' })} title="Self-report the body">
-                Self Report
+                📢 Self Report
               </button>
             </>
           )}
@@ -247,7 +247,7 @@ function GodModeControlPanel({ agent }: { agent: AgentSummary }) {
       {/* Task Selection */}
       {agent.assignedTasks && agent.assignedTasks.length > 0 && (
         <div className="expanded-card__section">
-          <div className="section-label">Go To Task</div>
+          <div className="section-label">📋 Go To Task</div>
           <div className="task-command-list">
             {agent.assignedTasks.map((task, idx) => (
               <button
@@ -256,7 +256,7 @@ function GodModeControlPanel({ agent }: { agent: AgentSummary }) {
                 onClick={() => sendCommand({ action: 'go-to-task', taskIndex: idx })}
                 disabled={task.isCompleted}
               >
-                <span className="task-check">{task.isCompleted ? '[OK]' : '[ ]'}</span>
+                <span className="task-check">{task.isCompleted ? '✓' : '○'}</span>
                 <span className="task-name">{task.taskType}</span>
                 <span className="task-room">{task.room}</span>
               </button>
@@ -267,7 +267,7 @@ function GodModeControlPanel({ agent }: { agent: AgentSummary }) {
 
       {/* Make Agent Speak */}
       <div className="expanded-card__section">
-        <div className="section-label">Make Agent Speak</div>
+        <div className="section-label">🗣️ Make Agent Speak</div>
         <div className="god-input-row">
           <input
             type="text"
@@ -285,7 +285,7 @@ function GodModeControlPanel({ agent }: { agent: AgentSummary }) {
 
       {/* Divine Whisper */}
       <div className="expanded-card__section">
-        <div className="section-label">Divine Whisper</div>
+        <div className="section-label">👁️ Divine Whisper</div>
         <p className="god-hint">Inject a thought into the agent's mind. This will influence their next LLM decision.</p>
         <div className="god-input-row">
           <input
@@ -302,7 +302,7 @@ function GodModeControlPanel({ agent }: { agent: AgentSummary }) {
         </div>
         {agent.godMode?.lastWhisper && (
           <div className="last-whisper">
-            <span className="whisper-icon">[W]</span>
+            <span className="whisper-icon">👁️</span>
             <span className="whisper-text">"{agent.godMode.lastWhisper}"</span>
           </div>
         )}
@@ -310,7 +310,7 @@ function GodModeControlPanel({ agent }: { agent: AgentSummary }) {
 
       {/* Guiding Principles */}
       <div className="expanded-card__section">
-        <div className="section-label">Guiding Principles</div>
+        <div className="section-label">📜 Guiding Principles</div>
         <p className="god-hint">Persistent behavioral directives that influence all future decisions.</p>
         <div className="god-input-row">
           <input
@@ -349,7 +349,7 @@ function GodModeControlPanel({ agent }: { agent: AgentSummary }) {
           className="god-clear-btn"
           onClick={() => client.clearGodMode(agent.id)}
         >
-          Return to Normal AI Control
+          🔄 Return to Normal AI Control
         </button>
       </div>
     </>
@@ -392,8 +392,8 @@ function GodModeControlPanel({ agent }: { agent: AgentSummary }) {
         <span className="agent-color-dot large" style={{ backgroundColor: hexColor(agent.color) }} />
         <span className={`expanded-card__name ${agent.role === 'IMPOSTOR' ? 'impostor-name' : 'crewmate-name'}`}>{colorName}</span>
         <span className={`role-badge ${role.className}`}>{role.label}</span>
-          {agent.isBeingFollowed && <span className="followed-badge">Being Followed</span>}
-          {agent.buddyId && <span className="buddy-badge">Buddy</span>}
+          {agent.isBeingFollowed && <span className="followed-badge">👀 Being Followed</span>}
+          {agent.buddyId && <span className="buddy-badge">🤝 Buddy</span>}
         </div>
         <div className="expanded-card__actions">
           <button
@@ -402,7 +402,7 @@ function GodModeControlPanel({ agent }: { agent: AgentSummary }) {
             disabled={agentTraces.length === 0}
             title={`Copy last ${agentTraces.length} LLM traces to clipboard`}
           >
-            {copyStatus === 'copied' ? '[OK] Copied!' : `[+] Copy ${agentTraces.length} Traces`}
+            {copyStatus === 'copied' ? '✓ Copied!' : `📋 Copy ${agentTraces.length} Traces`}
           </button>
           <button className="expanded-card__close" onClick={onClose}>×</button>
         </div>
@@ -432,7 +432,7 @@ function GodModeControlPanel({ agent }: { agent: AgentSummary }) {
           className={`tab-btn god-mode-tab ${activeTab === 'control' ? 'active' : ''}`}
           onClick={() => setActiveTab('control')}
         >
-          * Control
+          ⚡ Control
         </button>
       </div>      {/* Tab Content */}
       <div className="expanded-card__tab-content">
@@ -472,7 +472,7 @@ function GodModeControlPanel({ agent }: { agent: AgentSummary }) {
                 <div className="task-list">
                   {agent.assignedTasks.map((task, idx) => (
                     <div key={idx} className={`task-item ${task.isCompleted ? 'completed' : ''}`}>
-                      <span className="task-check">{task.isCompleted ? '[OK]' : '[ ]'}</span>
+                      <span className="task-check">{task.isCompleted ? '✓' : '○'}</span>
                       <span className="task-name">{task.taskType}</span>
                       <span className="task-location">{task.room}</span>
                     </div>
@@ -485,7 +485,7 @@ function GodModeControlPanel({ agent }: { agent: AgentSummary }) {
               <div className="section-label">Current Thought</div>
               <div className="thought-bubble">
                 {agent.currentThought ? (
-                  <p className="thought-text">{agent.currentThought}</p>
+                  <p className="thought-text">💭 {agent.currentThought}</p>
                 ) : (
                   <p className="thought-text empty">No recent thoughts...</p>
                 )}
@@ -509,7 +509,7 @@ function GodModeControlPanel({ agent }: { agent: AgentSummary }) {
               <div className="expanded-card__section">
                 <div className="section-label">Last Speech</div>
                 <div className="speech-bubble-preview">
-                  <p>"{agent.recentSpeech}"</p>
+                  <p>🗣️ "{agent.recentSpeech}"</p>
                 </div>
               </div>
             )}
@@ -552,7 +552,7 @@ function GodModeControlPanel({ agent }: { agent: AgentSummary }) {
                   agent.recentlyHeard.map((heard, idx) => (
                     <div key={idx} className={`conversation-item ${heard.wasDirectlyAddressed ? 'directly-addressed' : ''}`}>
                       <span className="conversation-speaker">
-                        {heard.wasDirectlyAddressed && <span className="heard-icon" title="Directly addressed">[!]</span>}
+                        {heard.wasDirectlyAddressed && <span className="heard-icon" title="Directly addressed">👂</span>}
                         {heard.speakerName}:
                       </span>
                       <span className="conversation-message">"{heard.message}"</span>

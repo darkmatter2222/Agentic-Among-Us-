@@ -807,7 +807,7 @@ function App() {
             onClick={handleToggleLights} 
             title="Toggle Lights (Sabotage)"
           >
-            LBL
+            💡
           </button>
           <div className="control-divider" />
           <button 
@@ -815,7 +815,7 @@ function App() {
             onClick={handleToggleVisionBoxes} 
             title="Toggle Vision Boxes"
           >
-            VIS
+            👁
           </button>
           <button 
             className={`control-btn ${showActionRadius ? 'active' : ''}`}
@@ -829,21 +829,21 @@ function App() {
             onClick={handleToggleThoughtBubbles}
             title="Toggle Thought Bubbles (cloud)"
           >
-            THT
+            💭
           </button>
           <button
             className={`control-btn ${showThinkingBubbles ? 'active' : ''}`}
             onClick={handleToggleThinkingBubbles}
             title="Toggle Thinking Bubbles (dots)"
           >
-            ...
+            ⋯
           </button>
           <button
             className={`control-btn ${showSpeechBubbles ? 'active' : ''}`}
             onClick={handleToggleSpeechBubbles}
             title="Toggle Speech Bubbles"
           >
-            SPK
+            💬
           </button>
         </div>
         {/* Game Timer Display */}
@@ -861,7 +861,7 @@ function App() {
             onClick={handleStopFollowing}
             title="Stop following agent"
           >
-            X
+            ✕
           </button>
         )}
         <div
