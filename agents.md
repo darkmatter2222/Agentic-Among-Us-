@@ -543,6 +543,7 @@ Map Settings:
 | **Navigation Mesh** | Full Skeld map with walkable zones, room labels, hallways |
 | **Vision System** | Configurable vision radius, line-of-sight calculations |
 | **Task System** | Task assignment (5 per agent), navigation to tasks, execution with durations |
+| **Task Progress Bar** | Smooth animated progress bar (0-100%) while player performs task, with checkmark completion animation. Uses client-side time calculation from task `startedAt` timestamp for smooth rendering |
 | **Impostor Task Faking** | Wait at task location for appropriate duration without progress |
 | **Zone Detection** | Agents know their current room/hallway location |
 | **Agent Memory** | Observations, suspicion levels, conversation history, alibi tracking |

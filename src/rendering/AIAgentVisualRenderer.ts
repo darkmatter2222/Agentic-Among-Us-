@@ -47,8 +47,9 @@ interface AgentVisualState {
   // Animation state
   walkTime: number;
   isWalking: boolean;
-  // Task progress state
-  taskProgress: number;           // 0-1 progress
+  // Task progress state - computed dynamically in update() using startedAt and duration
+  taskStartedAt: number | null;   // Timestamp when task started (from server)
+  taskDuration: number;           // How long task takes in ms
   showTaskProgress: boolean;      // Whether to show progress bar
   taskCompleteAnimation: number;  // Animation timer for checkmark pop (0 = not animating)
 }
@@ -146,40 +147,38 @@ export class AIAgentVisualRenderer {
         this.showDeadBody(state);
       }
 
-      // Track task progress
+      // Track task progress - store timing data, progress calculated in update()
       const isDoingTask = snapshot.activityState === 'DOING_TASK';
       const wasShowingProgress = state.showTaskProgress;
-      const previousProgress = state.taskProgress;
-      
+
       if (isDoingTask && snapshot.currentTaskIndex !== undefined && snapshot.currentTaskIndex !== null && snapshot.assignedTasks) {
         const currentTask = snapshot.assignedTasks[snapshot.currentTaskIndex];
         if (currentTask && currentTask.duration > 0) {
-          const progress = Math.min(1, snapshot.timeInStateMs / currentTask.duration);
-          state.taskProgress = progress;
+          // Store task timing data for dynamic progress calculation
+          state.taskStartedAt = currentTask.startedAt ?? null;
+          state.taskDuration = currentTask.duration;
           state.showTaskProgress = true;
-          
-          // If progress just completed (hit 100%), trigger checkmark animation
-          if (progress >= 1 && !state.taskCompleteAnimation) {
-            state.taskCompleteAnimation = 0.001; // Start animation
+
+          // Check if task just completed (from server state)
+          if (currentTask.isCompleted && !state.taskCompleteAnimation) {
+            state.taskCompleteAnimation = 0.001; // Start completion animation
           }
         }
       } else {
-        // Not doing task - hide progress bar
-        // But check if task just completed (was showing progress at high level)
-        if (wasShowingProgress && previousProgress >= 0.9 && !state.taskCompleteAnimation) {
+        // Not doing task - trigger completion animation if we were showing progress
+        if (wasShowingProgress && state.taskStartedAt && !state.taskCompleteAnimation) {
           // Task just completed - start checkmark animation
           state.taskCompleteAnimation = 0.001;
         }
         state.showTaskProgress = false;
-        state.taskProgress = 0;
+        state.taskStartedAt = null;
+        state.taskDuration = 0;
       }
 
       // Adjust dynamic radii if they change (should be rare but keeps parity with server).
       state.visuals.visionBox.updateConfig({ size: snapshot.visionRadius * 1.4, color: snapshot.color });
       state.visuals.actionRadius.updateConfig({ radius: snapshot.actionRadius, color: snapshot.color });
-      state.visuals.pathLine.updateConfig({ color: snapshot.color });
-      
-      // Check for new speech to display
+      state.visuals.pathLine.updateConfig({ color: snapshot.color });      // Check for new speech to display
       const speechTime = snapshot.lastSpeechTime ?? 0;
       if (speechTime > state.lastSpeechTime && snapshot.recentSpeech) {
         // New speech detected - show bubble
@@ -331,45 +330,47 @@ export class AIAgentVisualRenderer {
         const bodyY = -14 * sizeMultiplier;
         const bodyHeight = 22 * sizeMultiplier;
         const progressBarY = bodyY + bodyHeight + 8 * sizeMultiplier;
-        
-        if (state.showTaskProgress) {
+
+        if (state.showTaskProgress && state.taskStartedAt && state.taskDuration > 0) {
+          // Calculate progress dynamically using local time
+          const elapsed = Date.now() - state.taskStartedAt;
+          const taskProgress = Math.min(1, Math.max(0, elapsed / state.taskDuration));
+
           // Show and update progress bar
           visuals.taskProgressBackground.visible = true;
           visuals.taskProgressBar.visible = true;
-          
+
           // Redraw progress bar fill
           visuals.taskProgressBar.clear();
           visuals.taskProgressBar.beginFill(0x00FF00, 0.9); // Green
-          const fillWidth = progressBarWidth * state.taskProgress;
+          const fillWidth = progressBarWidth * taskProgress;
           visuals.taskProgressBar.drawRoundedRect(
-            -progressBarWidth / 2, 
-            progressBarY, 
-            fillWidth, 
-            progressBarHeight, 
+            -progressBarWidth / 2,
+            progressBarY,
+            fillWidth,
+            progressBarHeight,
             2
           );
           visuals.taskProgressBar.endFill();
-        } else {
-          // Hide progress bar (unless animating completion)
-          if (!state.taskCompleteAnimation) {
-            visuals.taskProgressBackground.visible = false;
-            visuals.taskProgressBar.visible = false;
-          }
+        } else if (!state.taskCompleteAnimation) {
+          // Hide progress bar when not doing task (unless animating completion)
+          visuals.taskProgressBackground.visible = false;
+          visuals.taskProgressBar.visible = false;
         }
-        
+
         // ===== CHECKMARK COMPLETION ANIMATION =====
         if (state.taskCompleteAnimation && state.taskCompleteAnimation > 0) {
           state.taskCompleteAnimation += deltaTime * 2.5; // Animation speed
-          
+
           const animPhase = state.taskCompleteAnimation;
-          
+
           // Animation phases:
           // 0-0.3: Progress bar fills to 100% and holds
           // 0.3-0.5: Progress bar fades out, checkmark scales up (pop in)
           // 0.5-1.2: Checkmark stays visible
           // 1.2-1.5: Checkmark scales down and fades (pop out)
           // 1.5+: Animation complete
-          
+
           if (animPhase < 0.3) {
             // Keep progress bar visible at full
             visuals.taskProgressBackground.visible = true;
@@ -377,10 +378,10 @@ export class AIAgentVisualRenderer {
             visuals.taskProgressBar.clear();
             visuals.taskProgressBar.beginFill(0x00FF00, 0.9);
             visuals.taskProgressBar.drawRoundedRect(
-              -progressBarWidth / 2, 
-              progressBarY, 
-              progressBarWidth, 
-              progressBarHeight, 
+              -progressBarWidth / 2,
+              progressBarY,
+              progressBarWidth,
+              progressBarHeight,
               2
             );
             visuals.taskProgressBar.endFill();
@@ -389,12 +390,12 @@ export class AIAgentVisualRenderer {
             const fadeProgress = (animPhase - 0.3) / 0.2;
             visuals.taskProgressBackground.alpha = 1 - fadeProgress;
             visuals.taskProgressBar.alpha = 1 - fadeProgress;
-            
+
             // Draw and animate checkmark
             visuals.taskCheckmark.visible = true;
             const checkScale = fadeProgress * 1.2; // Overshoot slightly
             visuals.taskCheckmark.alpha = fadeProgress;
-            
+
             // Draw checkmark
             this.drawCheckmark(visuals.taskCheckmark, progressBarY + progressBarHeight / 2, sizeMultiplier, checkScale);
           } else if (animPhase < 1.2) {
@@ -403,7 +404,7 @@ export class AIAgentVisualRenderer {
             visuals.taskProgressBar.visible = false;
             visuals.taskCheckmark.visible = true;
             visuals.taskCheckmark.alpha = 1;
-            
+
             // Settle from overshoot
             const settleProgress = Math.min(1, (animPhase - 0.5) / 0.1);
             const checkScale = 1.2 - 0.2 * settleProgress;
@@ -952,7 +953,8 @@ export class AIAgentVisualRenderer {
       isImpostor: snapshot.role === 'IMPOSTOR',
       walkTime: 0,
       isWalking: false,
-      taskProgress: 0,
+      taskStartedAt: null,
+      taskDuration: 0,
       showTaskProgress: false,
       taskCompleteAnimation: 0,
     };    spriteContainer.position.set(snapshot.movement.position.x, snapshot.movement.position.y);
