@@ -131,12 +131,6 @@ export class AIAgentVisualRenderer {
   syncAgents(snapshots: AgentSnapshot[], recentSpeech?: SpeechEvent[], recentThoughts?: ThoughtEvent[], recentHeard?: HeardSpeechEvent[]): void {
     const activeIds = new Set<string>();
 
-    // Log any dead agents received
-    const deadSnapshots = snapshots.filter(s => s.playerState === 'DEAD');
-    if (deadSnapshots.length > 0) {
-      renderLogger.debug('Received dead agents', { count: deadSnapshots.length, names: deadSnapshots.map(s => s.name) });
-    }
-
     for (const snapshot of snapshots) {
       activeIds.add(snapshot.id);
       const state = this.ensureAgentVisual(snapshot);
@@ -150,11 +144,6 @@ export class AIAgentVisualRenderer {
       // Track dead state
       const wasDead = state.isDead;
       state.isDead = snapshot.playerState === 'DEAD';
-
-      // Debug logging
-      if (snapshot.playerState === 'DEAD') {
-        renderLogger.debug('Agent is DEAD', { agentId: snapshot.id, wasDead, isDead: state.isDead });
-      }
 
       // If just died, switch to dead body graphics
       if (state.isDead && !wasDead) {
@@ -408,16 +397,15 @@ export class AIAgentVisualRenderer {
 
           // Redraw progress bar fill
           visuals.taskProgressBar.clear();
-          visuals.taskProgressBar.beginFill(0x00FF00, 0.9); // Green
           const fillWidth = progressBarWidth * taskProgress;
-          visuals.taskProgressBar.drawRoundedRect(
+          visuals.taskProgressBar.roundRect(
             -progressBarWidth / 2,
             progressBarY,
             fillWidth,
             progressBarHeight,
             2
           );
-          visuals.taskProgressBar.endFill();
+          visuals.taskProgressBar.fill({ color: 0x00FF00, alpha: 0.9 });
         } else if (!state.taskCompleteAnimation) {
           // Hide progress bar when not doing task (unless animating completion)
           visuals.taskProgressBackground.visible = false;
@@ -442,15 +430,14 @@ export class AIAgentVisualRenderer {
             visuals.taskProgressBackground.visible = true;
             visuals.taskProgressBar.visible = true;
             visuals.taskProgressBar.clear();
-            visuals.taskProgressBar.beginFill(0x00FF00, 0.9);
-            visuals.taskProgressBar.drawRoundedRect(
+            visuals.taskProgressBar.roundRect(
               -progressBarWidth / 2,
               progressBarY,
               progressBarWidth,
               progressBarHeight,
               2
             );
-            visuals.taskProgressBar.endFill();
+            visuals.taskProgressBar.fill({ color: 0x00FF00, alpha: 0.9 });
           } else if (animPhase < 0.5) {
             // Fade out progress bar, scale in checkmark
             const fadeProgress = (animPhase - 0.3) / 0.2;
@@ -788,13 +775,11 @@ export class AIAgentVisualRenderer {
     const size = 8 * sizeMultiplier * scale;
     const lineWidth = 2 * sizeMultiplier * scale;
     
-    // Green circle background
-    graphics.beginFill(0x00CC00, 0.9);
-    graphics.drawCircle(0, centerY, size);
-    graphics.endFill();
+    // Green circle background - using v8 API
+    graphics.circle(0, centerY, size);
+    graphics.fill({ color: 0x00CC00, alpha: 0.9 });
     
     // White checkmark
-    graphics.lineStyle(lineWidth, 0xFFFFFF, 1);
     // Start from left-middle of checkmark
     const startX = -size * 0.4;
     const startY = centerY;
@@ -808,6 +793,7 @@ export class AIAgentVisualRenderer {
     graphics.moveTo(startX, startY);
     graphics.lineTo(midX, midY);
     graphics.lineTo(endX, endY);
+    graphics.stroke({ width: lineWidth, color: 0xFFFFFF, alpha: 1 });
   }
 
   destroy(): void {

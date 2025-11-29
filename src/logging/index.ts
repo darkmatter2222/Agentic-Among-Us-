@@ -22,8 +22,8 @@ function getLogLevel(): string {
     if (storedLevel) return storedLevel;
   }
   
-  // Default to INFO in production, DEBUG in development
-  return import.meta.env?.DEV ? 'DEBUG' : 'INFO';
+  // Default to INFO - use setLogLevel('DEBUG') or ?logLevel=DEBUG for debugging
+  return 'INFO';
 }
 
 const LOG_LEVEL = parseLogLevel(getLogLevel());

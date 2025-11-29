@@ -802,6 +802,7 @@ What do you say out loud? Keep it brief and natural (1-2 sentences).`;
     currentThought: string | undefined,
     timestamp: number
   ): Promise<SpeechEvent | null> {
+    const startTime = Date.now();
     const isImpostor = context.role === 'IMPOSTOR';
     
     const systemPrompt = isImpostor 
@@ -851,6 +852,40 @@ Keep it brief (1-2 sentences). Start the conversation!`;
     if (!message || message.trim() === '') {
       return null;
     }
+
+    // Emit trace event for conversation starter
+    this.emitTraceEvent({
+      id: this.generateTraceId(),
+      timestamp: Date.now(),
+      agentId: context.agentId,
+      agentName: context.agentName,
+      agentColor: this.getAgentColor(context.agentId),
+      agentRole: context.role,
+      requestType: 'conversation',
+      systemPrompt,
+      userPrompt,
+      rawResponse: message,
+      context: {
+        zone: context.currentZone,
+        visibleAgents: context.visibleAgents.map(a => ({
+          id: a.id,
+          name: a.name,
+          distance: a.distance
+        })),
+        assignedTasks: context.assignedTasks.map(t => ({
+          taskType: t.taskType,
+          room: t.room,
+          isCompleted: t.isCompleted
+        })),
+        taskProgress: {
+          completed: context.assignedTasks.filter(t => t.isCompleted).length,
+          total: context.assignedTasks.length
+        }
+      },
+      agentPositions: this.currentAgentPositions,
+      durationMs: Date.now() - startTime,
+      success: true
+    });
 
     // Start the conversation tracking
     // Note: We don't have the target agent ID here, just the name
@@ -1264,6 +1299,7 @@ What are you thinking? (One brief internal thought, stay in character)`;
     conversation: ActiveConversation,
     timestamp: number
   ): Promise<SpeechEvent | null> {
+    const startTime = Date.now();
     const isImpostor = context.role === 'IMPOSTOR';
     const otherParticipant = conversation.participants.find(p => p !== context.agentName) || 'someone';
     
@@ -1310,6 +1346,40 @@ ${isImpostor ? 'Remember: Deflect suspicion, blend in, maybe cast doubt on other
     if (!message || message.trim() === '') {
       return null;
     }
+
+    // Emit trace event for conversation reply
+    this.emitTraceEvent({
+      id: this.generateTraceId(),
+      timestamp: Date.now(),
+      agentId: context.agentId,
+      agentName: context.agentName,
+      agentColor: this.getAgentColor(context.agentId),
+      agentRole: context.role,
+      requestType: 'conversation',
+      systemPrompt,
+      userPrompt,
+      rawResponse: message,
+      context: {
+        zone: context.currentZone,
+        visibleAgents: context.visibleAgents.map(a => ({
+          id: a.id,
+          name: a.name,
+          distance: a.distance
+        })),
+        assignedTasks: context.assignedTasks.map(t => ({
+          taskType: t.taskType,
+          room: t.room,
+          isCompleted: t.isCompleted
+        })),
+        taskProgress: {
+          completed: context.assignedTasks.filter(t => t.isCompleted).length,
+          total: context.assignedTasks.length
+        }
+      },
+      agentPositions: this.currentAgentPositions,
+      durationMs: Date.now() - startTime,
+      success: true
+    });
 
     // Add to conversation
     this.addConversationReply(conversation.id, context.agentId, context.agentName, message);

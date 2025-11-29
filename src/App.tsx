@@ -72,7 +72,7 @@ function App() {
 
     // Add event listeners for debugging
     audio.addEventListener('canplaythrough', () => {
-      audioLogger.info('Kill sound loaded and ready to play');
+      audioLogger.debug('Kill sound loaded and ready to play');
     });
     audio.addEventListener('error', (e) => {
       audioLogger.error('Error loading kill sound', { error: e });
@@ -329,7 +329,7 @@ function App() {
         for (const bodyId of currentBodyIds) {
           if (!previousBodyIds.has(bodyId)) {
             // New body detected - play kill sound
-            audioLogger.info('New body detected, attempting to play kill sound', { bodyId });
+            audioLogger.debug('New body detected, attempting to play kill sound', { bodyId });
             if (killAudioRef.current) {
               killAudioRef.current.currentTime = 0;
               killAudioRef.current.play()
@@ -355,7 +355,7 @@ function App() {
             seenVentEventIdsRef.current.add(ventEvent.id);
             
             if (ventEvent.eventType === 'ENTER') {
-              audioLogger.info('Vent ENTER detected', { playerName: ventEvent.playerName, ventId: ventEvent.ventId });
+              audioLogger.debug('Vent ENTER detected', { playerName: ventEvent.playerName, ventId: ventEvent.ventId });
               if (ventInAudioRef.current) {
                 ventInAudioRef.current.currentTime = 0;
                 ventInAudioRef.current.play()
@@ -364,7 +364,7 @@ function App() {
               }
               break; // Only play one sound per tick
             } else if (ventEvent.eventType === 'EXIT') {
-              audioLogger.info('Vent EXIT detected', { playerName: ventEvent.playerName, ventId: ventEvent.ventId });
+              audioLogger.debug('Vent EXIT detected', { playerName: ventEvent.playerName, ventId: ventEvent.ventId });
               if (ventOutAudioRef.current) {
                 ventOutAudioRef.current.currentTime = 0;
                 ventOutAudioRef.current.play()
@@ -385,12 +385,6 @@ function App() {
 
       const now = performance.now();
       if (!disposedRef.current && (now - lastSummaryAt >= 200 || lastSummaryAt === 0)) {
-        // Debug: log dead agents
-        const deadAgents = snapshot.agents.filter(a => a.playerState === 'DEAD');
-        if (deadAgents.length > 0) {
-          renderLogger.debug('Dead agents', { ids: deadAgents.map(a => a.id) });
-        }
-        
         setAgentSummaries(
           snapshot.agents.map(agent => ({
             id: agent.id,
