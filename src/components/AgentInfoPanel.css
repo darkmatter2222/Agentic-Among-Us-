@@ -371,6 +371,40 @@
   color: #ef5350;
 }
 
+.expanded-card__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.copy-traces-btn {
+  background: rgba(100, 181, 246, 0.2);
+  border: 1px solid rgba(100, 181, 246, 0.4);
+  color: #64b5f6;
+  font-size: 0.7rem;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.copy-traces-btn:hover:not(:disabled) {
+  background: rgba(100, 181, 246, 0.35);
+  border-color: rgba(100, 181, 246, 0.6);
+}
+
+.copy-traces-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.copy-traces-btn.copied {
+  background: rgba(76, 175, 80, 0.3);
+  border-color: rgba(76, 175, 80, 0.6);
+  color: #81c784;
+}
+
 .expanded-card__close {
   background: rgba(255, 255, 255, 0.1);
   border: none;

@@ -847,13 +847,14 @@ function App() {
         className="panel-resize-handle"
         onMouseDown={handleResizeMouseDown}
       />
-      <AgentInfoPanel 
-        agents={agentSummaries} 
-        width={panelWidth} 
+      <AgentInfoPanel
+        agents={agentSummaries}
+        width={panelWidth}
         taskProgress={taskProgress}
         selectedAgentId={selectedAgentId}
         onAgentSelect={handleAgentSelect}
         llmQueueStats={llmQueueStats}
+        llmTraceEvents={llmTraceEvents}
       />
     </div>
   );

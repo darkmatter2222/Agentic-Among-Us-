@@ -3,6 +3,7 @@ import './AgentInfoPanel.css';
 import type { TaskAssignment } from '@shared/types/simulation.types.ts';
 import type { PlayerRole } from '@shared/types/game.types.ts';
 import type { LLMQueueStats, GodModeCommand } from '@shared/types/protocol.types.ts';
+import type { LLMTraceEvent } from '@shared/types/llm-trace.types.ts';
 import { getColorName } from '@shared/constants/colors.ts';
 import { getSimulationClient } from '../ai/SimulationClient.ts';
 
@@ -103,11 +104,13 @@ interface AgentInfoPanelProps {
   selectedAgentId?: string | null;
   onAgentSelect?: (agentId: string) => void;
   llmQueueStats?: LLMQueueStats;
+  llmTraceEvents?: LLMTraceEvent[];
 }
 
 interface ExpandedAgentCardProps {
   agent: AgentSummary;
   onClose: () => void;
+  llmTraceEvents?: LLMTraceEvent[];
 }
 
 type TabType = 'overview' | 'memory' | 'suspicion' | 'control';
@@ -344,14 +347,31 @@ function GodModeControlPanel({ agent }: { agent: AgentSummary }) {
       </div>
     </>
   );
-}function ExpandedAgentCard({ agent, onClose }: ExpandedAgentCardProps) {
+}function ExpandedAgentCard({ agent, onClose, llmTraceEvents }: ExpandedAgentCardProps) {
   const [activeTab, setActiveTab] = useState<TabType>('overview');
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied'>('idle');
   const role = getRoleBadge(agent.role);
   const totalTasks = agent.assignedTasks?.length ?? 0;
   const completed = agent.tasksCompleted ?? 0;
   const taskPercent = totalTasks > 0 ? (completed / totalTasks) * 100 : 0;
   const colorName = getColorName(agent.color);
-  
+
+  // Get last 10 LLM traces for this agent
+  const agentTraces = llmTraceEvents
+    ?.filter(e => e.agentId === agent.id)
+    .slice(-10) ?? [];
+
+  const handleCopyTraces = useCallback(async () => {
+    if (agentTraces.length === 0) return;
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(agentTraces, null, 2));
+      setCopyStatus('copied');
+      setTimeout(() => setCopyStatus('idle'), 2000);
+    } catch (err) {
+      console.error('Failed to copy traces:', err);
+    }
+  }, [agentTraces]);
+
   // Get suspicion data sorted by level
   const suspicionEntries = agent.suspicionLevels 
     ? Object.entries(agent.suspicionLevels)
@@ -369,7 +389,17 @@ function GodModeControlPanel({ agent }: { agent: AgentSummary }) {
           {agent.isBeingFollowed && <span className="followed-badge">👀 Being Followed</span>}
           {agent.buddyId && <span className="buddy-badge">🤝 Buddy</span>}
         </div>
-        <button className="expanded-card__close" onClick={onClose}>×</button>
+        <div className="expanded-card__actions">
+          <button
+            className={`copy-traces-btn ${copyStatus === 'copied' ? 'copied' : ''}`}
+            onClick={handleCopyTraces}
+            disabled={agentTraces.length === 0}
+            title={`Copy last ${agentTraces.length} LLM traces to clipboard`}
+          >
+            {copyStatus === 'copied' ? '✓ Copied!' : `📋 Copy ${agentTraces.length} Traces`}
+          </button>
+          <button className="expanded-card__close" onClick={onClose}>×</button>
+        </div>
       </div>
       
       {/* Tab Navigation */}
@@ -774,7 +804,7 @@ function LLMQueuePanel({ stats, isCollapsed, onToggle, height, onHeightChange }:
     </div>
   );
 }
-export function AgentInfoPanel({ agents, width = 380, taskProgress = 0, selectedAgentId, onAgentSelect, llmQueueStats }: AgentInfoPanelProps) {
+export function AgentInfoPanel({ agents, width = 380, taskProgress = 0, selectedAgentId, onAgentSelect, llmQueueStats, llmTraceEvents }: AgentInfoPanelProps) {
   const [expandedAgentId, setExpandedAgentId] = useState<string | null>(null);
   const [columnWidths, setColumnWidths] = useState<number[]>([90, 80, 70, 80]); // Agent, Zone, Status, Tasks
   const resizingRef = useRef<{ index: number; startX: number; startWidth: number } | null>(null);
@@ -855,9 +885,10 @@ export function AgentInfoPanel({ agents, width = 380, taskProgress = 0, selected
             
             <div className="agent-panel__content">
               {expandedAgent ? (
-                <ExpandedAgentCard 
-                  agent={expandedAgent} 
-                  onClose={() => setExpandedAgentId(null)} 
+                <ExpandedAgentCard
+                  agent={expandedAgent}
+                  onClose={() => setExpandedAgentId(null)}
+                  llmTraceEvents={llmTraceEvents}
                 />
               ) : (
                 <table className="agent-table">
