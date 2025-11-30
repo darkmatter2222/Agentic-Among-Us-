@@ -647,23 +647,23 @@ ${suspicionJSON}${pendingQuestionsHint}
 
 RESPOND WITH VALID JSON in this exact format:
 {
-  "thought": "Your brief internal thought (1 sentence max)",
+  "thought": "<ACTUAL thought about situation>",
   "suspicionUpdates": [
-    {"targetName": "ColorName", "delta": -10 to +10, "reason": "brief reason"}
+    {"targetName": "Red", "delta": 5, "reason": "acting weird near electrical"}
   ],
   "pendingQuestions": [
-    {"targetName": "ColorName", "question": "What to ask them", "priority": "low|medium|high"}
+    {"targetName": "Blue", "question": "Where were you during the blackout?", "priority": "medium"}
   ]
 }
 
 RULES:
-- "thought" is REQUIRED - your internal monologue (1 sentence)
+- "thought" is REQUIRED - write a REAL thought about what just happened (1 sentence, be specific!)
 - "suspicionUpdates" is OPTIONAL - only include if you have NEW reason to trust/distrust someone (delta: -20 to +20)
 - "pendingQuestions" is OPTIONAL - questions you want to ask specific players when you see them
 - ${context.role === 'IMPOSTOR'
     ? 'Think about: appearing innocent, who to frame, your fake alibi, avoiding detection.'
     : 'Think about: task efficiency, safety, who you trust/distrust, observations.'}
-- Stay in character. Be genuine.`;
+- Stay in character. Be genuine. DO NOT copy example text.`;
 }
 
 export function buildSpeechPrompt(context: AIContext): string {

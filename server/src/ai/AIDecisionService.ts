@@ -759,15 +759,28 @@ export class AIDecisionService {
       // Try to extract JSON from the response (it might have extra text around it)
       const jsonMatch = response.match(/\{[\s\S]*\}/);
       if (!jsonMatch) return null;
-      
+
       const parsed = JSON.parse(jsonMatch[0]);
-      
+
       // Validate required field
       if (typeof parsed.thought !== 'string' || !parsed.thought.trim()) {
         return null;
       }
-      
-      const result: {
+
+      // Reject placeholder/example text that LLM might copy verbatim
+      const placeholderPatterns = [
+        'your thought here',
+        'your brief internal thought',
+        'your internal monologue',
+        'example thought',
+        'brief reason',
+        'what to ask them'
+      ];
+      const thoughtLower = parsed.thought.toLowerCase();
+      if (placeholderPatterns.some(p => thoughtLower.includes(p))) {
+        aiLogger.debug('Thought contains placeholder text, rejecting', { thought: parsed.thought });
+        return null;
+      }      const result: {
         thought: string;
         suspicionUpdates?: Array<{ targetName: string; delta: number; reason: string }>;
         pendingQuestions?: Array<{ targetName: string; question: string; priority: 'low' | 'medium' | 'high' }>;
@@ -838,15 +851,23 @@ export class AIDecisionService {
     // Try to extract a thought field value even from malformed JSON
     const thoughtMatch = response.match(/"thought"\s*:\s*"([^"]+)"/);
     if (thoughtMatch && thoughtMatch[1]) {
-      return thoughtMatch[1].trim();
+      const thought = thoughtMatch[1].trim();
+      // Reject placeholder text
+      const placeholders = ['your thought here', 'your brief', 'example'];
+      if (!placeholders.some(p => thought.toLowerCase().includes(p))) {
+        return thought;
+      }
     }
-    
-    // If no thought field, try to use the raw response if it's short enough
+
+    // If no thought field, try to use the raw response if it's short enough and not placeholder
     const cleaned = response.replace(/[{}\[\]"]/g, '').trim();
     if (cleaned.length > 10 && cleaned.length < 200) {
-      return cleaned;
+      // Skip if it looks like it contains placeholder patterns
+      if (!cleaned.toLowerCase().includes('your thought') && !cleaned.toLowerCase().includes('note that')) {
+        return cleaned;
+      }
     }
-    
+
     // Complete failure - use a "brain fart" style fallback
     const brainFarts = [
       "Hmm, what was I thinking about?",
@@ -857,9 +878,7 @@ export class AIDecisionService {
       "I should stay focused on the task at hand."
     ];
     return brainFarts[Math.floor(Math.random() * brainFarts.length)];
-  }
-
-  /**
+  }  /**
    * Generate speech for the agent
    */
   private async generateSpeech(
@@ -1297,8 +1316,8 @@ Tasks done: ${context.assignedTasks.filter((t: TaskAssignment) => t.isCompleted)
 Visible agents: ${context.visibleAgents.map((a: { name: string }) => a.name).join(', ') || 'None'}${responseGuidance}
 ${memoryHint}
 
-Respond with valid JSON only. Example:
-{"thought": "Your thought here", "suspicionUpdates": [], "pendingQuestions": []}`;
+Respond with valid JSON. Write a REAL thought, not placeholder text!
+{"thought": "<your actual thought>", "suspicionUpdates": [], "pendingQuestions": []}`;
   }  /**
    * Should this agent speak given the trigger?
    */
