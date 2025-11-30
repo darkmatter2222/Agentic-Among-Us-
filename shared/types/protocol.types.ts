@@ -180,7 +180,7 @@ export interface WorldDelta {
   removedAgents: string[];
   // World-level state that changes
   taskProgress?: number;
-  gamePhase?: 'INITIALIZING' | 'PLAYING' | 'MEETING' | 'GAME_OVER';
+  gamePhase?: import('./simulation.types.ts').GamePhase;
   recentThoughts?: import('./simulation.types.ts').ThoughtEvent[];
   recentSpeech?: import('./simulation.types.ts').SpeechEvent[];
   // Dead bodies on the map for kill detection

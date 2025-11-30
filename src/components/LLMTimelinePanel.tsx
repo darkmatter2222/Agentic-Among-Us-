@@ -1,9 +1,86 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import './LLMTimelinePanel.css';
 import type { LLMTraceEvent } from '@shared/types/llm-trace.types.ts';
 import { errorLogger } from '../logging/index.ts';
 
 const MAX_EVENTS = 200;
+
+// Helper to group conversation events by conversationId
+function groupConversationEvents(events: LLMTraceEvent[]): Map<string, LLMTraceEvent[]> {
+  const grouped = new Map<string, LLMTraceEvent[]>();
+  
+  for (const event of events) {
+    if (event.conversationId) {
+      const existing = grouped.get(event.conversationId) || [];
+      existing.push(event);
+      grouped.set(event.conversationId, existing);
+    }
+  }
+  
+  // Sort each group by turn number
+  for (const [, group] of grouped) {
+    group.sort((a, b) => (a.conversationTurn || 0) - (b.conversationTurn || 0));
+  }
+  
+  return grouped;
+}
+
+// Find related conversation events (same conversationId OR matching conversationWith)
+function findRelatedConversationEvents(
+  targetEvent: LLMTraceEvent,
+  allEvents: LLMTraceEvent[]
+): LLMTraceEvent[] {
+  if (!targetEvent.conversationId && !targetEvent.conversationWith) {
+    return [targetEvent];
+  }
+  
+  const related: LLMTraceEvent[] = [];
+  
+  // First, find by exact conversationId
+  if (targetEvent.conversationId) {
+    for (const event of allEvents) {
+      if (event.conversationId === targetEvent.conversationId) {
+        related.push(event);
+      }
+    }
+  }
+  
+  // If we didn't find by ID, try to find by participants
+  // (for conversation starters that don't have an ID yet)
+  if (related.length <= 1 && targetEvent.conversationWith) {
+    const targetParticipants = new Set([targetEvent.agentName, targetEvent.conversationWith]);
+    const targetTime = targetEvent.timestamp;
+    const timeWindow = 60000; // 60 second window
+    
+    for (const event of allEvents) {
+      if (event === targetEvent) continue;
+      if (event.requestType !== 'conversation' && event.requestType !== 'speech') continue;
+      
+      // Check if within time window
+      if (Math.abs(event.timestamp - targetTime) > timeWindow) continue;
+      
+      // Check if participants match
+      const eventParticipants = new Set([event.agentName]);
+      if (event.conversationWith) eventParticipants.add(event.conversationWith);
+      
+      const intersection = [...targetParticipants].filter(p => eventParticipants.has(p));
+      if (intersection.length >= 2 || 
+          (targetParticipants.has(event.agentName) && event.conversationWith && targetParticipants.has(event.conversationWith))) {
+        related.push(event);
+      }
+    }
+  }
+  
+  // Always include the target event
+  if (!related.includes(targetEvent)) {
+    related.push(targetEvent);
+  }
+  
+  // Sort by timestamp
+  related.sort((a, b) => a.timestamp - b.timestamp);
+  
+  return related;
+}
 
 interface LLMTimelinePanelProps {
   width?: number;
@@ -54,7 +131,10 @@ function getResultSummary(event: LLMTraceEvent): string {
   
   if (event.requestType === 'speech' || event.requestType === 'conversation') {
     const speech = event.rawResponse.substring(0, 50);
-    return `💬 ${speech}${event.rawResponse.length > 50 ? '...' : ''}`;
+    // Add conversation context if available
+    const convInfo = event.conversationWith ? ` → ${event.conversationWith}` : '';
+    const turnInfo = event.conversationTurn ? ` [T${event.conversationTurn}]` : '';
+    return `💬${turnInfo}${convInfo} ${speech}${event.rawResponse.length > 50 ? '...' : ''}`;
   }
   
   return event.rawResponse.substring(0, 50);
@@ -624,27 +704,134 @@ function TraceDetailModal({
   );
 }
 
+// Conversation Thread Modal - shows full conversation in chronological order
+function ConversationThreadModal({
+  events,
+  allEvents,
+  onClose,
+  onEventClick
+}: {
+  events: LLMTraceEvent[];
+  allEvents: LLMTraceEvent[];
+  onClose: () => void;
+  onEventClick: (event: LLMTraceEvent) => void;
+}) {
+  const modalRef = useRef<HTMLDivElement>(null);
+  
+  // Get related events if we only have one
+  const threadEvents = events.length === 1 
+    ? findRelatedConversationEvents(events[0], allEvents)
+    : events;
+    
+  // Sort by timestamp
+  const sortedEvents = [...threadEvents].sort((a, b) => a.timestamp - b.timestamp);
+  
+  // Determine conversation participants
+  const participants = new Set<string>();
+  for (const e of sortedEvents) {
+    participants.add(e.agentName);
+    if (e.conversationWith) participants.add(e.conversationWith);
+  }
+  
+  // Close on escape key
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
+  // Close on click outside
+  const handleBackdropClick = useCallback((e: React.MouseEvent) => {
+    if (e.target === e.currentTarget) onClose();
+  }, [onClose]);
+
+  return (
+    <div className="llm-trace-modal-backdrop" onClick={handleBackdropClick}>
+      <div className="llm-trace-modal conversation-thread-modal" ref={modalRef}>
+        <div className="llm-trace-modal-header">
+          <div className="llm-trace-modal-title">
+            <span className="conversation-icon">🗣️</span>
+            <span className="conversation-title">Conversation Thread</span>
+            <span className="participant-list">
+              {[...participants].map((p, i) => (
+                <span key={p} className="participant">{i > 0 ? ' ↔ ' : ''}{p}</span>
+              ))}
+            </span>
+          </div>
+          <div className="header-buttons">
+            <span className="turn-count">{sortedEvents.length} turns</span>
+            <button className="llm-trace-modal-close" onClick={onClose}>×</button>
+          </div>
+        </div>
+        
+        <div className="conversation-thread-content">
+          {sortedEvents.map((event, index) => (
+            <div 
+              key={event.id} 
+              className={`conversation-turn ${event.agentRole === 'IMPOSTOR' ? 'impostor' : 'crewmate'}`}
+              onClick={() => onEventClick(event)}
+            >
+              <div className="turn-header">
+                <span className="turn-number">#{index + 1}</span>
+                <span 
+                  className="agent-dot" 
+                  style={{ backgroundColor: hexColor(event.agentColor) }}
+                />
+                <span className="agent-name">{event.agentName}</span>
+                {event.conversationWith && (
+                  <span className="speaking-to">→ {event.conversationWith}</span>
+                )}
+                <span className="turn-time">{formatTimestamp(event.timestamp)}</span>
+              </div>
+              <div className="turn-message">
+                "{event.rawResponse}"
+              </div>
+              <div className="turn-meta">
+                <span className="zone">{event.context.zone || 'Hallway'}</span>
+                <span className="duration">{formatDuration(event.durationMs)}</span>
+                {event.conversationId && (
+                  <span className="conv-id" title={event.conversationId}>
+                    🔗 {event.conversationId.substring(0, 15)}...
+                  </span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Timeline entry component
-function TimelineEntry({ 
-  event, 
-  onClick 
-}: { 
-  event: LLMTraceEvent; 
+function TimelineEntry({
+  event,
+  onClick,
+  onConversationClick,
+  hasThread
+}: {
+  event: LLMTraceEvent;
   onClick: () => void;
+  onConversationClick?: () => void;
+  hasThread?: boolean;
 }) {
   const summary = getResultSummary(event);
   const isKillDecision = event.parsedDecision?.goalType === 'KILL';
-  
+  const isConversation = event.requestType === 'conversation' || event.requestType === 'speech';
+  const hasConvInfo = event.conversationId || event.conversationWith;
+
   return (
-    <div 
-      className={`timeline-entry ${isKillDecision ? 'kill-entry' : ''} ${!event.success ? 'error-entry' : ''}`}
+    <div
+      className={`timeline-entry ${isKillDecision ? 'kill-entry' : ''} ${!event.success ? 'error-entry' : ''} ${isConversation ? 'conversation-entry' : ''}`}
       onClick={onClick}
     >
       <div className="entry-time">{formatTimestamp(event.timestamp)}</div>
       <div className="entry-content">
         <div className="entry-header">
-          <span 
-            className="agent-dot" 
+          <span
+            className="agent-dot"
             style={{ backgroundColor: hexColor(event.agentColor) }}
           />
           <span className="entry-type">{getRequestTypeIcon(event.requestType)}</span>
@@ -661,6 +848,18 @@ function TimelineEntry({
         <div className="entry-meta">
           <span className="duration">{formatDuration(event.durationMs)}</span>
           <span className="zone">{event.context.zone || 'Hallway'}</span>
+          {hasConvInfo && hasThread && onConversationClick && (
+            <button 
+              className="thread-btn" 
+              onClick={(e) => {
+                e.stopPropagation();
+                onConversationClick();
+              }}
+              title="View conversation thread"
+            >
+              🔗
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -669,33 +868,126 @@ function TimelineEntry({
 
 export function LLMTimelinePanel({ width = 320, events }: LLMTimelinePanelProps) {
   const [selectedEvent, setSelectedEvent] = useState<LLMTraceEvent | null>(null);
+  const [conversationThread, setConversationThread] = useState<LLMTraceEvent[] | null>(null);
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [filter, setFilter] = useState<'all' | 'decision' | 'thought' | 'speech'>('all');
+  const [selectedAgentColors, setSelectedAgentColors] = useState<Set<number>>(new Set());
+  const [selectedGoalTypes, setSelectedGoalTypes] = useState<Set<string>>(new Set());
   const listRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
   const [copiedFiltered, setCopiedFiltered] = useState(false);
+  const prevEventsLengthRef = useRef(events.length);
+  const lastEventIdRef = useRef<string | null>(null);
+
+  // Get unique agent colors from events
+  const uniqueAgentColors = useMemo(() => {
+    const colors = new Set<number>();
+    events.forEach(e => colors.add(e.agentColor));
+    return Array.from(colors).sort((a, b) => a - b);
+  }, [events]);
+
+  // Get unique goal types from decision events
+  const uniqueGoalTypes = useMemo(() => {
+    const types = new Set<string>();
+    events.forEach(e => {
+      if (e.parsedDecision?.goalType) {
+        types.add(e.parsedDecision.goalType);
+      }
+    });
+    return Array.from(types).sort();
+  }, [events]);
+
+  // Toggle agent color filter
+  const toggleAgentColor = useCallback((color: number) => {
+    setSelectedAgentColors(prev => {
+      const next = new Set(prev);
+      if (next.has(color)) {
+        next.delete(color);
+      } else {
+        next.add(color);
+      }
+      return next;
+    });
+  }, []);
+
+  // Toggle goal type filter
+  const toggleGoalType = useCallback((goalType: string) => {
+    setSelectedGoalTypes(prev => {
+      const next = new Set(prev);
+      if (next.has(goalType)) {
+        next.delete(goalType);
+      } else {
+        next.add(goalType);
+      }
+      return next;
+    });
+  }, []);
+
+  // Build conversation groups for quick lookup
+  const conversationGroups = useMemo(() => groupConversationEvents(events), [events]);
+  
+  // Check if an event has a related conversation thread
+  const hasConversationThread = useCallback((event: LLMTraceEvent): boolean => {
+    if (event.conversationId && conversationGroups.has(event.conversationId)) {
+      return (conversationGroups.get(event.conversationId)?.length || 0) > 1;
+    }
+    // For events without ID, check by participants
+    if (event.conversationWith) {
+      const related = findRelatedConversationEvents(event, events);
+      return related.length > 1;
+    }
+    return false;
+  }, [conversationGroups, events]);
 
   // Auto-scroll to bottom when new events arrive (newest events at bottom)
+  // Uses requestAnimationFrame to ensure DOM is updated before scrolling
   useEffect(() => {
-    if (autoScroll && listRef.current) {
-      listRef.current.scrollTop = listRef.current.scrollHeight;
+    const latestEventId = events.length > 0 ? events[0]?.id : null;
+    const hasNewEvents = events.length !== prevEventsLengthRef.current || latestEventId !== lastEventIdRef.current;
+    
+    prevEventsLengthRef.current = events.length;
+    lastEventIdRef.current = latestEventId;
+    
+    if (autoScroll && listRef.current && hasNewEvents) {
+      // Use requestAnimationFrame to ensure DOM is updated before scrolling
+      requestAnimationFrame(() => {
+        if (listRef.current) {
+          listRef.current.scrollTop = listRef.current.scrollHeight;
+        }
+      });
     }
-  }, [events.length, autoScroll]);
+  }, [events, autoScroll]);
 
-  // Check if user scrolled away from bottom
+  // Check if user scrolled away from bottom - use larger threshold for better UX
   const handleScroll = useCallback(() => {
     if (!listRef.current) return;
     const { scrollTop, scrollHeight, clientHeight } = listRef.current;
-    const isAtBottom = scrollHeight - scrollTop - clientHeight < 50;
+    // Consider "at bottom" if within 100px of the bottom
+    const isAtBottom = scrollHeight - scrollTop - clientHeight < 100;
     setAutoScroll(isAtBottom);
   }, []);  // Events come in newest-first from App.tsx, reverse to show chronologically (oldest at top, newest at bottom)
   const chronologicalEvents = [...events].reverse();
   
   const filteredEvents = chronologicalEvents.filter(e => {
+    // Agent color filter - if any colors selected, only show those agents
+    if (selectedAgentColors.size > 0 && !selectedAgentColors.has(e.agentColor)) {
+      return false;
+    }
+
+    // Goal type filter - if any goal types selected, only show matching decisions
+    if (selectedGoalTypes.size > 0) {
+      // For decision events, check if goalType matches
+      if (e.parsedDecision?.goalType && !selectedGoalTypes.has(e.parsedDecision.goalType)) {
+        return false;
+      }
+      // Non-decision events pass through if no goal filter OR if type filter includes them
+    }
+
+    // Type filter (all, decision, thought, speech)
     if (filter === 'all') return true;
     if (filter === 'speech') {
       // Include speech/conversation events AND decisions that generated speech
-      return e.requestType === 'speech' || 
+      return e.requestType === 'speech' ||
              e.requestType === 'conversation' ||
              (e.requestType === 'decision' && e.parsedDecision?.speech);
     }
@@ -705,9 +997,7 @@ export function LLMTimelinePanel({ width = 320, events }: LLMTimelinePanelProps)
       return e.requestType === 'decision' && !e.parsedDecision?.speech;
     }
     return e.requestType === filter;
-  });
-
-  // Limit to last MAX_EVENTS (newest events at bottom, chronological order)
+  });  // Limit to last MAX_EVENTS (newest events at bottom, chronological order)
   const displayEvents = filteredEvents.slice(-MAX_EVENTS);
 
   // Copy filtered events to clipboard as JSON
@@ -789,6 +1079,61 @@ export function LLMTimelinePanel({ width = 320, events }: LLMTimelinePanelProps)
         </button>
       </div>
 
+      {/* Agent Color Filter */}
+      {uniqueAgentColors.length > 0 && (
+        <div className="agent-filter-bar">
+          <span className="filter-label">Agents:</span>
+          <div className="agent-color-filters">
+            {uniqueAgentColors.map(color => (
+              <button
+                key={color}
+                className={`agent-color-btn ${selectedAgentColors.has(color) ? 'selected' : ''} ${selectedAgentColors.size === 0 ? 'all-active' : ''}`}
+                onClick={() => toggleAgentColor(color)}
+                style={{ backgroundColor: hexColor(color) }}
+                title={`Filter by agent color #${color.toString(16).padStart(6, '0')}`}
+              />
+            ))}
+            {selectedAgentColors.size > 0 && (
+              <button
+                className="clear-filter-btn"
+                onClick={() => setSelectedAgentColors(new Set())}
+                title="Clear agent filter"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Goal Type Filter */}
+      {uniqueGoalTypes.length > 0 && (
+        <div className="goal-filter-bar">
+          <span className="filter-label">Goals:</span>
+          <div className="goal-type-filters">
+            {uniqueGoalTypes.map(goalType => (
+              <button
+                key={goalType}
+                className={`goal-type-btn ${selectedGoalTypes.has(goalType) ? 'selected' : ''} ${selectedGoalTypes.size === 0 ? 'all-active' : ''}`}
+                onClick={() => toggleGoalType(goalType)}
+                title={`Filter by ${goalType}`}
+              >
+                {goalType.replace(/_/g, ' ')}
+              </button>
+            ))}
+            {selectedGoalTypes.size > 0 && (
+              <button
+                className="clear-filter-btn"
+                onClick={() => setSelectedGoalTypes(new Set())}
+                title="Clear goal filter"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       <div
         className="timeline-list"
         ref={listRef}
@@ -801,10 +1146,12 @@ export function LLMTimelinePanel({ width = 320, events }: LLMTimelinePanelProps)
           </div>
         ) : (
           displayEvents.map((event) => (
-            <TimelineEntry 
-              key={event.id} 
-              event={event} 
+            <TimelineEntry
+              key={event.id}
+              event={event}
               onClick={() => setSelectedEvent(event)}
+              hasThread={hasConversationThread(event)}
+              onConversationClick={() => setConversationThread([event])}
             />
           ))
         )}
@@ -828,6 +1175,18 @@ export function LLMTimelinePanel({ width = 320, events }: LLMTimelinePanelProps)
         <TraceDetailModal
           event={selectedEvent}
           onClose={() =>setSelectedEvent(null)} 
+        />
+      )}
+
+      {conversationThread && (
+        <ConversationThreadModal
+          events={conversationThread}
+          allEvents={events}
+          onClose={() => setConversationThread(null)}
+          onEventClick={(event) => {
+            setConversationThread(null);
+            setSelectedEvent(event);
+          }}
         />
       )}
     </div>

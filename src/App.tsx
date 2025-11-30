@@ -63,6 +63,17 @@ function App() {
   const ventOutAudioRef = useRef<HTMLAudioElement | null>(null);
   const seenVentEventIdsRef = useRef<Set<string>>(new Set());
 
+  // Body report audio - preload for instant playback
+  const bodyReportAudioRef = useRef<HTMLAudioElement | null>(null);
+  const lastBodyReportIdRef = useRef<string | null>(null);
+  
+  // Body report overlay state
+  const [showBodyReportOverlay, setShowBodyReportOverlay] = useState(false);
+  const [bodyReportData, setBodyReportData] = useState<{
+    reporterName: string;
+    bodies: Array<{ victimName: string; victimColor: number; location: string | null }>;
+  } | null>(null);
+
   // Preload kill sound on mount
   useEffect(() => {
     const audio = new Audio('/audio/among-us-kill.mp3');
@@ -145,6 +156,20 @@ function App() {
     });
     ventOutAudio.load();
 
+    // Body report sound
+    const bodyReportAudio = new Audio('/audio/body-report.mp3');
+    bodyReportAudio.preload = 'auto';
+    bodyReportAudio.volume = 0.6;
+    bodyReportAudioRef.current = bodyReportAudio;
+
+    bodyReportAudio.addEventListener('canplaythrough', () => {
+      audioLogger.info('Body report sound loaded and ready to play');
+    });
+    bodyReportAudio.addEventListener('error', (e) => {
+      audioLogger.error('Error loading body report sound', { error: e });
+    });
+    bodyReportAudio.load();
+
     return () => {
       if (ventInAudioRef.current) {
         ventInAudioRef.current.pause();
@@ -153,6 +178,10 @@ function App() {
       if (ventOutAudioRef.current) {
         ventOutAudioRef.current.pause();
         ventOutAudioRef.current = null;
+      }
+      if (bodyReportAudioRef.current) {
+        bodyReportAudioRef.current.pause();
+        bodyReportAudioRef.current = null;
       }
     };
   }, []);  // ResizeObserver to track viewport size changes and resize PIXI renderer
@@ -345,6 +374,43 @@ function App() {
         }
         
         lastKnownBodiesRef.current = currentBodyIds;
+      }
+
+      // Detect body report events and play sound + show overlay
+      if (snapshot.recentBodyReport) {
+        const reportId = `${snapshot.recentBodyReport.reporterId}-${snapshot.recentBodyReport.timestamp}`;
+        if (reportId !== lastBodyReportIdRef.current) {
+          lastBodyReportIdRef.current = reportId;
+          
+          // Play body report sound
+          audioLogger.info('Body report detected!', { 
+            reporter: snapshot.recentBodyReport.reporterName,
+            bodiesCount: snapshot.recentBodyReport.bodies.length 
+          });
+          
+          if (bodyReportAudioRef.current) {
+            bodyReportAudioRef.current.currentTime = 0;
+            bodyReportAudioRef.current.play()
+              .then(() => audioLogger.debug('Body report sound playing'))
+              .catch((err) => audioLogger.warn('Failed to play body report sound', { error: err.message }));
+          }
+          
+          // Show overlay
+          setBodyReportData({
+            reporterName: snapshot.recentBodyReport.reporterName,
+            bodies: snapshot.recentBodyReport.bodies.map(b => ({
+              victimName: b.victimName,
+              victimColor: b.victimColor,
+              location: b.location,
+            })),
+          });
+          setShowBodyReportOverlay(true);
+          
+          // Auto-hide overlay after 3 seconds
+          setTimeout(() => {
+            setShowBodyReportOverlay(false);
+          }, 3000);
+        }
       }
 
       // Detect new vent events and play sounds
@@ -840,6 +906,29 @@ function App() {
             💬
           </button>
         </div>
+        {/* Body Report Overlay */}
+        {showBodyReportOverlay && bodyReportData && (
+          <div className="body-report-overlay">
+            <div className="body-report-content">
+              <div className="body-report-title">DEAD BODY REPORTED!</div>
+              <div className="body-report-reporter">
+                {bodyReportData.reporterName} reported:
+              </div>
+              <div className="body-report-victims">
+                {bodyReportData.bodies.map((body, idx) => (
+                  <div key={idx} className="body-report-victim">
+                    <span 
+                      className="victim-color-dot" 
+                      style={{ backgroundColor: `#${body.victimColor.toString(16).padStart(6, '0')}` }}
+                    />
+                    <span className="victim-name">{body.victimName}</span>
+                    {body.location && <span className="victim-location"> ({body.location})</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
         {/* Game Timer Display */}
         {gameTimer && (
           <div className={`game-timer ${gameTimer.remainingMs < 120000 ? 'urgent' : gameTimer.remainingMs < 300000 ? 'warning' : ''}`}>

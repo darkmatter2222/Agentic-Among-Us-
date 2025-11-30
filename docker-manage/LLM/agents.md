@@ -25,21 +25,21 @@
 
 | Property | Value |
 |----------|-------|
-| **Model** | Qwen2.5-3B-Instruct |
-| **Quantization** | Q4_K_M |
-| **File** | `qwen2.5-3b-instruct-q4_k_m.gguf` |
-| **Size** | ~2.1 GB |
-| **VRAM Usage** | ~2.5 GB |
-| **Speed** | ~180 tokens/sec |
+| **Model** | Llama-3.2-1B-Instruct |
+| **Quantization** | Q5_K_M |
+| **File** | `Llama-3.2-1B-Instruct-Q5_K_M.gguf` |
+| **Size** | ~0.91 GB |
+| **VRAM Usage** | ~1 GB |
+| **Speed** | ~60-150 tokens/sec |
 
 ### Performance Characteristics
 
 ```
-Prompt Processing:  ~3,100 tokens/sec
-Token Generation:   ~180 tokens/sec
-Per-Token Latency:  ~5.5ms
-50 Token Response:  ~310ms
-100 Token Response: ~580ms
+Prompt Processing:  ~1,500-2,500 tokens/sec
+Token Generation:   ~60-150 tokens/sec
+Per-Token Latency:  ~7-15ms
+50 Token Response:  ~400-800ms
+100 Token Response: ~700-1500ms
 ```
 
 ---
@@ -69,7 +69,7 @@ docker run -d --name llama-server \
   -v /home/darkmatter2222/models:/models \
   -p 8080:8080 \
   ghcr.io/ggerganov/llama.cpp:server-cuda \
-  -m /models/qwen2.5-3b-instruct-q4_k_m.gguf \
+  -m /models/Llama-3.2-1B-Instruct-Q5_K_M.gguf \
   --host 0.0.0.0 --port 8080 \
   -ngl 99 -c 4096 -fa
 ```
@@ -78,7 +78,7 @@ docker run -d --name llama-server \
 
 | Flag | Description | Current Value |
 |------|-------------|---------------|
-| `-m` | Model path | `/models/qwen2.5-3b-instruct-q4_k_m.gguf` |
+| `-m` | Model path | `/models/Llama-3.2-1B-Instruct-Q5_K_M.gguf` |
 | `--host` | Bind address | `0.0.0.0` |
 | `--port` | Server port | `8080` |
 | `-ngl` | GPU layers | `99` (all layers) |
@@ -185,14 +185,16 @@ Downloads and switches to a different model.
 |------|-------|------|-------|-------|
 | Nov 2024 | Qwen3-8B-Q8_0 | 8.7 GB | ~50 tok/s | Initial, too slow |
 | Nov 2024 | Qwen3-8B-Q4_K_M | 5 GB | ~110 tok/s | Better, still slow |
-| Nov 2024 | **Qwen2.5-3B-Q4_K_M** | **2.1 GB** | **~180 tok/s** | **Current - optimal** |
+| Nov 2024 | Qwen2.5-3B-Q4_K_M | 2.1 GB | ~180 tok/s | Good but limited reasoning |
+| Nov 2024 | Qwen2.5-0.5B-Q8_0 | 0.5 GB | ~350 tok/s | Ultra fast but too simple |
+| Nov 2024 | **Llama-3.2-1B-Q5_K_M** | **0.91 GB** | **~60-150 tok/s** | **Current - best reasoning/speed** |
 
-### Why Qwen2.5-3B?
+### Why Llama-3.2-1B?
 
-- **4x faster** than 8B models
-- **Excellent quality** for instruction following
-- **Low VRAM** (~2.5GB of 24GB available)
-- **~350ms decisions** vs ~2500ms with 8B
+- **Strong multi-step reasoning** - Meta Llama 3.2 family excels at instruction-following
+- **1B params** is a big jump over 0.5B for complex planning and deception
+- **Light enough** for 8 concurrent agents on RTX 3090
+- **Q5_K_M quant** is author-recommended sweet spot
 
 ---
 
@@ -235,9 +237,9 @@ curl http://localhost:8080/health
 
 ### Out of memory
 
-Unlikely with 3B model (uses ~2.5GB of 24GB), but if needed:
+Unlikely with 1B model (uses ~1GB of 24GB), but if needed:
 - Reduce context: `-c 2048`
-- Use smaller model: Qwen2.5-1.5B
+- Use smaller model: Qwen2.5-0.5B
 
 ---
 
@@ -247,9 +249,10 @@ Unlikely with 3B model (uses ~2.5GB of 24GB), but if needed:
 
 ```
 /home/darkmatter2222/models/
-├── qwen2.5-3b-instruct-q4_k_m.gguf  # Current model (~2.1GB)
-├── Qwen3-8B-Q4_K_M.gguf             # Previous model (~5GB)
-└── Qwen3-8B-Q8_0.gguf               # Original model (~8.7GB)
+├── Llama-3.2-1B-Instruct-Q5_K_M.gguf  # Current model (~0.91GB)
+├── qwen2.5-0.5b-instruct-q8_0.gguf    # Previous model (~0.5GB)
+├── qwen2.5-3b-instruct-q4_k_m.gguf    # Legacy model (~2.1GB)
+└── Qwen3-8B-Q8_0.gguf                 # Original model (~8.7GB)
 ```
 
 ### On Windows (this repo)

@@ -477,7 +477,15 @@ export class KillSystem {
   getAllBodies(): DeadBody[] {
     return Array.from(this.bodies.values());
   }
-  
+
+  /**
+   * Clear all bodies from the map (called after body report)
+   */
+  clearAllBodies(): void {
+    killLog.get().info('Clearing all bodies from map', { count: this.bodies.size });
+    this.bodies.clear();
+  }
+
   /**
    * Get body by ID
    */

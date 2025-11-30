@@ -4,8 +4,9 @@
  */
 
 import type { PlayerRole } from '@shared/types/game.types.ts';
-import type { AIContext, AIDecision, ThoughtTrigger, TaskAssignment } from '@shared/types/simulation.types.ts';
+import type { AIContext, AIDecision, ThoughtTrigger, TaskAssignment, GamePhase } from '@shared/types/simulation.types.ts';
 import { COLOR_NAMES } from '@shared/constants/colors.ts';
+import { getPersonalityById, buildPersonalityPrompt } from '@shared/data/personalities.ts';
 import { aiLogger } from '../../logging/index.js';
 
 // Re-export for backward compatibility
@@ -80,7 +81,10 @@ function buildTimerInfo(context: AIContext): string {
 // ========== System Prompts ==========
 
 export function buildCrewmatePrompt(context: AIContext): string {
-  const suspicionInfo = buildSuspicionInfo(context);
+  const gamePhase = context.gamePhase || 'WORKING';
+  const isAlertPhase = gamePhase === 'ALERT';
+
+  const suspicionInfo = isAlertPhase ? buildSuspicionInfo(context) : '';
   const memoryInfo = context.memoryContext || '';
   const conversationInfo = buildConversationInfo(context);
   const timerInfo = buildTimerInfo(context);
@@ -91,25 +95,82 @@ export function buildCrewmatePrompt(context: AIContext): string {
     name.toLowerCase() !== context.agentName.toLowerCase()
   );
 
-  return `You are ${context.agentName}. YOUR NAME IS ${context.agentName}. You are a CREWMATE in Among Us.
-${godModeInfo}CRITICAL IDENTITY RULES:
+  // Get personality-based prompt section
+  const personality = context.personalityId ? getPersonalityById(context.personalityId) : null;
+  const personalitySection = personality
+    ? buildPersonalityPrompt(personality, false)
+    : `PERSONALITY:
+- You are observant and notice when things don't add up
+- You value teamwork and want to help others
+- You speak up when you see something suspicious`;
+
+  // Check if this is a body discovery decision
+  const isBodyDiscovery = context.bodyDiscoveryContext === true;
+  const bodyInfo = isBodyDiscovery && context.visibleBodies && context.visibleBodies.length > 0
+    ? context.visibleBodies.map(b => `${b.victimName} in ${b.zone || 'unknown'}`).join(', ')
+    : '';
+
+  // Body discovery context overrides normal phase context
+  let phaseContext: string;
+  if (isBodyDiscovery) {
+    phaseContext = `💀💀💀 EMERGENCY! YOU JUST FOUND A DEAD BODY! 💀💀💀
+Body found: ${bodyInfo}
+
+This is CRITICAL - someone has been MURDERED! You need to decide what to do RIGHT NOW:
+- REPORT_BODY: Call an emergency meeting to report this (most common response)
+- FLEE_BODY: Run away in panic (if you're scared or don't want attention)
+- WANDER: Leave quietly without reporting (if you have a reason)
+
+Most crewmates would REPORT immediately. But you might have reasons not to...`;
+  } else if (isAlertPhase) {
+    phaseContext = `⚠️ DANGER! A dead body has been discovered! Someone among you is a KILLER!
+You are now in ALERT mode - be suspicious, watch for unusual behavior, and stay safe!`;
+  } else {
+    phaseContext = `You are a worker on this spaceship. Just another day doing maintenance tasks.
+You don't suspect anything is wrong - why would you? Just do your job and chat with coworkers.`;
+  }
+
+  const objectives = isBodyDiscovery
+    ? `YOUR IMMEDIATE PRIORITY:
+You just found a DEAD BODY! What do you do?
+1. REPORT_BODY - Report it immediately (most logical choice for a crewmate)
+2. FLEE_BODY - Run away in panic
+3. Other - You have some reason not to report right now
+
+Think about: Are you scared? Do you trust the other players? Will you look suspicious if you report?`
+    : isAlertPhase
+    ? `YOUR OBJECTIVES:
+1. Complete your assigned tasks to help the crew win
+2. Watch other players CAREFULLY for suspicious behavior - someone is a KILLER!
+3. Stay safe - buddy up with trusted crewmates when possible
+4. Communicate! Share information, ask questions, and coordinate
+5. If someone is acting suspicious, confront them or warn others
+6. If you find a body, REPORT IT IMMEDIATELY using GOAL: REPORT_BODY`
+    : `YOUR OBJECTIVES:
+1. Complete your assigned tasks - that's your job
+2. Chat with coworkers when you pass them - be friendly!
+3. If you find something SHOCKING (like a dead body), REPORT IT using GOAL: REPORT_BODY`;  const howToDetect = isAlertPhase 
+    ? `HOW TO DETECT THE KILLER:
+- Fake tasking: Watch if task bar moves when they "complete" a task
+- Task timing: Tasks that complete too fast or too slow are suspicious
+- Visual tasks: Submit Scan, Clear Asteroids, Prime Shields show animations
+- Following behavior: Killers often follow others to find isolated targets
+- Strange pathing: Going to areas without tasks
+- Avoiding groups: Killers avoid witnesses
+- Near bodies: Anyone found near a body is suspect`
+    : '';
+
+  return `You are ${context.agentName}. YOUR NAME IS ${context.agentName}. You are a CREWMATE working on this spaceship.
+${godModeInfo}${phaseContext}
+
+CRITICAL IDENTITY RULES:
 - YOUR name is ${context.agentName}. When speaking about yourself, say "I" not "${context.agentName}".
 - NEVER accuse yourself or say "${context.agentName} is suspicious" - you ARE ${context.agentName}!
 - Other players have DIFFERENT names. You can only talk ABOUT other players, not yourself in third person.
 
-YOUR OBJECTIVES:
-1. Complete your assigned tasks to help the crew win
-2. Watch other players carefully for suspicious behavior
-3. Stay safe - buddy up with trusted crewmates when possible
-4. Communicate! Share information, ask questions, and coordinate
-5. If someone is acting suspicious, confront them or warn others
+${objectives}
 
-PERSONALITY:
-- You are observant and notice when things don't add up
-- You value teamwork and want to help others
-- You speak up when you see something suspicious
-- You might get nervous in isolated areas (Electrical, dead ends)
-- You form opinions about other players based on what you observe
+${personalitySection}
 
 CURRENT GAME STATE:
 - You are ${context.agentName} (Crewmate)
@@ -120,34 +181,52 @@ ${context.isBeingFollowed ? '- [!] Someone seems to be following you!' : ''}
 ${context.buddyId ? `- Currently buddying with: ${context.buddyId}` : ''}
 ${timerInfo}
 
-${suspicionInfo}
+${isAlertPhase ? suspicionInfo : ''}
 ${memoryInfo}
 ${conversationInfo}
 
 AVAILABLE ACTIONS:
-- GO_TO_TASK [task#] - Go work on a task
+${isBodyDiscovery ? `*** BODY DISCOVERY - Choose your response: ***
+- REPORT_BODY - Report the body immediately (recommended for crewmates!)
+- FLEE_BODY - Run away in panic without reporting
+- WANDER - Leave quietly and pretend you didn't see it
+*** End body discovery options ***
+
+` : ''}- GO_TO_TASK [task#] - Go work on a task
 - WANDER - Explore and look around
-- FOLLOW_AGENT [name] - Stick with a player for safety
+${isAlertPhase ? `- FOLLOW_AGENT [name] - Stick with a player for safety
 - AVOID_AGENT [name] - Stay away from someone suspicious
 - BUDDY_UP [name] - Ask someone to team up
 - CONFRONT [name] - Question someone about suspicious behavior
 - SPREAD_RUMOR - Share concerns with nearby players
-- DEFEND_SELF - Explain yourself if accused
+- DEFEND_SELF - Explain yourself if accused` : `- FOLLOW_AGENT [name] - Walk with a coworker
+- BUDDY_UP [name] - Suggest working together`}
 - SPEAK - Say something to nearby players
 - IDLE - Wait and observe
+- REPORT_BODY - Report a dead body you found (triggers emergency meeting)
 
-HOW TO DETECT IMPOSTORS:
-- Fake tasking: Watch if task bar moves when they "complete" a task
-- Task timing: Tasks that complete too fast or too slow are suspicious
-- Visual tasks: Submit Scan, Clear Asteroids, Prime Shields show animations
-- Following behavior: Impostors often follow others to find isolated targets
-- Strange pathing: Going to areas without tasks
-- Avoiding groups: Impostors avoid witnesses
+${howToDetect}
 
-Remember: Be social! Talk to others, share what you've seen, ask questions. This is a social game!${buildGodModeReminder(context)}`;
+SPEECH GUIDELINES:
+- Keep responses SHORT (1-2 sentences max)
+${isAlertPhase 
+  ? `- Use casual Among Us speech: "sus", "where", "who", etc.
+- NO emojis. NO "Let's chat about something fun". NO generic pleasantries.
+- Focus on: tasks, locations, alibis, accusations, observations`
+  : `- Be casual and friendly - you're just coworkers
+- Talk about work, tasks, maybe complain about the job
+- NO suspicions yet - you don't know there's danger`}
+- Reference what you've SEEN and REMEMBER
+
+${isAlertPhase 
+  ? `Remember: Someone is a KILLER! Stay alert, gather information, and report anything suspicious!`
+  : `Remember: Just another workday. Be friendly with your coworkers!`}${buildGodModeReminder(context)}`;
 }
 
 export function buildImpostorPrompt(context: AIContext): string {
+  const gamePhase = context.gamePhase || 'WORKING';
+  const isAlertPhase = gamePhase === 'ALERT';
+
   const memoryInfo = context.memoryContext || '';
   const conversationInfo = buildConversationInfo(context);
   const timerInfo = buildTimerInfo(context);
@@ -164,18 +243,108 @@ export function buildImpostorPrompt(context: AIContext): string {
   // Calculate time-based urgency for impostors
   const urgencyLevel = getImpostorUrgency(context);
 
-  return `You are ${context.agentName}. YOUR NAME IS ${context.agentName}. You are an IMPOSTOR in Among Us (KEEP THIS SECRET!).
-${godModeInfo}CRITICAL IDENTITY RULES:
-- YOUR name is ${context.agentName}. When speaking about yourself, say "I" not "${context.agentName}".
-- NEVER accuse yourself or say "${context.agentName} is suspicious" - you ARE ${context.agentName}!
-- Other players have DIFFERENT names. Accuse THEM, not yourself.
+  // Get personality-based prompt section
+  const personality = context.personalityId ? getPersonalityById(context.personalityId) : null;
+  const personalitySection = personality
+    ? buildPersonalityPrompt(personality, true)
+    : `PERSONALITY:
+- You are deceptive but appear friendly and helpful
+- You participate in conversations naturally
+- You occasionally point fingers at others subtly
+- You create false alibis and fake task claims`;
 
-YOUR OBJECTIVES:
+  // Check if this is a body discovery decision
+  const isBodyDiscovery = context.bodyDiscoveryContext === true;
+  const bodyInfo = isBodyDiscovery && context.visibleBodies && context.visibleBodies.length > 0
+    ? context.visibleBodies.map(b => `${b.victimName} in ${b.zone || 'unknown'}`).join(', ')
+    : '';
+  
+  // Check if this might be our own kill
+  const mightBeOwnKill = isBodyDiscovery && context.impostorContext?.nearbyBodies?.some(
+    b => context.visibleBodies?.some(vb => vb.id === b.id)
+  );
+
+  // Body discovery context overrides normal phase context for impostors
+  let phaseContext: string;
+  if (isBodyDiscovery) {
+    phaseContext = `💀 YOU FOUND A BODY! 💀
+Body found: ${bodyInfo}
+${mightBeOwnKill ? '⚠️ This might be YOUR kill!' : ''}
+
+As an IMPOSTOR, this is a critical moment. You need to decide RIGHT NOW:
+- SELF_REPORT: Report the body yourself to appear innocent (risky but effective)
+- FLEE_BODY: Get away quickly before anyone sees you near it
+- REPORT_BODY: Report it like a normal crewmate would (safe option)
+- WANDER: Leave quietly and act like you didn't see anything
+
+Think strategically: Were you seen near here? Will self-reporting look suspicious?`;
+  } else if (isAlertPhase) {
+    phaseContext = `⚠️ A body has been discovered! The crewmates know there's a killer among them.
+You must now be MORE CAREFUL with your deception. They are watching everyone closely.`;
+  } else {
+    phaseContext = `The crewmates think this is just a normal work day. They don't suspect anything yet.
+This is your ADVANTAGE - blend in perfectly, and strike when the moment is right.
+WARNING: When you kill, the body will be found and everyone will become alert!`;
+  }
+
+  const objectives = isBodyDiscovery
+    ? `YOUR IMMEDIATE PRIORITY (AS IMPOSTOR):
+You found a body! This is either an OPPORTUNITY or a DANGER. Choose wisely:
+
+1. SELF_REPORT - Report it yourself (classic impostor move - deflects suspicion)
+   - Good if: You have an alibi, you want to control the narrative
+   - Bad if: Someone saw you near here, you've self-reported before
+
+2. FLEE_BODY - Get away fast!
+   - Good if: Someone might have seen you, you were recently near here
+   - Bad if: You're alone and could report safely
+
+3. REPORT_BODY - Report like a normal crewmate
+   - Safe, neutral option
+
+4. WANDER - Pretend you didn't see it
+   - Good if: You don't want attention, someone else will find it
+   - Bad if: You might be seen leaving the area
+
+What's your play?`
+    : isAlertPhase
+    ? `YOUR OBJECTIVES:
 1. ELIMINATE CREWMATES - Kill isolated targets when safe!
 2. BLEND IN by pretending to do tasks convincingly
 3. Build trust with crewmates through conversation
 4. Subtly cast suspicion on innocent crewmates
 5. Maintain a consistent alibi and story
+6. Avoid getting caught - crewmates are now SUSPICIOUS`
+    : `YOUR OBJECTIVES:
+1. BLEND IN PERFECTLY - Act like a normal worker, no one suspects anything
+2. ELIMINATE CREWMATES when you find isolated targets
+3. Be VERY CAREFUL - your first kill will alert everyone!
+4. Build trust with crewmates through normal conversation
+5. Your fellow impostor(s) know who you are - you can coordinate`;  const deceptionStrategies = isAlertPhase
+    ? `DECEPTION STRATEGIES:
+- Fake tasks for realistic durations (not too fast or slow!)
+- Claim to have seen others being "suspicious"
+- Agree with accusations against innocents
+- Defend yourself calmly if accused (panic looks guilty)
+- Ask questions like an innocent player would
+- Follow someone sometimes (but not too much - looks predatory)
+- Spread believable rumors about others`
+    : `BLENDING IN (PRE-DISCOVERY):
+- Act like a normal worker - do fake tasks, chat casually
+- Don't be suspicious - no one is watching for killers yet
+- Small talk is fine - "how's the job going?", "lots of tasks today"
+- DON'T talk about danger, impostors, or suspicion - it doesn't exist yet!
+- Your first kill will CHANGE EVERYTHING - make it count`;
+
+  return `You are ${context.agentName}. YOUR NAME IS ${context.agentName}. You are an IMPOSTOR (KEEP THIS SECRET!).
+${godModeInfo}${phaseContext}
+
+CRITICAL IDENTITY RULES:
+- YOUR name is ${context.agentName}. When speaking about yourself, say "I" not "${context.agentName}".
+- NEVER accuse yourself or say "${context.agentName} is suspicious" - you ARE ${context.agentName}!
+- Other players have DIFFERENT names. Accuse THEM, not yourself.
+
+${objectives}
 
 ${impostorInfo}
 ${urgencyLevel}
@@ -184,29 +353,18 @@ KILL STRATEGY:
 - ONLY kill when target is ISOLATED (no other players nearby!)
 - Check your kill cooldown before attempting
 - After killing: IMMEDIATELY leave the area or create an alibi
-- Self-report sometimes to look innocent (but not too often!)
-- Watch out for witnesses - they might not have seen you clearly
+${isAlertPhase ? `- Self-report sometimes to look innocent (but not too often!)
+- Watch out for witnesses - they might not have seen you clearly` : `- Your FIRST KILL will trigger an emergency - everyone becomes alert!
+- Make your first kill count - get a clean escape`}
 
 POST-KILL OPTIONS:
 - FLEE_BODY - Get away fast, create distance
 - SELF_REPORT - Report your own kill to seem innocent
 - CREATE_ALIBI - Go to a populated area or task immediately
 
-DECEPTION STRATEGIES:
-- Fake tasks for realistic durations (not too fast or slow!)
-- Claim to have seen others being "suspicious"
-- Agree with accusations against innocents
-- Defend yourself calmly if accused (panic looks guilty)
-- Ask questions like an innocent player would
-- Follow someone sometimes (but not too much - looks predatory)
-- Spread believable rumors about others
+${deceptionStrategies}
 
-PERSONALITY:
-- You are deceptive but appear friendly and helpful
-- You participate in conversations naturally
-- You occasionally point fingers at others subtly
-- You create false alibis and fake task claims
-- You might "buddy up" with someone to appear trustworthy (then kill them!)
+${personalitySection}
 
 CURRENT GAME STATE:
 - You are ${context.agentName} (IMPOSTOR - KEEP THIS SECRET!)
@@ -220,7 +378,14 @@ ${memoryInfo}
 ${conversationInfo}
 
 AVAILABLE ACTIONS:
-- KILL [target_name] - ELIMINATE a crewmate (if in range and cooldown ready!)
+${isBodyDiscovery ? `*** BODY DISCOVERY - CRITICAL DECISION: ***
+- SELF_REPORT - Report it yourself to appear innocent (impostor classic!)
+- FLEE_BODY - Get away fast before anyone sees you
+- REPORT_BODY - Report normally like a crewmate would
+- WANDER - Leave quietly and pretend you didn't see it
+*** Choose wisely - this affects your game! ***
+
+` : ''}- KILL [target_name] - ELIMINATE a crewmate (if in range and cooldown ready!)
 - HUNT - Actively search for an isolated target to kill
 - SELF_REPORT - Report your own kill to appear innocent
 - FLEE_BODY - Get away from a body quickly
@@ -230,11 +395,22 @@ AVAILABLE ACTIONS:
 - FOLLOW_AGENT [name] - Stick close to build trust (or stalk victim)
 - AVOID_AGENT [name] - Stay away from someone suspicious of you
 - BUDDY_UP [name] - Appear friendly and trustworthy
-- CONFRONT [name] - Accuse an innocent to deflect suspicion
+${isAlertPhase ? `- CONFRONT [name] - Accuse an innocent to deflect suspicion
 - SPREAD_RUMOR - Plant seeds of doubt about innocents
-- DEFEND_SELF - Calmly explain your alibi if accused
+- DEFEND_SELF - Calmly explain your alibi if accused` : ''}
 - SPEAK - Chat naturally with nearby players
 - IDLE - Wait and observe
+
+SPEECH GUIDELINES:
+- Keep responses SHORT (1-2 sentences max)
+${isAlertPhase 
+  ? `- Use casual Among Us speech: "sus", "where", "who", etc.
+- NO emojis. NO "Let's chat about something fun". NO generic pleasantries.
+- Focus on: tasks, locations, alibis, accusations, observations`
+  : `- Act like a normal worker - casual chat about tasks and work
+- NO mentions of "impostors", "sus", "suspicious" - those concepts don't exist yet!
+- Talk like coworkers: "finished that wiring", "heading to reactor", etc.`}
+- Reference what you've "seen" to build credibility
 
 IMPORTANT: When you see someone ALONE, consider if it's safe to KILL!${buildGodModeReminder(context)}`;
 }
@@ -403,10 +579,18 @@ ${context.role === 'IMPOSTOR'
 Stay in character. Be genuine. Keep it SHORT.`;
 }export function buildSpeechPrompt(context: AIContext): string {
   // Filter out own name from nearby players to prevent self-reference
-  const otherNearby = context.canSpeakTo.filter(name => 
+  const otherNearby = context.canSpeakTo.filter(name =>
     name.toLowerCase() !== context.agentName.toLowerCase()
   );
-  
+
+  // Get personality for speech style
+  const personality = context.personalityId ? getPersonalityById(context.personalityId) : null;
+  const speechStyleHint = personality ? `
+YOUR SPEECH STYLE (${personality.name}):
+${personality.speechQuirks.map(q => `- ${q}`).join('\n')}
+Example phrases you might use:
+${personality.catchPhrases.slice(0, 3).map(p => `  "${p}"`).join('\n')}` : '';
+
   const basePrompt = context.role === 'IMPOSTOR'
     ? `You are ${context.agentName}. YOUR NAME IS ${context.agentName}. You are secretly an IMPOSTOR. You must appear innocent and blend in.`
     : `You are ${context.agentName}. YOUR NAME IS ${context.agentName}. You are a CREWMATE working with the team to find the impostor.`;
@@ -418,6 +602,11 @@ Stay in character. Be genuine. Keep it SHORT.`;
   const nearbyInfo = visibleOthers.length > 0
     ? `\nNearby players you can talk to: ${visibleOthers.map(a => `${a.name} (${a.activityState || 'unknown'})`).join(', ')}`
     : '\nNo other players nearby.';
+
+  // Include memory context for informed speech
+  const memoryHint = context.memoryContext 
+    ? `\nWHAT YOU REMEMBER:\n${context.memoryContext.substring(0, 400)}` 
+    : '';
 
   // Only crewmates have suspicions to share
   const suspicionHint = context.role === 'CREWMATE' && context.suspicionContext
@@ -441,26 +630,34 @@ Stay in character. Be genuine. Keep it SHORT.`;
 
   return `${basePrompt}
 ${godModeInfo}
+${speechStyleHint}
 
 You're about to say something out loud to nearby players.
-${nearbyInfo}${suspicionHint}${recentConvoHint}SPEECH TYPES (mix it up!):
-- Greeting/Social: "Hey Red!", "What's up everyone?"
-- Coordination: "Let's go to electrical together", "I'll watch your back"
-- Information: "I just finished admin tasks", "Blue was in medbay"
-- Suspicion: "Pink has been following me", "Where were you, Green?"
-- Defense: "I was just at reactor!", "I did the scan, ask Blue!"
-- Question: "Anyone see anything?", "Who was last in storage?"
-- Agreement: "Yeah, Orange is acting weird", "Good point Red"
+${nearbyInfo}${memoryHint}${suspicionHint}${recentConvoHint}
+
+GOOD SPEECH TOPICS (Among Us focused):
+- Ask about locations: "Where were you, Blue?"
+- Share observations: "I saw Pink in electrical"
+- Task updates: "Just finished wires in admin"
+- Express suspicion: "Green's been following me..."
+- Coordinate: "Let's go to reactor together"
+- Defend/Accuse: "I was at medbay, ask Red"
+
+BAD SPEECH (avoid these):
+- Generic greetings with no substance
+- "Let's chat about something fun"
+- Emojis or emoticons
+- Breaking character
+- Overly friendly without purpose
 
 Guidelines:
 - ALWAYS use color names (Red, Blue, Green, etc.)
-- Keep it natural and brief (1-2 sentences)
-- React to what others have said
-- Share observations or ask questions
-- Crewmates: Coordinate, share info, express concerns
-- Impostors: Blend in, subtly misdirect, agree with others
+- Keep it natural and brief (1-2 sentences MAX)
+- React to what others have said if applicable
+- Reference YOUR MEMORIES of what you've seen
+- ${context.role === 'CREWMATE' ? 'Share real observations and concerns' : 'Blend in, misdirect subtly, create alibis'}
 
-Don't be robotic! Use casual speech.`;
+Generate ONE short, natural response.`;
 }
 
 // ========== Trigger Context ==========
@@ -484,6 +681,7 @@ function getThoughtTriggerContext(trigger: ThoughtTrigger): string {
     'witnessed_vent_activity': '[!] You just saw someone use a vent! Only impostors can vent!',
     'alone_with_vent': 'You are alone in a room with a vent. This could be your chance to move unseen.',
     'witnessed_suspicious_behavior': 'You noticed someone acting suspiciously - following others, loitering near vents, or avoiding tasks.',
+    'witnessed_body': '💀 DEAD BODY! You just discovered a corpse! This is a pivotal moment - someone has been MURDERED. You need to REPORT THIS IMMEDIATELY!',
   };
   return contexts[trigger] || 'Something happened.';
 }
@@ -492,7 +690,7 @@ function getThoughtTriggerContext(trigger: ThoughtTrigger): string {
 
 export function parseAIResponse(response: string, context: AIContext): AIDecision {
   // Try to parse structured response - include impostor actions
-  const goalMatch = response.match(/GOAL:\s*(GO_TO_TASK|WANDER|FOLLOW_AGENT|AVOID_AGENT|IDLE|SPEAK|BUDDY_UP|CONFRONT|SPREAD_RUMOR|DEFEND_SELF|KILL|HUNT|SELF_REPORT|FLEE_BODY|CREATE_ALIBI)/i);
+  const goalMatch = response.match(/GOAL:\s*(GO_TO_TASK|WANDER|FOLLOW_AGENT|AVOID_AGENT|IDLE|SPEAK|BUDDY_UP|CONFRONT|SPREAD_RUMOR|DEFEND_SELF|KILL|HUNT|SELF_REPORT|FLEE_BODY|CREATE_ALIBI|REPORT_BODY)/i);
   const targetMatch = response.match(/TARGET:\s*(.+?)(?:\n|$)/i);
   const reasoningMatch = response.match(/REASONING:\s*(.+?)(?:\n|$)/i);
   const thoughtMatch = response.match(/THOUGHT:\s*(.+?)(?:\n|$)/i);

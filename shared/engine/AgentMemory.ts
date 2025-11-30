@@ -563,7 +563,26 @@ export class AgentMemory {
   }
   
   // ========== Serialization ==========
-  
+
+  /**
+   * Get full memory dump for UI display
+   */
+  getFullMemory(): {
+    observations: ObservationEntry[];
+    conversations: ConversationEntry[];
+    accusations: AccusationEntry[];
+    alibis: AlibiEntry[];
+    suspicionRecords: SuspicionRecord[];
+  } {
+    return {
+      observations: [...this.observations],
+      conversations: [...this.conversations],
+      accusations: [...this.accusations],
+      alibis: [...this.alibis],
+      suspicionRecords: Array.from(this.suspicionRecords.values()),
+    };
+  }
+
   toJSON(): object {
     return {
       ownerId: this.ownerId,

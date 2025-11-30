@@ -16,6 +16,7 @@ import type {
 } from '@shared/types/simulation.types.ts';
 import type { LLMTraceEvent, AgentPositionSnapshot } from '@shared/types/llm-trace.types.ts';
 import { COLOR_NAMES } from '@shared/constants/colors.ts';
+import { getPersonalityById } from '@shared/data/personalities.ts';
 import {
   buildCrewmatePrompt,
   buildImpostorPrompt,
@@ -164,6 +165,7 @@ interface AgentAIState {
   nextRandomThoughtTime: number;
   previouslyVisibleAgents: Set<string>;
   previouslyInKillRange: Set<string>;  // Track agents who were in kill range last tick
+  previouslyVisibleBodies: Set<string>; // Track body IDs we've already seen (for first-sighting trigger)
   lastZone: string | null;
   recentEvents: string[];
   conversationHistory: ChatMessage[];
@@ -322,6 +324,7 @@ export class AIDecisionService {
       nextRandomThoughtTime: now + this.randomInterval() + randomThoughtDelay, // Add random delay to first thought
       previouslyVisibleAgents: new Set(),
       previouslyInKillRange: new Set(),
+      previouslyVisibleBodies: new Set(),
       lastZone: null,
       recentEvents: [],
       conversationHistory: []
@@ -418,15 +421,53 @@ export class AIDecisionService {
       return {};
     }
 
-    // Check cooldowns
+    // Pick highest priority trigger FIRST (before cooldown check)
+    const trigger = triggers[0];
+
+    // ===== Body discovered - trigger immediate LLM decision (bypass cooldown) =====
+    // Seeing a body is critical - the agent must decide what to do NOW
+    // Crewmates usually report, but might be scared or confused
+    // Impostors might self-report, flee, or act shocked
+    if (trigger === 'witnessed_body') {
+      aiLogger.info('BODY WITNESSED - Triggering immediate decision (bypassing cooldowns)', {
+        agentId: context.agentId,
+        agentName: context.agentName,
+        bodiesVisible: context.visibleBodies?.length ?? 0,
+        role: context.role
+      });
+
+      // Generate a thought about finding the body (ignore cooldown for this)
+      let thought: ThoughtEvent | undefined;
+      thought = await this.generateThought(context, trigger, now);
+      state.lastThoughtTime = now;
+
+      // Now get an actual LLM decision about what to do
+      // The agent sees the body and must decide: report, flee, self-report (impostor), etc.
+      const decision = await this.getAgentDecision({
+        ...context,
+        // Add special flag so the prompt knows this is a body discovery situation
+        bodyDiscoveryContext: true
+      } as AIContext);
+
+      aiLogger.info('Body discovery decision made', {
+        agentId: context.agentId,
+        agentName: context.agentName,
+        goalType: decision.goalType,
+        reasoning: decision.reasoning
+      });
+
+      return {
+        thought,
+        decision
+      };
+    }
+
+    // Check cooldowns for non-emergency triggers
     const canThink = now - state.lastThoughtTime >= cooldowns.thoughtCooldown;
 
     if (!canThink && !canSpeak) {
       return {};
     }
-
-    // Pick highest priority trigger
-    const trigger = triggers[0];
 
     try {
       // Generate thought
@@ -594,6 +635,19 @@ export class AIDecisionService {
     if (now >= state.nextRandomThoughtTime) {
       triggers.push('idle_random');
     }
+
+    // ===== BODY DISCOVERY - highest priority trigger! =====
+    // Check if we see any bodies for the first time
+    const currentVisibleBodies = new Set((context.visibleBodies || []).map(b => b.id));
+    for (const bodyId of currentVisibleBodies) {
+      if (!state.previouslyVisibleBodies.has(bodyId)) {
+        // First time seeing this body! This is the pivotal moment.
+        triggers.unshift('witnessed_body'); // Add to FRONT - highest priority!
+        break;
+      }
+    }
+    // Update tracking (do this AFTER checking so we detect first-sighting)
+    state.previouslyVisibleBodies = currentVisibleBodies;
 
     return triggers;
   }
@@ -854,6 +908,9 @@ Keep it brief (1-2 sentences). Start the conversation!`;
     }
 
     // Emit trace event for conversation starter
+    // Note: conversationId is not set here because the conversation tracking
+    // is only created when the target agent responds. The first turn is marked
+    // as turn 1 and the conversationWith field shows who we're talking to.
     this.emitTraceEvent({
       id: this.generateTraceId(),
       timestamp: Date.now(),
@@ -862,6 +919,8 @@ Keep it brief (1-2 sentences). Start the conversation!`;
       agentColor: this.getAgentColor(context.agentId),
       agentRole: context.role,
       requestType: 'conversation',
+      conversationTurn: 1,
+      conversationWith: targetName,
       systemPrompt,
       userPrompt,
       rawResponse: message,
@@ -962,31 +1021,77 @@ You MUST use GOAL: KILL and TARGET: ${isolatedTargets[0].name}`;
 
     // Build dynamic goal options based on current state
     let goalOptions: string;
-    if (context.role === 'IMPOSTOR') {
+    
+    // Check if this is a body discovery situation - REPORT_BODY is the expected response!
+    const isBodyDiscovery = context.bodyDiscoveryContext === true;
+    
+    if (isBodyDiscovery) {
+      // Body discovery - emphasize REPORT_BODY as the primary option
+      if (context.role === 'IMPOSTOR') {
+        goalOptions = 'REPORT_BODY/SELF_REPORT/FLEE_BODY/WANDER';
+      } else {
+        goalOptions = 'REPORT_BODY/FLEE_BODY/WANDER';
+      }
+    } else if (context.role === 'IMPOSTOR') {
       const availableGoals: string[] = [];
-      
+
       // KILL only available if: not on cooldown AND target in range
       if (canKillNow) {
         availableGoals.push('KILL');
       }
-      
+
       // HUNT available if: not on cooldown OR already hunting (to continue)
       if (!isOnCooldown || huntingTarget) {
         availableGoals.push('HUNT');
       }
-      
+
       // Always available options for impostors
       availableGoals.push('GO_TO_TASK', 'WANDER', 'FOLLOW_AGENT', 'AVOID_AGENT', 'IDLE', 'SPEAK');
-      
+
       goalOptions = availableGoals.join('/');
     } else {
       goalOptions = 'GO_TO_TASK/WANDER/FOLLOW_AGENT/AVOID_AGENT/IDLE/SPEAK';
     }
 
+    // Build body discovery section if applicable
+    let bodyDiscoverySection = '';
+    if (isBodyDiscovery && context.visibleBodies && context.visibleBodies.length > 0) {
+      const bodyInfo = context.visibleBodies.map(b =>
+        `${b.victimName} (in ${b.zone || 'unknown location'}, ${Math.round(b.distance)} units away)`
+      ).join(', ');
+      bodyDiscoverySection = `
+💀💀💀 DEAD BODY FOUND! 💀💀💀
+Bodies visible: ${bodyInfo}
+
+THIS IS AN EMERGENCY! As a responsible crewmate, you should REPORT THIS BODY!
+Your response MUST be: GOAL: REPORT_BODY
+
+`;
+    }
+
+    // Build witness memory section - CRITICAL information if agent saw a kill!
+    let witnessSection = '';
+    if (context.witnessMemory && context.witnessMemory.sawKill) {
+      const killerColorName = context.witnessMemory.suspectedKillerColor !== null
+        ? COLOR_NAMES[context.witnessMemory.suspectedKillerColor] || `Unknown (color ${context.witnessMemory.suspectedKillerColor})`
+        : null;
+      const killerInfo = killerColorName
+        ? `You SAW the killer - it was ${killerColorName}! (${Math.round(context.witnessMemory.colorConfidence * 100)}% certain)`
+        : 'You saw the kill but couldn\'t identify the killer clearly!';
+      witnessSection = `
+🔴🔴🔴 CRITICAL: YOU WITNESSED A MURDER! 🔴🔴🔴
+Location: ${context.witnessMemory.location || 'Unknown'}
+${killerInfo}
+
+This is DAMNING evidence! You must TELL EVERYONE and REPORT THIS!
+
+`;
+    }
+
     return `CURRENT SITUATION:
 Location: ${context.currentZone || 'Hallway'}
 Position: (${Math.round(context.currentPosition.x)}, ${Math.round(context.currentPosition.y)})
-
+${bodyDiscoverySection}${witnessSection}
 MY TASKS:
 ${taskStatus}
 Current task: ${context.currentTaskIndex !== null ? context.assignedTasks[context.currentTaskIndex]?.taskType : (huntingTarget ? `HUNTING ${huntingTarget}` : 'None selected')}
@@ -1024,6 +1129,7 @@ THOUGHT: <your internal thought, 1 sentence>`;
         'idle_random': 'You have a moment to think.',
         'heard_speech': 'You heard someone talking nearby.',
         'passed_agent_closely': `You just passed close to ${context.visibleAgents.find((a: { name: string; distance: number }) => a.distance < 50)?.name || 'someone'}.`,
+        'witnessed_body': '💀 DEAD BODY! You just discovered a corpse! You must REPORT this immediately using GOAL: REPORT_BODY!',
         'task_in_action_radius': 'A task location is nearby.',
         'target_entered_kill_range': '\u{1F52A} A crewmate just entered your kill range! Quick - decide: kill them, use them as an alibi, or let them pass?',
         'near_vent': 'You noticed a vent nearby.',
@@ -1114,6 +1220,7 @@ What are you thinking? (One brief internal thought, stay in character)`;
       'agent_lost_sight': ['Where did they go?', 'They left.', 'Gone.'],
       'entered_room': [`${context.currentZone || 'New area'}...`, 'Different scenery.'],
       'idle_random': ['Hmm...', 'What next?', 'Thinking...', 'Stay focused.'],
+      'witnessed_body': ['Oh no... a body!', 'Someone\'s DEAD!', 'I need to report this!', 'BODY!'],
       'heard_speech': context.heardSpeechFrom 
         ? [`${context.heardSpeechFrom} is talking to me...`, `What does ${context.heardSpeechFrom} want?`, `Should I respond to ${context.heardSpeechFrom}?`]
         : ['What was that?', 'Someone said something.', 'Did they say something to me?'],
@@ -1347,6 +1454,9 @@ ${isImpostor ? 'Remember: Deflect suspicion, blend in, maybe cast doubt on other
       return null;
     }
 
+    // Use turn number already calculated above (this will be the turn we're about to add)
+    const otherParticipantName = conversation.participants.find(p => p !== context.agentName) || 'someone';
+
     // Emit trace event for conversation reply
     this.emitTraceEvent({
       id: this.generateTraceId(),
@@ -1356,6 +1466,9 @@ ${isImpostor ? 'Remember: Deflect suspicion, blend in, maybe cast doubt on other
       agentColor: this.getAgentColor(context.agentId),
       agentRole: context.role,
       requestType: 'conversation',
+      conversationId: conversation.id,
+      conversationTurn: turnNumber,
+      conversationWith: otherParticipantName,
       systemPrompt,
       userPrompt,
       rawResponse: message,
@@ -1428,11 +1541,27 @@ Respond naturally like a real Among Us player would. Be conversational, not robo
    * Build conversation prompt for impostors
    */
   private buildImpostorConversationPrompt(context: AIContext, otherAgent: string, topic?: string): string {
+    // Get personality for speech style
+    const personality = context.personalityId ? getPersonalityById(context.personalityId) : null;
+    const speechStyleHint = personality ? `
+YOUR SPEECH STYLE (${personality.name}):
+${personality.speechQuirks.map(q => `- ${q}`).join('\n')}
+Deception style: ${personality.deceptionStyle || 'blend in naturally'}
+Deflection style: ${personality.deflectionStyle || 'stay calm and deny'}` : '';
+
+    // Include memory context
+    const memoryHint = context.memoryContext 
+      ? `\nWHAT YOU'VE SEEN/HEARD:\n${context.memoryContext.substring(0, 300)}` 
+      : '';
+
     return `You are ${context.agentName}. YOUR NAME IS ${context.agentName}. You are secretly an IMPOSTOR in Among Us.
 You are having a conversation with ${otherAgent}. ${otherAgent} is a DIFFERENT person than you.
 
 IMPORTANT: When you talk about yourself, use "I" or "me". When you talk about ${otherAgent}, use their name or "you".
 NEVER say "${context.agentName} did" or "${context.agentName} is" - use "I did" or "I am" instead.
+
+${speechStyleHint}
+${memoryHint}
 
 YOUR GOALS IN THIS CONVERSATION:
 - Appear innocent and helpful
@@ -1440,12 +1569,18 @@ YOUR GOALS IN THIS CONVERSATION:
 - Subtly cast doubt on other crewmates if possible
 - Don't be too eager to accuse (that's suspicious)
 - If accused, defend calmly with plausible alibis
-- Agree with safe consensus opinions
+- Reference things you've "seen" to build credibility
 
 CONTEXT:
 - Location: ${context.currentZone || 'Unknown'}
 - You are secretly an impostor!
 - Topic: ${topic || 'general discussion'}
+
+SPEECH GUIDELINES:
+- Keep responses SHORT (1-2 sentences max)
+- Use casual Among Us speech: "sus", "where", "who", etc.
+- NO emojis. NO "Let's chat about something fun". NO generic pleasantries.
+- Reference locations and tasks naturally
 
 Be a convincing crewmate. Don't overdo the helpfulness. Act natural and blend in.`;
   }

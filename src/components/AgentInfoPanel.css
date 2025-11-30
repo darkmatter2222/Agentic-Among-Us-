@@ -672,6 +672,125 @@
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+/* Full Memory List */
+.memory-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.memory-list.scrollable {
+  max-height: 250px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.memory-item {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
+  border-left: 3px solid rgba(255, 255, 255, 0.2);
+}
+
+.memory-item .memory-time {
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 0.68rem;
+  min-width: 70px;
+}
+
+.memory-item .memory-type {
+  color: #8ab4f8;
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 0.65rem;
+}
+
+.memory-item .memory-desc {
+  color: rgba(255, 255, 255, 0.85);
+  flex: 1;
+}
+
+.memory-item .memory-zone {
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.68rem;
+  font-style: italic;
+}
+
+/* Observation type colors */
+.memory-item.obs-spotted {
+  border-left-color: #4caf50;
+}
+.memory-item.obs-lost_sight {
+  border-left-color: #9e9e9e;
+}
+.memory-item.obs-task_completed {
+  border-left-color: #2196f3;
+}
+.memory-item.obs-task_in_progress {
+  border-left-color: #03a9f4;
+}
+.memory-item.obs-body_found {
+  border-left-color: #f44336;
+}
+.memory-item.obs-suspicious {
+  border-left-color: #ff9800;
+}
+.memory-item.obs-vent {
+  border-left-color: #9c27b0;
+}
+.memory-item.obs-room_entry {
+  border-left-color: #00bcd4;
+}
+
+/* Conversation items in memory */
+.memory-item.conversation {
+  border-left-color: #8ab4f8;
+}
+
+.memory-item .memory-speaker {
+  color: #8ab4f8;
+  font-weight: 600;
+}
+
+.memory-item .memory-message {
+  color: rgba(255, 255, 255, 0.9);
+  font-style: italic;
+}
+
+/* Accusation items */
+.memory-item.accusation {
+  border-left-color: #e74c3c;
+  background: rgba(231, 76, 60, 0.1);
+}
+
+.memory-item .accusation-text {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.memory-item .accusation-text strong {
+  color: #e74c3c;
+}
+
+/* Alibi items */
+.memory-item.alibi {
+  border-left-color: #27ae60;
+  background: rgba(39, 174, 96, 0.1);
+}
+
+.memory-item .alibi-text {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.memory-item .alibi-text strong {
+  color: #27ae60;
+}
+
 .memory-text {
   margin: 0;
   font-size: 0.75rem;

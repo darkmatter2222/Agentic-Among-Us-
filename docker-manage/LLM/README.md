@@ -59,22 +59,23 @@ This will:
 
 ## Current Model
 
-**Qwen2.5-3B-Instruct (Q4_K_M)**
-- Size: ~2.1 GB
-- Speed: ~180 tokens/sec on RTX 3090
-- Decision time: ~300-400ms per agent decision
+**Llama-3.2-1B-Instruct (Q5_K_M)**
+- Size: ~0.91 GB
+- Speed: ~60-150 tokens/sec on RTX 3090
+- Decision time: ~300-500ms per agent decision
 - Context: 4,096 tokens (configurable)
 
 ### Why This Model?
 
-We chose Qwen2.5-3B-Instruct for optimal speed/quality balance:
+We chose Llama-3.2-1B-Instruct for optimal reasoning/speed balance:
 
-| Model | Size | Speed | Decision Time |
-|-------|------|-------|---------------|
-| Qwen3-8B-Q4_K_M | ~5 GB | ~110 tok/s | ~2500ms |
-| **Qwen2.5-3B-Q4_K_M** | **~2 GB** | **~180 tok/s** | **~350ms** |
+| Model | Size | Speed | Notes |
+|-------|------|-------|-------|
+| Qwen2.5-0.5B | ~0.5 GB | ~350 tok/s | Ultra fast but limited reasoning |
+| **Llama-3.2-1B-Q5_K_M** | **~0.91 GB** | **~60-150 tok/s** | **Strong reasoning, fast** |
+| Qwen2.5-3B | ~2.1 GB | ~180 tok/s | Good but overkill for agents |
 
-The 3B model is **4x faster** while maintaining excellent reasoning quality for game agent decisions.
+Llama 3.2 1B offers **significantly better multi-step reasoning** than 0.5B models while staying fast enough for 8 concurrent agents.
 
 ### Container Configuration
 
@@ -84,7 +85,7 @@ docker run -d --name llama-server \
   -v /home/darkmatter2222/models:/models \
   -p 8080:8080 \
   ghcr.io/ggerganov/llama.cpp:server-cuda \
-  -m /models/qwen2.5-3b-instruct-q4_k_m.gguf \
+  -m /models/Llama-3.2-1B-Instruct-Q5_K_M.gguf \
   --host 0.0.0.0 --port 8080 \
   -ngl 99 -c 4096 -fa
 ```
@@ -101,7 +102,7 @@ docker run -d --name llama-server \
 | `SSH_HOST` | Ubuntu server IP | `192.168.86.48` |
 | `SSH_USER` | SSH username | `darkmatter2222` |
 | `SSH_PASSWORD` | SSH password | - |
-| `MODEL_FILE` | GGUF model filename | `qwen2.5-3b-instruct-q4_k_m.gguf` |
+| `MODEL_FILE` | GGUF model filename | `Llama-3.2-1B-Instruct-Q5_K_M.gguf` |
 | `CONTEXT_SIZE` | Max context tokens | `4096` |
 | `FLASH_ATTENTION` | Enable flash attention | `true` |
 
@@ -112,15 +113,15 @@ docker run -d --name llama-server \
 - Ensure Docker has GPU access: `docker run --rm --gpus all nvidia/cuda:12.0-base nvidia-smi`
 
 ### Model download fails
-- Manual download: `wget https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf`
+- Manual download: `wget https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q5_K_M.gguf`
 
 ### Slow inference
 - Ensure all layers on GPU (`-ngl 99`)
 - Enable Flash Attention (`-fa`)
 - Check GPU memory: `nvidia-smi`
 
-### Out of memory (unlikely with 3B model)
-- The 3B model only uses ~2GB VRAM
+### Out of memory (unlikely with 1B model)
+- The 1B model only uses ~1GB VRAM
 - RTX 3090 has 24GB - plenty of headroom
 
 ## API Endpoint
@@ -133,7 +134,7 @@ http://192.168.86.48:8080/v1/chat/completions
 
 Test with:
 ```powershell
-$body = @{model="qwen";messages=@(@{role="user";content="Hello"});max_tokens=50} | ConvertTo-Json -Depth 3
+$body = @{model="llama";messages=@(@{role="user";content="Hello"});max_tokens=50} | ConvertTo-Json -Depth 3
 Invoke-RestMethod -Uri "http://192.168.86.48:8080/v1/chat/completions" -Method Post -ContentType "application/json" -Body $body
 ```
 

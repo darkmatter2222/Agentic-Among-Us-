@@ -648,12 +648,20 @@ window.setLogLevel('WARN');   // Only warnings and errors
 | **Thought System** | Internal reasoning triggered by events (room entry, spotting agents, etc.). Thoughts shown as cloud-shaped bubble with trailing circles above player. Toggleable via THT button. |
 | **Thinking Indicator** | Animated "..." dots shown when agent is waiting for LLM response. Toggleable via ... button. |
 | **Speech System** | Agents speak to nearby players, vision-based hearing (same radius and line-of-sight as vision - can't hear through walls). Speech shown as rectangular bubble with tail pointer above player. Toggleable via SPK button. |
+| **Conversation Threading** | Conversations tracked with unique IDs (conversationId), turn numbers, and participant names. LLM timeline panel shows conversation info ([T1], [T2], etc.) and allows drilling into full conversation threads via 🔗 button. |
 | **Social Actions** | Buddy up, follow, avoid, confront, spread rumors, defend self |
 | **AI Decision Making** | LLM-powered with 10 goal types (see below) |
 | **Kill Sound Effects** | Audio plays on new body detection with browser autoplay unlock |
 | **Vent Sound Effects** | Audio plays on vent enter/exit events (vent-in and vent-out sounds) |
 | **Hearing System** | Visual ear icon with directional sound waves when agents hear speech. HeardSpeechEvent emitted for each listener. "Recently Heard" section in agent info panel shows what agent heard with direct-address highlighting. |
 | **God Mode** | Divine control system allowing observers to override agent behavior (see below) |
+| **Game Phase System** | WORKING → ALERT phase transition triggered by first body discovery. Crewmates behave differently based on phase (friendly workers vs suspicious investigators). Impostors adapt blending behavior per phase. |
+| **Body Discovery System** | Agents can witness dead bodies (witnessed_body trigger), triggers **LLM decision** (agent chooses to REPORT_BODY, FLEE_BODY, SELF_REPORT, etc.). REPORT_BODY is now prominently emphasized in the prompt with the body info and limited goal options. Broadcast report to all agents. Phase transitions WORKING→ALERT on first discovery. All bodies cleared on report. |
+| **Witness Kill System** | Agents who see a kill get witnessMemory populated with killer color and confidence. This is now prominently displayed in decision prompts with "YOU WITNESSED A MURDER!" alert. Killer's name shown if identified. |
+| **Body Report UI** | Red flash overlay with victim names, reporter info, auto-dismiss after 3s. Audio plays body-report.mp3 sound effect. |
+| **Phase-Aware AI Prompts** | Crewmate prompts: WORKING phase = friendly workers, no danger awareness; ALERT phase = suspicious investigators with alibis. Impostor prompts: blend in more during WORKING, strategic killing/deception during ALERT. |
+| **Full Memory Display** | Memory tab in agent profile shows complete dump: All Observations (color-coded by type), All Conversations, Accusations, Alibis, and Recently Heard. Scrollable lists with timestamps and zones. |
+| **LLM Timeline Filters** | Filter panel with: (1) Agent color circles - click to filter by specific agents, (2) Goal type buttons - filter by decision types like GO_TO_TASK, WANDER, HUNT, KILL, REPORT_BODY. Filters combinable with clear buttons. |
 
 ### God Mode System (Active)
 
@@ -719,6 +727,7 @@ SPREAD_RUMOR   - Share suspicions with other agents
 DEFEND_SELF    - Provide alibis when accused
 SPEAK          - General conversation
 IDLE           - Wait and observe surroundings
+REPORT_BODY    - Report a dead body (triggers meeting in full game)
 ```
 
 **Impostor-Only Goals:**
@@ -744,6 +753,7 @@ heard_speech            - Heard another agent speak
 passed_agent_closely    - Brief proximity encounter
 task_in_action_radius   - Task location nearby
 witnessed_suspicious_behavior - Saw suspicious activity (venting, near body, etc.)
+witnessed_body          - Saw a dead body, triggers REPORT_BODY decision
 target_entered_kill_range - IMPOSTOR ONLY: Crewmate entered kill range, forces immediate decision
 near_vent              - IMPOSTOR ONLY: Near a vent, might consider using it
 entered_vent           - IMPOSTOR ONLY: Just entered a vent
@@ -757,7 +767,7 @@ alone_with_vent        - IMPOSTOR ONLY: Alone in a room with a vent
 | System | Status | Notes |
 |--------|--------|-------|
 | **Kill Mechanics** | Partial | KillSystem class exists with cooldowns, range checks, witnesses; kills can be attempted but game state doesn't update victims to DEAD |
-| **Body Discovery** | No | No corpses, no report button |
+| **Body Discovery** | Implemented | witnessed_body trigger, REPORT_BODY goal, body report callback chain, phase transition, memory broadcast, UI overlay with audio |
 | **Emergency Meetings** | No | Button location exists but non-functional |
 | **Discussion Phase** | No | No meeting chat or accusations |
 | **Voting System** | No | No vote casting or counting |
@@ -781,8 +791,8 @@ Tasks per Agent:   5
 Map:               The Skeld
 Tick Rate:         60 Hz
 Vision System:     Radius-based with obstruction
-AI Backend:        Qwen2.5-3B-Instruct (Q4_K_M) via llama.cpp Docker
-LLM Performance:   ~180 tokens/sec, ~300-400ms per decision
+AI Backend:        Llama-3.2-1B-Instruct (Q5_K_M) via llama.cpp Docker
+LLM Performance:   ~60-150 tokens/sec, ~300-500ms per decision
 ```
 
 ### Map Data Available
@@ -818,3 +828,59 @@ The simulation has full Skeld map data including:
 - Use vents for travel
 - Trigger sabotages
 - Close doors
+
+### Agent Personality System (NEW)
+
+Each agent is assigned a unique personality at game start that affects their behavior, speech patterns, and decision-making.
+
+#### Personality Traits
+Each personality has the following configurable traits (0-100 scale):
+- **trustLevel**: How likely to trust others (0=paranoid, 100=naive)
+- **aggressionLevel**: How aggressive in accusations (0=passive, 100=accusatory)
+- **socialLevel**: How social/talkative (0=loner, 100=social butterfly)
+- **composure**: How calm under pressure (0=panicky, 100=ice cold)
+- **observation**: How observant of details (0=oblivious, 100=eagle eye)
+- **leadership**: How likely to lead or follow (0=follower, 100=leader)
+
+#### Speech Characteristics
+Each personality includes:
+- **catchPhrases**: Common phrases the personality uses
+- **greetingStyle**: How they greet others
+- **suspicionStyle**: How they express suspicion
+- **defenseStyle**: How they defend themselves
+- **speechQuirks**: General speech patterns (informal, formal, brief, etc.)
+
+#### Impostor-Specific Traits
+Impostor-capable personalities also have:
+- **deceptionStyle**: How they deceive others
+- **deflectionStyle**: How they deflect blame
+- **killAggression**: How aggressive with kills (0-100)
+
+#### Available Personalities (12 total)
+
+**Impostor-Capable (7):**
+| ID | Name | Key Traits |
+|----|------|------------|
+| detective | The Detective | Analytical, asks questions, builds logical cases |
+| charmer | The Charmer | Friendly, uses nicknames, builds trust |
+| hothead | The Hothead | Quick to anger, loud accusations |
+| quiet_one | The Quiet One | Speaks rarely, impactful statements |
+| strategist | The Strategist | Plans, coordinates, thinks ahead |
+| gossip | The Gossip | Loves drama, spreads info |
+| joker | The Joker | Sarcastic, uses humor, never serious |
+
+**Crewmate-Only (5):**
+| ID | Name | Key Traits |
+|----|------|------------|
+| newbie | The Newbie | New to game, trusts easily, asks questions |
+| veteran | The Veteran | Experienced, calm, spots patterns |
+| paranoid | The Paranoid | Trusts no one, suspects everyone |
+| peacemaker | The Peacemaker | Mediates, seeks consensus |
+| taskmaster | The Taskmaster | Task-focused, efficient, impatient |
+
+#### How Personalities Are Assigned
+1. At game start, `selectPersonalitiesForGame()` picks 8 personalities
+2. 2 impostor-capable personalities are assigned to impostors
+3. 6 personalities (mix of impostor-capable and crewmate-only) go to crewmates
+4. Each agent's `personalityId` is stored in their state
+5. LLM prompts include personality-specific instructions

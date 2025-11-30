@@ -183,6 +183,117 @@ canvas {
 }
 
 /* Game Timer Display */
+/* ========== Body Report Overlay ========== */
+.body-report-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(139, 0, 0, 0.85);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+  animation: body-report-flash 0.3s ease-out;
+}
+
+@keyframes body-report-flash {
+  0% {
+    background: rgba(255, 0, 0, 0.95);
+    transform: scale(1.02);
+  }
+  50% {
+    background: rgba(200, 0, 0, 0.9);
+  }
+  100% {
+    background: rgba(139, 0, 0, 0.85);
+    transform: scale(1);
+  }
+}
+
+.body-report-content {
+  text-align: center;
+  color: white;
+  animation: body-report-slide-in 0.4s ease-out;
+}
+
+@keyframes body-report-slide-in {
+  0% {
+    transform: translateY(-30px);
+    opacity: 0;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.body-report-title {
+  font-size: 48px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 4px;
+  text-shadow: 
+    4px 4px 0 #000,
+    -2px -2px 0 #000,
+    2px -2px 0 #000,
+    -2px 2px 0 #000;
+  margin-bottom: 20px;
+  animation: body-report-pulse 0.5s ease-in-out infinite alternate;
+}
+
+@keyframes body-report-pulse {
+  0% {
+    transform: scale(1);
+  }
+  100% {
+    transform: scale(1.02);
+  }
+}
+
+.body-report-reporter {
+  font-size: 24px;
+  font-weight: 600;
+  margin-bottom: 16px;
+  text-shadow: 2px 2px 0 #000;
+}
+
+.body-report-victims {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+}
+
+.body-report-victim {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 28px;
+  font-weight: 700;
+  text-shadow: 2px 2px 0 #000;
+}
+
+.victim-color-dot {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 3px solid white;
+  box-shadow: 0 0 8px rgba(0, 0, 0, 0.5);
+}
+
+.victim-name {
+  color: #fff;
+}
+
+.victim-location {
+  font-size: 18px;
+  font-weight: 400;
+  color: #ffcccc;
+}
+
+/* ========== Game Timer ========== */
 .game-timer {
   position: absolute;
   top: 12px;

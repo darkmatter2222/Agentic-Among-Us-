@@ -55,6 +55,44 @@ export interface AgentSummary {
     lastWhisperTimestamp?: number;
     currentCommand?: string;
   };
+  // Full memory dump for detailed display
+  fullMemory?: {
+    observations: Array<{
+      id: string;
+      timestamp: number;
+      type: string;
+      subjectName: string;
+      zone: string | null;
+      description: string;
+    }>;
+    conversations: Array<{
+      id: string;
+      timestamp: number;
+      speakerName: string;
+      message: string;
+      zone: string | null;
+    }>;
+    accusations: Array<{
+      id: string;
+      timestamp: number;
+      accuserName: string;
+      accusedName: string;
+      reason: string;
+    }>;
+    alibis: Array<{
+      id: string;
+      timestamp: number;
+      agentName: string;
+      claimedZone: string;
+      claimedActivity: string;
+    }>;
+    suspicionRecords: Array<{
+      agentId: string;
+      agentName: string;
+      level: number;
+      reasons: Array<{ reason: string; delta: number; category: string }>;
+    }>;
+  };
 }
 
 function hexColor(num: number): string {
@@ -516,35 +554,97 @@ function GodModeControlPanel({ agent }: { agent: AgentSummary }) {
           </>
         )}
         
-        {activeTab === 'memory' && (
+{activeTab === 'memory' && (
           <>
+            {/* Full Observations */}
             <div className="expanded-card__section">
-              <div className="section-label">Recent Observations</div>
-              <div className="memory-context-box">
-                {agent.memoryContext ? (
-                  <pre className="memory-text">{agent.memoryContext}</pre>
-                ) : (
-                  <p className="memory-text empty">No recent observations recorded...</p>
-                )}
+              <div className="section-label">
+                All Observations ({agent.fullMemory?.observations?.length ?? 0})
               </div>
-            </div>
-            
-            <div className="expanded-card__section">
-              <div className="section-label">Recent Conversations</div>
-              <div className="conversation-list">
-                {agent.recentConversations && agent.recentConversations.length > 0 ? (
-                  agent.recentConversations.map((conv, idx) => (
-                    <div key={idx} className="conversation-item">
-                      <span className="conversation-speaker">{conv.speakerName}:</span>
-                      <span className="conversation-message">"{conv.message}"</span>
+              <div className="memory-list scrollable">
+                {agent.fullMemory?.observations && agent.fullMemory.observations.length > 0 ? (
+                  [...agent.fullMemory.observations].reverse().map((obs) => (
+                    <div key={obs.id} className={`memory-item obs-${obs.type}`}>
+                      <span className="memory-time">
+                        {new Date(obs.timestamp).toLocaleTimeString()}
+                      </span>
+                      <span className="memory-type">[{obs.type}]</span>
+                      <span className="memory-desc">{obs.description}</span>
+                      {obs.zone && <span className="memory-zone">@ {obs.zone}</span>}
                     </div>
                   ))
                 ) : (
-                  <p className="no-conversations">No recent conversations...</p>
+                  <p className="memory-text empty">No observations recorded...</p>
                 )}
               </div>
             </div>
 
+            {/* Full Conversations */}
+            <div className="expanded-card__section">
+              <div className="section-label">
+                All Conversations ({agent.fullMemory?.conversations?.length ?? 0})
+              </div>
+              <div className="memory-list scrollable">
+                {agent.fullMemory?.conversations && agent.fullMemory.conversations.length > 0 ? (
+                  [...agent.fullMemory.conversations].reverse().map((conv) => (
+                    <div key={conv.id} className="memory-item conversation">
+                      <span className="memory-time">
+                        {new Date(conv.timestamp).toLocaleTimeString()}
+                      </span>
+                      <span className="memory-speaker">{conv.speakerName}:</span>
+                      <span className="memory-message">"{conv.message}"</span>
+                      {conv.zone && <span className="memory-zone">@ {conv.zone}</span>}
+                    </div>
+                  ))
+                ) : (
+                  <p className="memory-text empty">No conversations recorded...</p>
+                )}
+              </div>
+            </div>
+
+            {/* Accusations */}
+            {agent.fullMemory?.accusations && agent.fullMemory.accusations.length > 0 && (
+              <div className="expanded-card__section">
+                <div className="section-label">
+                  Accusations ({agent.fullMemory.accusations.length})
+                </div>
+                <div className="memory-list scrollable">
+                  {[...agent.fullMemory.accusations].reverse().map((acc) => (
+                    <div key={acc.id} className="memory-item accusation">
+                      <span className="memory-time">
+                        {new Date(acc.timestamp).toLocaleTimeString()}
+                      </span>
+                      <span className="accusation-text">
+                        <strong>{acc.accuserName}</strong> accused <strong>{acc.accusedName}</strong>: "{acc.reason}"
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Alibis */}
+            {agent.fullMemory?.alibis && agent.fullMemory.alibis.length > 0 && (
+              <div className="expanded-card__section">
+                <div className="section-label">
+                  Alibis ({agent.fullMemory.alibis.length})
+                </div>
+                <div className="memory-list scrollable">
+                  {[...agent.fullMemory.alibis].reverse().map((alibi) => (
+                    <div key={alibi.id} className="memory-item alibi">
+                      <span className="memory-time">
+                        {new Date(alibi.timestamp).toLocaleTimeString()}
+                      </span>
+                      <span className="alibi-text">
+                        <strong>{alibi.agentName}</strong> claimed to be in {alibi.claimedZone}: {alibi.claimedActivity}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Recently Heard (keep this for quick reference) */}
             <div className="expanded-card__section">
               <div className="section-label">Recently Heard</div>
               <div className="conversation-list">
@@ -564,9 +664,7 @@ function GodModeControlPanel({ agent }: { agent: AgentSummary }) {
               </div>
             </div>
           </>
-        )}
-        
-        {activeTab === 'suspicion' && (
+        )}        {activeTab === 'suspicion' && (
           <>
             <div className="expanded-card__section">
               <div className="section-label">Suspicion Levels</div>

@@ -23,17 +23,20 @@ export interface AgentPositionSnapshot {
 export interface LLMTraceEvent {
   id: string;
   timestamp: number;
-  
+
   // Agent who made the request
   agentId: string;
   agentName: string;
   agentColor: number;
   agentRole: 'CREWMATE' | 'IMPOSTOR';
-  
+
   // Request type
   requestType: 'decision' | 'thought' | 'speech' | 'conversation';
-  
-  // Input data
+
+  // Conversation tracking (for threading multi-turn conversations)
+  conversationId?: string;        // Links all traces in a conversation thread
+  conversationTurn?: number;      // Turn number in the conversation (1, 2, 3, ...)
+  conversationWith?: string;      // Name of the other participant in conversation  // Input data
   systemPrompt: string;
   userPrompt: string;
   
@@ -81,6 +84,11 @@ export interface LLMTraceEventSummary {
   agentRole: 'CREWMATE' | 'IMPOSTOR';
   requestType: 'decision' | 'thought' | 'speech' | 'conversation';
   zone: string | null;
+
+  // Conversation tracking
+  conversationId?: string;
+  conversationTurn?: number;
+  conversationWith?: string;
   
   // Brief summary of result
   resultSummary: string; // e.g., "GOAL: KILL, TARGET: Yellow" or "Thought: I should be careful..."

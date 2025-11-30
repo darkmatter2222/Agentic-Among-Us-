@@ -35,6 +35,7 @@ export interface AIAgentConfig {
 export interface AIAgentRoleConfig {
   role: PlayerRole;
   assignedTasks: TaskAssignment[];
+  personalityId: string;
 }
 
 // ========== Behavior State ==========
@@ -72,6 +73,7 @@ export interface AIBehaviorState {
 export interface AIAgentState {
   role: PlayerRole;
   playerState: PlayerState;
+  personalityId: string | null;
   assignedTasks: TaskAssignment[];
   currentTaskIndex: number | null;
   isDoingTask: boolean;
@@ -117,6 +119,7 @@ export type AIDecisionCallback = (context: AIContext) => Promise<AIDecision>;
 export type AITriggerCallback = (context: AIContext) => Promise<{
   thought?: { thought: string; trigger: ThoughtTrigger };
   speech?: { message: string };
+  forceDecision?: AIDecision;  // Forces immediate decision execution (e.g., REPORT_BODY)
 }>;
 
 // ========== Main Class ==========
@@ -145,6 +148,9 @@ export class AIAgent {
 
   // Kill request callback (set by manager) - returns true if kill succeeded
   private killRequestCallback: ((killerId: string, targetId: string) => boolean) | null = null;
+
+  // Body report callback (set by manager) - returns true if report succeeded
+  private reportBodyCallback: ((reporterId: string) => boolean) | null = null;
   
   // Vent state
   private _isInVent: boolean = false;
@@ -207,6 +213,7 @@ export class AIAgent {
     this.aiState = {
       role: 'CREWMATE',
       playerState: 'ALIVE',
+      personalityId: null,
       assignedTasks: [],
       currentTaskIndex: null,
       isDoingTask: false,
@@ -235,7 +242,8 @@ export class AIAgent {
   initializeRole(roleConfig: AIAgentRoleConfig): void {
     this.aiState.role = roleConfig.role;
     this.aiState.assignedTasks = roleConfig.assignedTasks;
-    aiLog.get().info('Agent initialized', { agentId: this.config.id, role: roleConfig.role, taskCount: roleConfig.assignedTasks.length });
+    this.aiState.personalityId = roleConfig.personalityId;
+    aiLog.get().info('Agent initialized', { agentId: this.config.id, role: roleConfig.role, personalityId: roleConfig.personalityId, taskCount: roleConfig.assignedTasks.length });
   }
   
   /**
@@ -273,6 +281,10 @@ export class AIAgent {
    */
   setKillRequestCallback(callback: (killerId: string, targetId: string) => boolean): void {
     this.killRequestCallback = callback;
+  }
+
+  setReportBodyCallback(callback: (reporterId: string) => boolean): void {
+    this.reportBodyCallback = callback;
   }
   
     /**
@@ -773,6 +785,11 @@ export class AIAgent {
       case 'CREATE_ALIBI':
         await this.createAlibi();
         break;
+
+      case 'REPORT_BODY':
+        // Report the nearest visible body
+        this.reportBody();
+        break;
         
       case 'IDLE':
       default:
@@ -1254,6 +1271,37 @@ export class AIAgent {
     
     this.addRecentEvent('Self-reported the body');
   }
+
+  /**
+   * Report a dead body - triggers the body report system
+   * This is the legitimate report action (not self-report)
+   */
+  private reportBody(): void {
+    if (!this.reportBodyCallback) {
+      // No callback set - just speak about it
+      this.speak("BODY! There's a dead body here!");
+      this.behaviorState.currentGoal = 'Reporting body';
+      this.behaviorState.nextDecisionTime = Date.now() + 3000;
+      this.addRecentEvent('Reported a body (no callback)');
+      return;
+    }
+
+    // Call the report callback
+    const success = this.reportBodyCallback(this.config.id);
+    
+    if (success) {
+      // Report succeeded - the callback handles broadcasting
+      this.behaviorState.currentGoal = 'Reported body!';
+      this.addRecentEvent('REPORTED A BODY!');
+    } else {
+      // Report failed (no bodies in range?)
+      this.speak("Wait... where did the body go?");
+      this.behaviorState.currentGoal = 'Body report failed';
+      this.addRecentEvent('Tried to report body but failed');
+    }
+    
+    this.behaviorState.nextDecisionTime = Date.now() + 3000;
+  }
   
   /**
    * Create alibi after kill - move toward task or witness
@@ -1366,13 +1414,20 @@ export class AIAgent {
         ),
       }));
     
-    // React to seeing a body for the first time
+    // React to seeing a body for the first time - THIS IS CRITICAL
     if (this.aiState.visibleBodies.length > 0) {
       const nearestBody = this.aiState.visibleBodies[0];
       if (!this.aiState.recentEvents.some(e => e.includes(`Found body: ${nearestBody.victimName}`))) {
         this.addRecentEvent(`Found body: ${nearestBody.victimName}`);
-        // Force reaction
-        this.behaviorState.nextDecisionTime = Date.now();
+        // Force IMMEDIATE trigger processing - don't wait for the normal interval!
+        // This ensures the witnessed_body trigger fires RIGHT NOW
+        aiLog.get().info('BODY SPOTTED - Forcing immediate trigger processing', {
+          agentId: this.config.id,
+          agentName: this.config.name,
+          victimName: nearestBody.victimName
+        });
+        this.behaviorState.lastTriggerCheckTime = 0; // Reset to force immediate trigger check
+        this.processTriggersAsync(); // Call triggers NOW
       }
     }
   }
@@ -1624,13 +1679,18 @@ export class AIAgent {
   }
   
   // ========== AI Triggers ==========
-  
+
   /**
    * Process AI triggers for thoughts and speech (fire-and-forget)
    */
   private processTriggersAsync(): void {
     if (!this.triggerCallback) return;
     
+    // Prevent overlapping trigger processing
+    if (this.behaviorState.isThinking) {
+      return;
+    }
+
     this.behaviorState.isThinking = true;
     // Fire and forget - don't block the update loop
     this.processTriggers().catch(() => {
@@ -1657,7 +1717,23 @@ export class AIAgent {
       speechLog.get().debug('Has pendingReply but shouldRespond=false', { agentName: this.config.name });
     }
 
-    const result = await this.triggerCallback(context);    if (result.thought) {
+    const result = await this.triggerCallback(context);
+
+    // Handle forced decisions (e.g., REPORT_BODY when witnessing a body)
+    if (result.forceDecision) {
+      aiLog.get().info('Forced decision from trigger', { 
+        agentId: this.config.id, 
+        goalType: result.forceDecision.goalType,
+        reasoning: result.forceDecision.reasoning 
+      });
+      // Cancel current action and execute forced decision immediately
+      this.behaviorState.currentGoal = 'Emergency!';
+      this.behaviorState.nextDecisionTime = 0; // Clear decision timer
+      await this.executeDecision(result.forceDecision);
+      return; // Skip normal thought/speech processing
+    }
+
+    if (result.thought) {
       this.aiState.currentThought = result.thought.thought;
       this.aiState.lastThoughtTime = Date.now();
     }
@@ -1737,6 +1813,7 @@ export class AIAgent {
       agentId: this.config.id,
       agentName: this.config.name,
       role: this.aiState.role,
+      personalityId: this.aiState.personalityId ?? undefined,
       currentZone: this.stateMachine.getCurrentZone(),
       currentPosition: position,
       assignedTasks: this.aiState.assignedTasks,
@@ -1949,7 +2026,11 @@ export class AIAgent {
   getRole(): PlayerRole {
     return this.aiState.role;
   }
-  
+
+  getPersonalityId(): string | null {
+    return this.aiState.personalityId;
+  }
+
   getPlayerState(): PlayerState {
     return this.aiState.playerState;
   }
@@ -2010,11 +2091,15 @@ export class AIAgent {
   getMemoryContext(): string {
     return this.memory.buildMemoryContext();
   }
-  
+
   getSuspicionContext(): string {
     return this.memory.buildSuspicionContext();
   }
-  
+
+  getFullMemory(): ReturnType<AgentMemory['getFullMemory']> {
+    return this.memory.getFullMemory();
+  }
+
   getRecentConversations(): ConversationEntry[] {
     return this.memory.getRecentConversations(10);
   }

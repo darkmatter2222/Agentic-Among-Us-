@@ -16,6 +16,7 @@ import type { TaskAssignment, AIContext, AIDecision } from '../types/simulation.
 import { KillSystem, type KillSystemConfig, type DeadBody, type KillEvent, type WitnessRecord } from './KillSystem.ts';
 import { VentSystem, type VentSystemConfig, type VentEvent, type VentState, type VentWitness } from './VentSystem.ts';
 import { simLog, killLog, speechLog, zoneLog, moveLog } from '../logging/index.ts';
+import { selectPersonalitiesForGame, type AgentPersonality } from '../data/personalities.ts';
 
 // ========== Configuration ==========
 
@@ -79,6 +80,9 @@ export class AIAgentManager {
   // Callback for when agents hear speech (for visual feedback)
   private heardSpeechCallback: ((event: import('../types/simulation.types.ts').HeardSpeechEvent) => void) | null = null;
 
+  // Callback for when agents report bodies (delegates to GameSimulation)
+  private reportBodyCallback: ((reporterId: string) => boolean) | null = null;
+
   constructor(config: AgentManagerConfig) {
     // Build navigation mesh
     simLog.get().info('Building navigation mesh...');
@@ -129,6 +133,10 @@ export class AIAgentManager {
       agent.setKillRequestCallback((killerId, targetId) => {
         return this.handleKillRequest(killerId, targetId);
       });
+      // Set up body report callback
+      agent.setReportBodyCallback((reporterId) => {
+        return this.handleReportBody(reporterId);
+      });
     }
     
     // Initialize kill system with impostor IDs
@@ -164,41 +172,64 @@ export class AIAgentManager {
   }
 
   /**
+   * Set callback for body reports (delegates to GameSimulation.reportBody)
+   */
+  setReportBodyCallback(callback: (reporterId: string) => boolean): void {
+    this.reportBodyCallback = callback;
+  }
+
+  /**
    * Create AI agents with randomly assigned roles and tasks
    */
   private createAgentsWithRoles(
-    numAgents: number, 
+    numAgents: number,
     zones: ReturnType<ZoneDetector['getAllZones']>,
     numImpostors: number,
     tasksPerAgent: number
   ): void {
     const walkableZones = zones.filter(z => z.isWalkable);
-    
+
     // Randomly select impostors
     const indices = Array.from({ length: numAgents }, (_, i) => i);
     this.shuffleArray(indices);
     const impostorIndices = new Set(indices.slice(0, numImpostors));
+
+    // Select personalities for this game
+    const crewmateCount = numAgents - numImpostors;
+    const { crewmatePersonalities, impostorPersonalities } = selectPersonalitiesForGame(crewmateCount, numImpostors);
     
+    // Track which personalities have been assigned
+    let crewmatePersonalityIndex = 0;
+    let impostorPersonalityIndex = 0;
+
     for (let i = 0; i < numAgents; i++) {
       // Select random starting zone
       const zone = walkableZones[Math.floor(Math.random() * walkableZones.length)];
-      
+
       // Get a random point in that zone
       const startPosition = this.destinationSelector.selectRandomDestination(
         zone.center,
         [zone],
         { avoidEdges: true }
       ) || zone.center;
-      
+
       const role: PlayerRole = impostorIndices.has(i) ? 'IMPOSTOR' : 'CREWMATE';
       const colorIndex = i % COLOR_NAMES.length;
       const agentName = COLOR_NAMES[colorIndex];
       const agentColor = AGENT_COLORS[colorIndex];
-      
+
+      // Select personality based on role
+      let personality: AgentPersonality;
+      if (role === 'IMPOSTOR') {
+        personality = impostorPersonalities[impostorPersonalityIndex++ % impostorPersonalities.length];
+      } else {
+        personality = crewmatePersonalities[crewmatePersonalityIndex++ % crewmatePersonalities.length];
+      }
+
       if (role === 'IMPOSTOR') {
         this.impostorIds.add(`agent_${i}`);
       }
-      
+
       const agentConfig: AIAgentConfig = {
         id: `agent_${i}`,
         name: agentName,
@@ -208,25 +239,32 @@ export class AIAgentManager {
         visionRadius: 150,
         actionRadius: 50
       };
-      
+
       const agent = new AIAgent(
         agentConfig,
         this.pathfinder,
         this.destinationSelector,
         zones
       );
-      
-      // Assign role and tasks (impostors don't get tasks - they can only fake)
+
+      // Assign role, tasks, and personality (impostors don't get tasks - they can only fake)
       const assignedTasks = role === 'CREWMATE' ? this.assignTasksToAgent(tasksPerAgent) : [];
       const roleConfig: AIAgentRoleConfig = {
         role,
-        assignedTasks
+        assignedTasks,
+        personalityId: personality.id
       };
       agent.initializeRole(roleConfig);
-      
-      this.agents.push(agent);
-      
-      // Initialize zone detection for starting position
+
+      simLog.get().info('Agent created with personality', { 
+        agentId: agent.getId(), 
+        agentName, 
+        role, 
+        personalityId: personality.id,
+        personalityName: personality.name 
+      });
+
+      this.agents.push(agent);      // Initialize zone detection for starting position
       const zoneEvent = this.zoneDetector.updatePlayerPosition(agent.getId(), startPosition);
       if (zoneEvent) {
         agent.getStateMachine().updateLocation(zoneEvent.toZone, zoneEvent.zoneType);
@@ -489,6 +527,13 @@ export class AIAgentManager {
   getBodies(): DeadBody[] {
     return this.killSystem.getBodies();
   }
+
+  /**
+   * Clear all dead bodies from the map (called after body report)
+   */
+  clearAllBodies(): void {
+    this.killSystem.clearAllBodies();
+  }
   
   /**
    * Check if an impostor is currently in kill animation
@@ -548,6 +593,20 @@ export class AIAgentManager {
     // Attempt the kill
     const killEvent = this.attemptKill(killerId, targetId);
     return killEvent !== null;
+  }
+
+  /**
+   * Handle a body report request from an AI agent
+   * Returns true if the report was successful
+   */
+  private handleReportBody(reporterId: string): boolean {
+    // Delegate to the external callback (GameSimulation.reportBody)
+    if (!this.reportBodyCallback) {
+      simLog.get().warn('Body report failed: no callback set', { reporterId });
+      return false;
+    }
+    
+    return this.reportBodyCallback(reporterId);
   }
   
   /**

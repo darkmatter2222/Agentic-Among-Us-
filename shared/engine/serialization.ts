@@ -13,6 +13,8 @@ import type {
   HeardSpeechEvent,
   BodySnapshot,
   KillEventSnapshot,
+  GamePhase,
+  BodyReportEvent,
 } from '../types/simulation.types.ts';
 
 function serializeMovementState(state: MovementState): MovementSnapshot {
@@ -69,6 +71,7 @@ export function serializeAgent(agent: AIAgent, timestamp: number, killStatus?: K
     // AI State
     role: agent.getRole(),
     playerState: playerAliveDeadState,
+    personalityId: agent.getPersonalityId() ?? undefined,
     assignedTasks: agent.getAssignedTasks(),
     currentTaskIndex: agent.getCurrentTaskIndex(),
     tasksCompleted: agent.getTasksCompleted(),
@@ -103,6 +106,48 @@ export function serializeAgent(agent: AIAgent, timestamp: number, killStatus?: K
 
     // God Mode status
     godMode: agent.getGodModeState ? agent.getGodModeState() : undefined,
+
+    // Full memory for detailed UI display
+    fullMemory: agent.getFullMemory ? (() => {
+      const mem = agent.getFullMemory();
+      return {
+        observations: mem.observations.map(o => ({
+          id: o.id,
+          timestamp: o.timestamp,
+          type: o.type,
+          subjectName: o.subjectName,
+          zone: o.zone,
+          description: o.description,
+        })),
+        conversations: mem.conversations.map(c => ({
+          id: c.id,
+          timestamp: c.timestamp,
+          speakerName: c.speakerName,
+          message: c.message,
+          zone: c.zone,
+        })),
+        accusations: mem.accusations.map(a => ({
+          id: a.id,
+          timestamp: a.timestamp,
+          accuserName: a.accuserName,
+          accusedName: a.accusedName,
+          reason: a.reason,
+        })),
+        alibis: mem.alibis.map(a => ({
+          id: a.id,
+          timestamp: a.timestamp,
+          agentName: a.agentName,
+          claimedZone: a.claimedZone,
+          claimedActivity: a.claimedActivity,
+        })),
+        suspicionRecords: mem.suspicionRecords.map(s => ({
+          agentId: s.agentId,
+          agentName: s.agentName,
+          level: s.level,
+          reasons: s.reasons.map(r => ({ reason: r.reason, delta: r.delta, category: r.category })),
+        })),
+      };
+    })() : undefined,
   };
 }export function serializeAgentSummary(agent: AIAgent): AgentSummarySnapshot {
   const state = agent.getStateMachine().getState();
@@ -123,7 +168,11 @@ export interface KillStatusInfo {
 }
 
 export interface SerializeWorldOptions {
-  gamePhase?: 'INITIALIZING' | 'PLAYING' | 'MEETING' | 'GAME_OVER';
+  gamePhase?: GamePhase;
+  /** True if at least one body has been discovered */
+  firstBodyDiscovered?: boolean;
+  /** Most recent body report event for UI animation */
+  recentBodyReport?: BodyReportEvent;
   taskProgress?: number;
   recentThoughts?: ThoughtEvent[];
   recentSpeech?: SpeechEvent[];
@@ -184,8 +233,10 @@ export function serializeWorld(
   return {
     tick,
     timestamp,
-    gamePhase: options.gamePhase ?? 'PLAYING',
+    gamePhase: options.gamePhase ?? 'WORKING',
     gameTimer: options.gameTimer,
+    firstBodyDiscovered: options.firstBodyDiscovered ?? false,
+    recentBodyReport: options.recentBodyReport,
     agents: agents.map(agent => {
       const killStatus = options.killStatusMap?.get(agent.getId());
       return serializeAgent(agent, timestamp, killStatus);

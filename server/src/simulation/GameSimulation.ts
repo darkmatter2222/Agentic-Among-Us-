@@ -1,7 +1,7 @@
 import { AIAgentManager } from '@shared/engine/AIAgentManager.ts';
 import { serializeWorld, type SerializeWorldOptions } from '@shared/engine/serialization.ts';
 import { WALKABLE_ZONES, LABELED_ZONES, TASKS, VENTS } from '@shared/data/poly3-map.ts';
-import type { WorldSnapshot, ThoughtEvent, SpeechEvent, HeardSpeechEvent, AIContext, GameTimerSnapshot } from '@shared/types/simulation.types.ts';
+import type { WorldSnapshot, ThoughtEvent, SpeechEvent, HeardSpeechEvent, AIContext, GameTimerSnapshot, GamePhase, BodyReportEvent } from '@shared/types/simulation.types.ts';
 import { AIDecisionService } from '../ai/AIDecisionService.js';
 import type { KillEvent } from '@shared/engine/KillSystem.ts';
 import type { VentEvent } from '@shared/engine/VentSystem.ts';
@@ -30,12 +30,16 @@ export class GameSimulation {
   private aiService: AIDecisionService | null;
   private lastTimestamp: number;
   private tick: number;
-  private gamePhase: 'INITIALIZING' | 'PLAYING' | 'MEETING' | 'GAME_OVER';
+  private gamePhase: GamePhase;
   private recentThoughts: ThoughtEvent[];
   private recentSpeech: SpeechEvent[];
   private recentHeard: HeardSpeechEvent[];
   private recentKills: KillEvent[];
   private recentVentEvents: VentEvent[];
+  
+  // Body discovery tracking
+  private firstBodyDiscovered: boolean;
+  private recentBodyReport: BodyReportEvent | null;
   
   // Game timer
   private readonly gameDurationMs: number;
@@ -67,7 +71,9 @@ export class GameSimulation {
 
     this.lastTimestamp = Date.now();
     this.tick = 0;
-    this.gamePhase = 'PLAYING';
+    this.gamePhase = 'WORKING';
+    this.firstBodyDiscovered = false;
+    this.recentBodyReport = null;
     this.recentThoughts = [];
     this.recentSpeech = [];
     this.recentHeard = [];
@@ -105,6 +111,12 @@ export class GameSimulation {
       this.addHeardEvent(event);
     });
 
+    // Set up callback for body reports - delegates to this.reportBody()
+    this.manager.setReportBodyCallback((reporterId) => {
+      const result = this.reportBody(reporterId);
+      return result !== null;
+    });
+
     // Set up callbacks
     this.manager.setAICallbacks(
       // Decision callback - called when agent needs to make a decision
@@ -114,6 +126,8 @@ export class GameSimulation {
         const enrichedContext: AIContext = {
           ...context,
           gameTimer: timerContext,
+          gamePhase: this.gamePhase,
+          firstBodyDiscovered: this.firstBodyDiscovered,
         };
         return this.aiService!.getAgentDecision(enrichedContext);
       },
@@ -124,16 +138,19 @@ export class GameSimulation {
         const enrichedContext: AIContext = {
           ...context,
           gameTimer: timerContext,
+          gamePhase: this.gamePhase,
+          firstBodyDiscovered: this.firstBodyDiscovered,
         };
         const result = await this.aiService!.processAgentTriggers(enrichedContext);
         return {
-          thought: result.thought ? { 
-            thought: result.thought.thought, 
+          thought: result.thought ? {
+            thought: result.thought.thought,
             trigger: result.thought.trigger 
           } : undefined,
-          speech: result.speech ? { 
-            message: result.speech.message 
+          speech: result.speech ? {
+            message: result.speech.message
           } : undefined,
+          forceDecision: result.decision,  // Pass forced decision (e.g., REPORT_BODY)
         };
       }
     );
@@ -206,7 +223,9 @@ export class GameSimulation {
     // Reset game state
     this.lastTimestamp = Date.now();
     this.tick = 0;
-    this.gamePhase = 'PLAYING';
+    this.gamePhase = 'WORKING';
+    this.firstBodyDiscovered = false;
+    this.recentBodyReport = null;
     this.recentThoughts = [];
     this.recentSpeech = [];
     this.recentHeard = [];
@@ -272,6 +291,8 @@ export class GameSimulation {
     
     const options: SerializeWorldOptions = {
       gamePhase: this.gamePhase,
+      firstBodyDiscovered: this.firstBodyDiscovered,
+      recentBodyReport: this.recentBodyReport ?? undefined,
       taskProgress: this.manager.getTaskProgress(),
       recentThoughts: this.recentThoughts,
       recentSpeech: this.recentSpeech,
@@ -283,6 +304,9 @@ export class GameSimulation {
       gameTimer: this.getGameTimer(),
       killStatusMap,
     };
+    
+    // Clear the body report after one tick (it's only for UI animation trigger)
+    this.recentBodyReport = null;
     
     // Clear old kills (keep only last 10)
     if (this.recentKills.length > 10) {
@@ -335,6 +359,108 @@ export class GameSimulation {
       this.recentKills.push(killEvent);
     }
     return killEvent;
+  }
+
+  /**
+   * Report a body - transitions game to ALERT phase if first discovery
+   * Removes ALL bodies from the map and broadcasts to all agents
+   * @returns The body report event if successful, null if failed
+   */
+  reportBody(reporterId: string): BodyReportEvent | null {
+    const reporter = this.manager.getAgent(reporterId);
+    if (!reporter) {
+      simulationLogger.warn('Body report failed: Invalid reporter', { reporterId });
+      return null;
+    }
+
+    // Get all unreported bodies
+    const bodies = this.manager.getBodies();
+    if (bodies.length === 0) {
+      simulationLogger.warn('Body report failed: No bodies to report', { reporterId });
+      return null;
+    }
+
+    const isFirstDiscovery = !this.firstBodyDiscovered;
+    
+    // Create the body report event with ALL bodies
+    const reportEvent: BodyReportEvent = {
+      reporterId: reporter.getId(),
+      reporterName: reporter.getName(),
+      bodies: bodies.map(body => ({
+        victimId: body.victimId,
+        victimName: body.victimName,
+        victimColor: body.victimColor,
+        location: body.zone,
+      })),
+      timestamp: Date.now(),
+      isFirstDiscovery,
+    };
+
+    // Transition to ALERT phase if this is the first body discovered
+    if (isFirstDiscovery) {
+      this.firstBodyDiscovered = true;
+      this.gamePhase = 'ALERT';
+      simulationLogger.info('FIRST BODY DISCOVERED - GAME PHASE TRANSITION', {
+        reporter: reporter.getName(),
+        phase: 'WORKING -> ALERT',
+        bodiesFound: bodies.length,
+      });
+    } else {
+      simulationLogger.info('Body reported', {
+        reporter: reporter.getName(),
+        bodiesFound: bodies.length,
+      });
+    }
+
+    // Broadcast the report to all agents' memories
+    this.broadcastBodyReport(reportEvent);
+
+    // Remove all bodies from the map
+    this.manager.clearAllBodies();
+
+    // Store for next tick's snapshot
+    this.recentBodyReport = reportEvent;
+
+    return reportEvent;
+  }
+
+  /**
+   * Broadcast body report to all agents' memories
+   */
+  private broadcastBodyReport(event: BodyReportEvent): void {
+    const bodyNames = event.bodies.map(b => b.victimName).join(', ');
+    const message = event.isFirstDiscovery
+      ? `EMERGENCY! ${event.reporterName} found dead: ${bodyNames}. There is a killer among us!`
+      : `${event.reporterName} reported: ${bodyNames} found dead.`;
+
+    for (const agent of this.manager.getAgents()) {
+      // Record in agent's memory
+      agent.getMemory().recordObservation({
+        type: 'body_reported',
+        details: message,
+        timestamp: event.timestamp,
+        importance: event.isFirstDiscovery ? 100 : 80, // Very important memory
+      });
+    }
+
+    simulationLogger.debug('Body report broadcast to all agents', { 
+      agentCount: this.manager.getAgents().length,
+      message 
+    });
+  }
+
+  /**
+   * Get current game phase
+   */
+  getGamePhase(): GamePhase {
+    return this.gamePhase;
+  }
+
+  /**
+   * Check if first body has been discovered
+   */
+  isFirstBodyDiscovered(): boolean {
+    return this.firstBodyDiscovered;
   }
   
   /**

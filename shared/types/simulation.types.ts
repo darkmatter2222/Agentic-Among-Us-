@@ -30,7 +30,8 @@ export type ThoughtTrigger =
   | 'exited_vent'                // Impostor-only: just exited a vent
   | 'witnessed_vent_activity'    // Crewmate/Impostor: saw someone enter/exit a vent
   | 'alone_with_vent'            // Impostor-only: alone in a room with a vent
-  | 'witnessed_suspicious_behavior';  // Saw someone acting sus (following, loitering, etc.)
+  | 'witnessed_suspicious_behavior'  // Saw someone acting sus (following, loitering, etc.)
+  | 'witnessed_body';                // Found a dead body - triggers REPORT_BODY goal
 
 export interface SpeechEvent {
   id: string;
@@ -94,11 +95,12 @@ export interface AgentSnapshot {
   currentZone: string | null;
   currentGoal: string | null;
   timeInStateMs: number;
-  
+
   // Role & State (AI additions - optional for backward compatibility)
   role?: PlayerRole;
   playerState?: PlayerState;
-  
+  personalityId?: string; // Personality archetype for this agent
+
   // Tasks
   assignedTasks?: TaskAssignment[];
   currentTaskIndex?: number | null;
@@ -158,6 +160,45 @@ export interface AgentSnapshot {
     lastWhisper?: string;                 // Most recent divine whisper
     lastWhisperTimestamp?: number;        // When the whisper was received
     currentCommand?: string;              // Description of current god command
+  };
+
+  // Full memory dump for UI display
+  fullMemory?: {
+    observations: Array<{
+      id: string;
+      timestamp: number;
+      type: string;
+      subjectName: string;
+      zone: string | null;
+      description: string;
+    }>;
+    conversations: Array<{
+      id: string;
+      timestamp: number;
+      speakerName: string;
+      message: string;
+      zone: string | null;
+    }>;
+    accusations: Array<{
+      id: string;
+      timestamp: number;
+      accuserName: string;
+      accusedName: string;
+      reason: string;
+    }>;
+    alibis: Array<{
+      id: string;
+      timestamp: number;
+      agentName: string;
+      claimedZone: string;
+      claimedActivity: string;
+    }>;
+    suspicionRecords: Array<{
+      agentId: string;
+      agentName: string;
+      level: number;
+      reasons: Array<{ reason: string; delta: number; category: string }>;
+    }>;
   };
 }
 
@@ -221,11 +262,46 @@ export interface GameTimerSnapshot {
   startedAt: number;         // Unix timestamp when game started
 }
 
+// ========== Game Phase Types ==========
+
+/**
+ * Game phases for the body discovery mechanic:
+ * - WORKING: Pre-discovery phase. Crewmates are just workers doing their shift.
+ *            No one knows there's danger. Mundane conversations about tasks and work.
+ * - ALERT: Post-first-body-discovery phase. Crewmates now know there's a killer.
+ *          Suspicion, alibis, accusations become relevant.
+ * - MEETING: Emergency meeting or body report discussion (not yet implemented)
+ * - GAME_OVER: Game has ended
+ */
+export type GamePhase = 'WORKING' | 'ALERT' | 'MEETING' | 'GAME_OVER';
+
+/**
+ * Event emitted when a body is reported
+ */
+export interface BodyReportEvent {
+  reporterId: string;
+  reporterName: string;
+  /** All bodies being reported (multiple may exist) */
+  bodies: Array<{
+    victimId: string;
+    victimName: string;
+    victimColor: number;
+    location: string | null;
+  }>;
+  timestamp: number;
+  /** True if this is the first body ever discovered (triggers phase transition) */
+  isFirstDiscovery: boolean;
+}
+
 export interface WorldSnapshot {
   tick: number;
   timestamp: number;
-  gamePhase?: 'INITIALIZING' | 'PLAYING' | 'MEETING' | 'GAME_OVER';
+  gamePhase?: GamePhase;
   gameTimer?: GameTimerSnapshot; // Game timer info for UI and agents
+  /** True if at least one body has been discovered this game */
+  firstBodyDiscovered?: boolean;
+  /** Most recent body report event (for UI animation) */
+  recentBodyReport?: BodyReportEvent;
   agents: AgentSnapshot[];
   bodies?: BodySnapshot[]; // Dead bodies on the map
   recentKills?: KillEventSnapshot[]; // Recent kill events for UI
@@ -251,6 +327,7 @@ export type AIGoalType =
   | 'CONFRONT' 
   | 'SPREAD_RUMOR' 
   | 'DEFEND_SELF'
+  | 'REPORT_BODY'    // Report a dead body (triggers meeting)
   // Impostor-only actions
   | 'KILL'
   | 'HUNT'           // Actively seek isolated targets
@@ -284,6 +361,11 @@ export interface AIContext {
   agentId: string;
   agentName: string;
   role: PlayerRole;
+  personalityId?: string; // Personality archetype for this agent
+  /** Current game phase - affects how crewmates think and communicate */
+  gamePhase?: GamePhase;
+  /** True if at least one body has been discovered (crewmates now know danger exists) */
+  firstBodyDiscovered?: boolean;
   currentZone: string | null;
   currentPosition: Point;
   assignedTasks: TaskAssignment[];
@@ -418,4 +500,8 @@ export interface AIContext {
     /** Persistent guiding principles for all prompts */
     guidingPrinciples: string[];
   };
+
+  // ===== Body Discovery context (for immediate decisions when finding a body) =====
+  /** True when this decision is being made because agent just discovered a body */
+  bodyDiscoveryContext?: boolean;
 }

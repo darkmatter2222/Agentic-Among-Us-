@@ -2,17 +2,41 @@
 
 param(
     [Parameter(Mandatory=$false)]
-    [ValidateSet('qwen3-8b-q8_0', 'qwen3-8b-q6_k', 'qwen3-8b-q5_k_m', 'qwen3-8b-q4_k_m', 'custom')]
-    [string]$Model = 'qwen3-8b-q8_0',
-    
+    [ValidateSet('llama-3.2-1b-q5_k_m', 'llama-3.2-1b-q6_k_l', 'llama-3.2-1b-q4_k_m', 'qwen3-8b-q8_0', 'qwen3-8b-q6_k', 'qwen3-8b-q5_k_m', 'qwen3-8b-q4_k_m', 'qwen2.5-0.5b-q8_0', 'custom')]
+    [string]$Model = 'llama-3.2-1b-q5_k_m',
+
     [string]$CustomUrl,  # For custom model downloads
     [string]$CustomName  # Custom filename
-)
-
-$ErrorActionPreference = "Stop"
+)$ErrorActionPreference = "Stop"
 
 # Model configurations
 $models = @{
+    # Llama 3.2 1B - Recommended for Among Us agents (strong reasoning, fast)
+    'llama-3.2-1b-q5_k_m' = @{
+        url = 'https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q5_K_M.gguf'
+        file = 'Llama-3.2-1B-Instruct-Q5_K_M.gguf'
+        size = '0.91 GB'
+        description = 'High quality - recommended (author recommended)'
+    }
+    'llama-3.2-1b-q6_k_l' = @{
+        url = 'https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q6_K_L.gguf'
+        file = 'Llama-3.2-1B-Instruct-Q6_K_L.gguf'
+        size = '1.09 GB'
+        description = 'Very high quality - slightly larger'
+    }
+    'llama-3.2-1b-q4_k_m' = @{
+        url = 'https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf'
+        file = 'Llama-3.2-1B-Instruct-Q4_K_M.gguf'
+        size = '0.77 GB'
+        description = 'Good quality - fastest'
+    }
+    # Legacy Qwen models
+    'qwen2.5-0.5b-q8_0' = @{
+        url = 'https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q8_0.gguf'
+        file = 'qwen2.5-0.5b-instruct-q8_0.gguf'
+        size = '0.53 GB'
+        description = 'Ultra fast but limited reasoning'
+    }
     'qwen3-8b-q8_0' = @{
         url = 'https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/main/qwen3-8b-q8_0.gguf'
         file = 'qwen3-8b-q8_0.gguf'
@@ -112,11 +136,8 @@ if ($modelExists -eq 'exists') {
 } else {
     Write-Host "Downloading model..." -ForegroundColor Yellow
     Write-Host "This may take several minutes..." -ForegroundColor DarkGray
-    
-    $downloadCmd = @"
-cd /home/$SSH_USER/models && \
-wget -c --progress=bar:force:noscroll '$downloadUrl' -O $fileName
-"@
+
+    $downloadCmd = "cd /home/$SSH_USER/models && wget -c --progress=bar:force:noscroll '$downloadUrl' -O $fileName"
     Invoke-RemoteCommand $downloadCmd
     Write-Host "Download complete!" -ForegroundColor Green
 }
