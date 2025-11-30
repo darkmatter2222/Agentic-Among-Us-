@@ -11,6 +11,23 @@ export interface ThoughtEvent {
   thought: string;
   trigger: ThoughtTrigger;
   context?: string;
+  // Enhanced thought processing - extracted from LLM JSON response
+  suspicionUpdates?: SuspicionUpdate[];
+  pendingQuestions?: PendingQuestion[];
+}
+
+// Suspicion update from a thought - agent wants to adjust their suspicion of another player
+export interface SuspicionUpdate {
+  targetName: string;      // Color name of the player (e.g., "Red", "Blue")
+  delta: number;           // Change in suspicion (-20 to +20)
+  reason: string;          // Brief reason for the change
+}
+
+// Question the agent wants to ask when encountering a specific player
+export interface PendingQuestion {
+  targetName: string;      // Who to ask (color name)
+  question: string;        // What to ask them
+  priority: 'low' | 'medium' | 'high';  // How important is this question
 }
 
 export type ThoughtTrigger = 
@@ -199,7 +216,13 @@ export interface AgentSnapshot {
       level: number;
       reasons: Array<{ reason: string; delta: number; category: string }>;
     }>;
+    // Indexed access for UI display
+    suspicionReasons?: Record<string, string[]>;
+    lastKnownLocations?: Record<string, { zone: string; timestamp: number }>;
   };
+
+  // Pending questions this agent wants to ask other players
+  pendingQuestions?: PendingQuestion[];
 }
 
 export interface AgentSummarySnapshot {
@@ -547,4 +570,12 @@ export interface AIContext {
   // ===== Body Discovery context (for immediate decisions when finding a body) =====
   /** True when this decision is being made because agent just discovered a body */
   bodyDiscoveryContext?: boolean;
+
+  // ===== JSON-formatted context for enhanced thought processing =====
+  /** Suspicions in JSON format for structured LLM responses */
+  suspicionContextJSON?: object;
+  /** Recent memories in JSON format for structured LLM responses */
+  memoryContextJSON?: object;
+  /** Pending questions from previous thoughts (things agent wants to ask) */
+  pendingQuestions?: PendingQuestion[];
 }

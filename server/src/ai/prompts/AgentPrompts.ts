@@ -615,7 +615,7 @@ export function buildThoughtPrompt(context: AIContext, trigger: ThoughtTrigger):
   const basePrompt = context.role === 'IMPOSTOR'
     ? `You are ${context.agentName}. YOUR NAME IS ${context.agentName}. You are secretly an IMPOSTOR.`
     : `You are ${context.agentName}. YOUR NAME IS ${context.agentName}. You are a loyal CREWMATE.`;
-  
+
   // For heard_speech trigger, include who said what
   let triggerContext: string;
   if (trigger === 'heard_speech' && context.heardSpeechFrom && context.heardSpeechMessage) {
@@ -623,26 +623,50 @@ export function buildThoughtPrompt(context: AIContext, trigger: ThoughtTrigger):
   } else {
     triggerContext = getThoughtTriggerContext(trigger);
   }
-  
-  // Only crewmates have suspicions - impostors know who everyone is
-  const suspicionInfo = context.role === 'CREWMATE' ? (context.suspicionContext || '') : '';
+
+  // Build JSON-formatted suspicion context (crewmates only - impostors know who everyone is)
+  let suspicionJSON = '';
+  if (context.role === 'CREWMATE' && context.suspicionContextJSON) {
+    suspicionJSON = `\nYOUR CURRENT SUSPICIONS (JSON):\n${JSON.stringify(context.suspicionContextJSON, null, 2)}`;
+  }
+
   const godModeInfo = buildGodModeInfo(context);
+
+  // Build pending questions context if any
+  let pendingQuestionsHint = '';
+  if (context.pendingQuestions && context.pendingQuestions.length > 0) {
+    pendingQuestionsHint = `\nQUESTIONS YOU WANT TO ASK:\n${JSON.stringify(context.pendingQuestions, null, 2)}`;
+  }
 
   return `${basePrompt}
 ${godModeInfo}
 
 You are having an internal thought (no one else can hear this).
 ${triggerContext}
+${suspicionJSON}${pendingQuestionsHint}
 
-${suspicionInfo ? `Your current suspicions:\n${suspicionInfo}` : ''}
+RESPOND WITH VALID JSON in this exact format:
+{
+  "thought": "Your brief internal thought (1 sentence max)",
+  "suspicionUpdates": [
+    {"targetName": "ColorName", "delta": -10 to +10, "reason": "brief reason"}
+  ],
+  "pendingQuestions": [
+    {"targetName": "ColorName", "question": "What to ask them", "priority": "low|medium|high"}
+  ]
+}
 
-Generate a brief, natural internal thought (1 sentence max).
-${context.role === 'IMPOSTOR'
-  ? 'Think about: appearing innocent, who to frame, your fake alibi, avoiding detection.'
-  : 'Think about: task efficiency, safety, who you trust/distrust, observations.'}
+RULES:
+- "thought" is REQUIRED - your internal monologue (1 sentence)
+- "suspicionUpdates" is OPTIONAL - only include if you have NEW reason to trust/distrust someone (delta: -20 to +20)
+- "pendingQuestions" is OPTIONAL - questions you want to ask specific players when you see them
+- ${context.role === 'IMPOSTOR'
+    ? 'Think about: appearing innocent, who to frame, your fake alibi, avoiding detection.'
+    : 'Think about: task efficiency, safety, who you trust/distrust, observations.'}
+- Stay in character. Be genuine.`;
+}
 
-Stay in character. Be genuine. Keep it SHORT.`;
-}export function buildSpeechPrompt(context: AIContext): string {
+export function buildSpeechPrompt(context: AIContext): string {
   // Filter out own name from nearby players to prevent self-reference
   const otherNearby = context.canSpeakTo.filter(name =>
     name.toLowerCase() !== context.agentName.toLowerCase()

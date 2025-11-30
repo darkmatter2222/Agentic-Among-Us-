@@ -13,14 +13,13 @@ import { PathSmoother } from './PathSmoother.ts';
 import { AgentMemory, type ObservationEntry, type ConversationEntry, type SuspicionRecord } from './AgentMemory.ts';
 import type { PlayerRole, PlayerState } from '../types/game.types.ts';
 import { aiLog, speechLog, taskLog, killLog, moveLog, godLog, ventLog, sabotageLog } from '../logging/index.ts';
-import type { 
-  TaskAssignment, 
-  AIContext, 
+import type {
+  TaskAssignment,
+  AIContext,
   AIDecision,
-  ThoughtTrigger 
-} from '../types/simulation.types.ts';
-
-// ========== Configuration ==========
+  ThoughtTrigger,
+  PendingQuestion
+} from '../types/simulation.types.ts';// ========== Configuration ==========
 
 export interface AIAgentConfig {
   id: string;
@@ -66,6 +65,8 @@ export interface AIBehaviorState {
   guidingPrinciples: string[]; // Persistent behavioral directives for LLM
   lastWhisper: string | null; // Most recent divine whisper for LLM
   lastWhisperTimestamp: number | null; // When the whisper was received
+  // Questions to ask specific players (from thought processing)
+  pendingQuestions: PendingQuestion[]; // Questions this agent wants to ask when they see certain players
 }
 
 // ========== AI State (Thoughts, Speech, etc.) ==========
@@ -215,6 +216,8 @@ export class AIAgent {
       guidingPrinciples: [],
       lastWhisper: null,
       lastWhisperTimestamp: null,
+      // Pending questions from thought processing
+      pendingQuestions: [],
     };
     
     // Initialize AI state with defaults
@@ -1946,9 +1949,13 @@ export class AIAgent {
       suspicionLevels: this.aiState.role === 'IMPOSTOR' ? {} : this.memory.getAllSuspicionLevels(),
       recentEvents: this.aiState.recentEvents.slice(-10),
       canSpeakTo: this.aiState.agentsInSpeechRange,
-      // Memory context
+      // Memory context (both text and JSON formats)
       memoryContext: this.memory.buildMemoryContext(),
       suspicionContext: this.memory.buildSuspicionContext(),
+      memoryContextJSON: this.memory.buildMemoryContextJSON(),
+      suspicionContextJSON: this.aiState.role === 'IMPOSTOR' ? undefined : this.memory.buildSuspicionContextJSON(),
+      // Pending questions from previous thoughts
+      pendingQuestions: this.behaviorState.pendingQuestions,
       recentConversations: recentConvs,
       isBeingFollowed: this.behaviorState.isBeingFollowed,
       buddyId: this.behaviorState.buddyId,
@@ -2526,6 +2533,69 @@ export class AIAgent {
     this.behaviorState.guidingPrinciples = this.behaviorState.guidingPrinciples.filter(
       p => p !== principle
     );
+  }
+
+  // ========== Pending Questions Management ==========
+  
+  /**
+   * Add pending questions (from thought processing)
+   * These are questions the agent wants to ask specific players
+   */
+  addPendingQuestions(questions: PendingQuestion[]): void {
+    // Merge new questions, avoiding duplicates for same target
+    for (const newQ of questions) {
+      // Check if we already have a question for this target
+      const existingIdx = this.behaviorState.pendingQuestions.findIndex(
+        q => q.targetName.toLowerCase() === newQ.targetName.toLowerCase()
+      );
+      
+      if (existingIdx >= 0) {
+        // Replace if new question has higher priority or is same priority
+        const existing = this.behaviorState.pendingQuestions[existingIdx];
+        const priorityOrder = { low: 0, medium: 1, high: 2 };
+        if (priorityOrder[newQ.priority] >= priorityOrder[existing.priority]) {
+          this.behaviorState.pendingQuestions[existingIdx] = newQ;
+        }
+      } else {
+        this.behaviorState.pendingQuestions.push(newQ);
+      }
+    }
+    
+    // Limit to 5 pending questions max
+    if (this.behaviorState.pendingQuestions.length > 5) {
+      // Sort by priority (high first) and keep top 5
+      const priorityOrder = { high: 0, medium: 1, low: 2 };
+      this.behaviorState.pendingQuestions.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]);
+      this.behaviorState.pendingQuestions = this.behaviorState.pendingQuestions.slice(0, 5);
+    }
+  }
+  
+  /**
+   * Get pending question for a specific player (if any)
+   * Returns and removes the question
+   */
+  popPendingQuestion(targetName: string): PendingQuestion | undefined {
+    const idx = this.behaviorState.pendingQuestions.findIndex(
+      q => q.targetName.toLowerCase() === targetName.toLowerCase()
+    );
+    if (idx >= 0) {
+      return this.behaviorState.pendingQuestions.splice(idx, 1)[0];
+    }
+    return undefined;
+  }
+  
+  /**
+   * Clear all pending questions
+   */
+  clearPendingQuestions(): void {
+    this.behaviorState.pendingQuestions = [];
+  }
+
+  /**
+   * Get all pending questions (for serialization/UI)
+   */
+  getPendingQuestions(): PendingQuestion[] {
+    return [...this.behaviorState.pendingQuestions];
   }
 
   /**

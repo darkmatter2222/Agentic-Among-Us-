@@ -47,6 +47,8 @@ export interface AgentSummary {
     hasTargetInRange: boolean;
     killCount: number;
   };
+  // Average suspicion from other agents
+  avgSuspicionReceived?: number;
   // God Mode status
   godMode?: {
     isActive: boolean;
@@ -92,7 +94,16 @@ export interface AgentSummary {
       level: number;
       reasons: Array<{ reason: string; delta: number; category: string }>;
     }>;
+    // Indexed for UI access
+    suspicionReasons?: Record<string, string[]>;
+    lastKnownLocations?: Record<string, { zone: string; timestamp: number }>;
   };
+  // Pending questions from thought processing
+  pendingQuestions?: Array<{
+    targetName: string;
+    question: string;
+    priority: 'low' | 'medium' | 'high';
+  }>;
 }
 
 function hexColor(num: number): string {
@@ -159,6 +170,166 @@ interface ExpandedAgentCardProps {
 }
 
 type TabType = 'overview' | 'memory' | 'suspicion' | 'control';
+
+// Helper to format relative time
+function formatRelativeTime(timestamp: number): string {
+  const now = Date.now();
+  const diff = now - timestamp;
+  const seconds = Math.floor(diff / 1000);
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ago`;
+}
+
+// Get icon for observation type
+function getObservationIcon(type: string): string {
+  const icons: Record<string, string> = {
+    'spotted': '👁️',
+    'lost_sight': '🚶',
+    'task_completed': '✅',
+    'task_in_progress': '🔧',
+    'task_activity': '🔧',
+    'body_found': '💀',
+    'suspicious': '⚠️',
+    'vent': '🕳️',
+    'room_entry': '🚪',
+    'kill_witnessed': '🔪',
+    'following': '🚶‍♂️',
+    'avoided': '↩️',
+  };
+  return icons[type] || '📝';
+}
+
+// Get status badge for suspicion level
+function getSuspicionStatus(level: number): { label: string; color: string; emoji: string } {
+  if (level >= 80) return { label: 'VERY SUS', color: '#e74c3c', emoji: '🔴' };
+  if (level >= 65) return { label: 'Suspicious', color: '#e67e22', emoji: '🟠' };
+  if (level >= 50) return { label: 'Neutral', color: '#f1c40f', emoji: '🟡' };
+  if (level >= 35) return { label: 'Somewhat Safe', color: '#95a5a6', emoji: '⚪' };
+  return { label: 'Trusted', color: '#2ecc71', emoji: '🟢' };
+}
+
+// Enhanced Suspicion Card with reasons
+function SuspicionCard({ record }: { 
+  record: {
+    agentId: string;
+    agentName: string;
+    level: number;
+    reasons: Array<{ reason: string; delta: number; category: string }>;
+  };
+}) {
+  const status = getSuspicionStatus(record.level);
+  const [expanded, setExpanded] = useState(false);
+  
+  // Group reasons by category
+  const categoryIcons: Record<string, string> = {
+    'task_behavior': '🔧',
+    'movement': '🚶',
+    'speech': '💬',
+    'accusation': '⚠️',
+    'vouched': '🤝',
+    'caught_lying': '🤥',
+    'vent': '🕳️',
+    'near_body': '💀',
+    'following': '👣',
+    'avoiding': '↩️',
+    'witnessed_kill': '🔪',
+  };
+  
+  return (
+    <div className="suspicion-card" onClick={() => setExpanded(!expanded)}>
+      <div className="suspicion-card__header">
+        <div className="suspicion-card__avatar" style={{ backgroundColor: `rgba(${record.level > 50 ? '231, 76, 60' : '46, 204, 113'}, 0.2)` }}>
+          <span className="suspicion-card__emoji">{status.emoji}</span>
+        </div>
+        <div className="suspicion-card__info">
+          <span className="suspicion-card__name">{record.agentName}</span>
+          <span className="suspicion-card__status" style={{ color: status.color }}>{status.label}</span>
+        </div>
+        <div className="suspicion-card__level">
+          <div className="suspicion-card__level-bar">
+            <div 
+              className="suspicion-card__level-fill" 
+              style={{ width: `${record.level}%`, backgroundColor: status.color }}
+            />
+          </div>
+          <span className="suspicion-card__level-text">{Math.round(record.level)}%</span>
+        </div>
+        <span className="suspicion-card__expand">{expanded ? '▼' : '▶'}</span>
+      </div>
+      
+      {expanded && record.reasons.length > 0 && (
+        <div className="suspicion-card__reasons">
+          {record.reasons.slice(-5).reverse().map((reason, idx) => (
+            <div key={idx} className={`suspicion-reason ${reason.delta > 0 ? 'increase' : 'decrease'}`}>
+              <span className="suspicion-reason__icon">{categoryIcons[reason.category] || '📋'}</span>
+              <span className="suspicion-reason__text">{reason.reason}</span>
+              <span className={`suspicion-reason__delta ${reason.delta > 0 ? 'positive' : 'negative'}`}>
+                {reason.delta > 0 ? '+' : ''}{reason.delta}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Timeline event component for unified memory view
+function TimelineEvent({ event, type }: { 
+  event: {
+    timestamp: number;
+    icon: string;
+    title: string;
+    subtitle?: string;
+    zone?: string | null;
+    highlight?: boolean;
+    color?: string;
+  };
+  type: 'observation' | 'conversation' | 'accusation' | 'alibi';
+}) {
+  const typeColors: Record<string, string> = {
+    observation: '#8ab4f8',
+    conversation: '#4ecdc4',
+    accusation: '#e74c3c',
+    alibi: '#27ae60',
+  };
+  
+  return (
+    <div className={`timeline-event ${type} ${event.highlight ? 'highlighted' : ''}`}>
+      <div className="timeline-event__time">{formatRelativeTime(event.timestamp)}</div>
+      <div className="timeline-event__dot" style={{ borderColor: event.color || typeColors[type] }} />
+      <div className="timeline-event__content">
+        <div className="timeline-event__header">
+          <span className="timeline-event__icon">{event.icon}</span>
+          <span className="timeline-event__title">{event.title}</span>
+        </div>
+        {event.subtitle && <div className="timeline-event__subtitle">{event.subtitle}</div>}
+        {event.zone && <div className="timeline-event__zone">📍 {event.zone}</div>}
+      </div>
+    </div>
+  );
+}
+
+// Player location tracker
+function PlayerLocationCard({ name, zone, timeAgo, activity }: {
+  name: string;
+  zone: string;
+  timeAgo: string;
+  activity: string;
+}) {
+  const activityIcon = activity === 'doing task' ? '🔧' : '🚶';
+  return (
+    <div className="location-card">
+      <span className="location-card__name">{name}</span>
+      <span className="location-card__zone">📍 {zone}</span>
+      <span className="location-card__activity">{activityIcon} {activity}</span>
+      <span className="location-card__time">{timeAgo}</span>
+    </div>
+  );
+}
 
 function SuspicionBar({ level, name }: { level: number; name: string }) {
   const getBarColor = (l: number) => {
@@ -556,131 +727,165 @@ function GodModeControlPanel({ agent }: { agent: AgentSummary }) {
         
 {activeTab === 'memory' && (
           <>
-            {/* Full Observations */}
-            <div className="expanded-card__section">
-              <div className="section-label">
-                All Observations ({agent.fullMemory?.observations?.length ?? 0})
+            {/* Memory Stats Overview */}
+            <div className="memory-stats">
+              <div className="memory-stat">
+                <span className="memory-stat__value">{agent.fullMemory?.observations?.length ?? 0}</span>
+                <span className="memory-stat__label">Observations</span>
               </div>
-              <div className="memory-list scrollable">
-                {agent.fullMemory?.observations && agent.fullMemory.observations.length > 0 ? (
-                  [...agent.fullMemory.observations].reverse().map((obs) => (
-                    <div key={obs.id} className={`memory-item obs-${obs.type}`}>
-                      <span className="memory-time">
-                        {new Date(obs.timestamp).toLocaleTimeString()}
-                      </span>
-                      <span className="memory-type">[{obs.type}]</span>
-                      <span className="memory-desc">{obs.description}</span>
-                      {obs.zone && <span className="memory-zone">@ {obs.zone}</span>}
-                    </div>
+              <div className="memory-stat">
+                <span className="memory-stat__value">{agent.fullMemory?.conversations?.length ?? 0}</span>
+                <span className="memory-stat__label">Conversations</span>
+              </div>
+              <div className="memory-stat">
+                <span className="memory-stat__value">{agent.fullMemory?.accusations?.length ?? 0}</span>
+                <span className="memory-stat__label">Accusations</span>
+              </div>
+              <div className="memory-stat">
+                <span className="memory-stat__value">{agent.fullMemory?.alibis?.length ?? 0}</span>
+                <span className="memory-stat__label">Alibis</span>
+              </div>
+            </div>
+
+            {/* Last Known Player Locations */}
+            <div className="expanded-card__section">
+              <div className="section-label">📍 Last Known Player Locations</div>
+              <div className="location-grid">
+                {agent.fullMemory?.lastKnownLocations && Object.entries(agent.fullMemory.lastKnownLocations).length > 0 ? (
+                  Object.entries(agent.fullMemory.lastKnownLocations).map(([name, loc]) => (
+                    <PlayerLocationCard 
+                      key={name} 
+                      name={name} 
+                      location={loc as { zone: string; timestamp: number }} 
+                    />
                   ))
                 ) : (
-                  <p className="memory-text empty">No observations recorded...</p>
+                  <p className="memory-text empty">No player locations tracked yet...</p>
                 )}
               </div>
             </div>
 
-            {/* Full Conversations */}
+            {/* Unified Memory Timeline */}
             <div className="expanded-card__section">
-              <div className="section-label">
-                All Conversations ({agent.fullMemory?.conversations?.length ?? 0})
-              </div>
-              <div className="memory-list scrollable">
-                {agent.fullMemory?.conversations && agent.fullMemory.conversations.length > 0 ? (
-                  [...agent.fullMemory.conversations].reverse().map((conv) => (
-                    <div key={conv.id} className="memory-item conversation">
-                      <span className="memory-time">
-                        {new Date(conv.timestamp).toLocaleTimeString()}
-                      </span>
-                      <span className="memory-speaker">{conv.speakerName}:</span>
-                      <span className="memory-message">"{conv.message}"</span>
-                      {conv.zone && <span className="memory-zone">@ {conv.zone}</span>}
-                    </div>
-                  ))
-                ) : (
-                  <p className="memory-text empty">No conversations recorded...</p>
-                )}
+              <div className="section-label">🕐 Memory Timeline</div>
+              <div className="memory-timeline scrollable">
+                {(() => {
+                  // Combine all memory events into unified timeline
+                  const allEvents: Array<{
+                    id: string;
+                    timestamp: number;
+                    type: 'observation' | 'conversation' | 'accusation' | 'alibi';
+                    data: any;
+                  }> = [];
+                  
+                  agent.fullMemory?.observations?.forEach(obs => {
+                    allEvents.push({ id: obs.id, timestamp: obs.timestamp, type: 'observation', data: obs });
+                  });
+                  agent.fullMemory?.conversations?.forEach(conv => {
+                    allEvents.push({ id: conv.id, timestamp: conv.timestamp, type: 'conversation', data: conv });
+                  });
+                  agent.fullMemory?.accusations?.forEach(acc => {
+                    allEvents.push({ id: acc.id, timestamp: acc.timestamp, type: 'accusation', data: acc });
+                  });
+                  agent.fullMemory?.alibis?.forEach(alibi => {
+                    allEvents.push({ id: alibi.id, timestamp: alibi.timestamp, type: 'alibi', data: alibi });
+                  });
+                  
+                  // Sort by timestamp descending (newest first)
+                  allEvents.sort((a, b) => b.timestamp - a.timestamp);
+                  
+                  if (allEvents.length === 0) {
+                    return <p className="memory-text empty">No memories recorded yet...</p>;
+                  }
+                  
+                  return allEvents.slice(0, 50).map(event => (
+                    <TimelineEvent key={event.id} event={event} />
+                  ));
+                })()}
               </div>
             </div>
 
-            {/* Accusations */}
-            {agent.fullMemory?.accusations && agent.fullMemory.accusations.length > 0 && (
-              <div className="expanded-card__section">
-                <div className="section-label">
-                  Accusations ({agent.fullMemory.accusations.length})
-                </div>
-                <div className="memory-list scrollable">
-                  {[...agent.fullMemory.accusations].reverse().map((acc) => (
-                    <div key={acc.id} className="memory-item accusation">
-                      <span className="memory-time">
-                        {new Date(acc.timestamp).toLocaleTimeString()}
-                      </span>
-                      <span className="accusation-text">
-                        <strong>{acc.accuserName}</strong> accused <strong>{acc.accusedName}</strong>: "{acc.reason}"
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Alibis */}
-            {agent.fullMemory?.alibis && agent.fullMemory.alibis.length > 0 && (
-              <div className="expanded-card__section">
-                <div className="section-label">
-                  Alibis ({agent.fullMemory.alibis.length})
-                </div>
-                <div className="memory-list scrollable">
-                  {[...agent.fullMemory.alibis].reverse().map((alibi) => (
-                    <div key={alibi.id} className="memory-item alibi">
-                      <span className="memory-time">
-                        {new Date(alibi.timestamp).toLocaleTimeString()}
-                      </span>
-                      <span className="alibi-text">
-                        <strong>{alibi.agentName}</strong> claimed to be in {alibi.claimedZone}: {alibi.claimedActivity}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Recently Heard (keep this for quick reference) */}
+            {/* Recently Heard - Compact View */}
             <div className="expanded-card__section">
-              <div className="section-label">Recently Heard</div>
-              <div className="conversation-list">
+              <div className="section-label">👂 Recently Heard</div>
+              <div className="heard-list">
                 {agent.recentlyHeard && agent.recentlyHeard.length > 0 ? (
                   agent.recentlyHeard.map((heard, idx) => (
-                    <div key={idx} className={`conversation-item ${heard.wasDirectlyAddressed ? 'directly-addressed' : ''}`}>
-                      <span className="conversation-speaker">
-                        {heard.wasDirectlyAddressed && <span className="heard-icon" title="Directly addressed">👂</span>}
-                        {heard.speakerName}:
-                      </span>
-                      <span className="conversation-message">"{heard.message}"</span>
+                    <div key={idx} className={`heard-item ${heard.wasDirectlyAddressed ? 'directly-addressed' : ''}`}>
+                      {heard.wasDirectlyAddressed && <span className="heard-badge">📢</span>}
+                      <span className="heard-speaker">{heard.speakerName}</span>
+                      <span className="heard-message">"{heard.message}"</span>
                     </div>
                   ))
                 ) : (
-                  <p className="no-conversations">Nothing heard recently...</p>
+                  <p className="memory-text empty">Nothing heard recently...</p>
                 )}
               </div>
             </div>
           </>
         )}        {activeTab === 'suspicion' && (
           <>
-            <div className="expanded-card__section">
-              <div className="section-label">Suspicion Levels</div>
-              <div className="suspicion-list">
-                {suspicionEntries.length > 0 ? (
-                  suspicionEntries.map(({ id, level }) => (
-                    <SuspicionBar key={id} name={id.replace('agent_', '')} level={level} />
-                  ))
-                ) : (
-                  <p className="no-suspicion">No suspicion data yet...</p>
-                )}
+            {/* Suspicion Summary Stats */}
+            <div className="suspicion-stats">
+              <div className="suspicion-stat">
+                <span className="suspicion-stat__value">{suspicionEntries.filter(e => e.level >= 70).length}</span>
+                <span className="suspicion-stat__label">🔴 High</span>
+              </div>
+              <div className="suspicion-stat">
+                <span className="suspicion-stat__value">{suspicionEntries.filter(e => e.level >= 40 && e.level < 70).length}</span>
+                <span className="suspicion-stat__label">🟡 Medium</span>
+              </div>
+              <div className="suspicion-stat">
+                <span className="suspicion-stat__value">{suspicionEntries.filter(e => e.level < 40).length}</span>
+                <span className="suspicion-stat__label">🟢 Low</span>
+              </div>
+              <div className="suspicion-stat">
+                <span className="suspicion-stat__value">
+                  {suspicionEntries.length > 0 ? Math.round(suspicionEntries.reduce((sum, e) => sum + e.level, 0) / suspicionEntries.length) : 0}
+                </span>
+                <span className="suspicion-stat__label">📊 Avg</span>
               </div>
             </div>
 
+            {/* Enhanced Suspicion Cards */}
             <div className="expanded-card__section">
-              <div className="section-label">Suspicion Context</div>
+              <div className="section-label">👥 Player Suspicions</div>
+              <div className="suspicion-cards scrollable">
+                {agent.fullMemory?.suspicionRecords && agent.fullMemory.suspicionRecords.length > 0 ? (
+                  // Sort by suspicion level descending
+                  [...agent.fullMemory.suspicionRecords]
+                    .sort((a, b) => b.level - a.level)
+                    .map((record) => (
+                      <SuspicionCard
+                        key={record.agentId}
+                        record={record}
+                      />
+                    ))
+                ) : (
+                  <p className="memory-text empty">No suspicion data yet... 🤷</p>
+                )}
+              </div>
+            </div>            {/* Pending Questions - New Feature! */}
+            {agent.pendingQuestions && agent.pendingQuestions.length > 0 && (
+              <div className="expanded-card__section">
+                <div className="section-label">❓ Questions to Ask</div>
+                <div className="pending-questions">
+                  {agent.pendingQuestions.map((q, idx) => (
+                    <div key={idx} className={`pending-question priority-${q.priority}`}>
+                      <span className="question-target">To {q.targetName}:</span>
+                      <span className="question-text">"{q.question}"</span>
+                      <span className={`question-priority priority-${q.priority}`}>
+                        {q.priority === 'high' ? '🔴' : q.priority === 'medium' ? '🟡' : '🟢'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Raw Suspicion Context (Collapsed by default) */}
+            <details className="expanded-card__section suspicion-raw-details">
+              <summary className="section-label clickable">📝 Raw Suspicion Context</summary>
               <div className="suspicion-context-box">
                 {agent.suspicionContext ? (
                   <pre className="suspicion-text">{agent.suspicionContext}</pre>
@@ -688,7 +893,7 @@ function GodModeControlPanel({ agent }: { agent: AgentSummary }) {
                   <p className="suspicion-text empty">No suspicion reasoning yet...</p>
                 )}
               </div>
-            </div>
+            </details>
           </>
         )}
 
@@ -929,7 +1134,7 @@ function LLMQueuePanel({ stats, isCollapsed, onToggle, height, onHeightChange }:
 }
 export function AgentInfoPanel({ agents, width = 380, taskProgress = 0, selectedAgentId, onAgentSelect, llmQueueStats, llmTraceEvents }: AgentInfoPanelProps) {
   const [expandedAgentId, setExpandedAgentId] = useState<string | null>(null);
-  const [columnWidths, setColumnWidths] = useState<number[]>([90, 80, 70, 80]); // Agent, Zone, Status, Tasks
+  const [columnWidths, setColumnWidths] = useState<number[]>([80, 70, 65, 65, 50]); // Agent, Zone, Status, Tasks, SUS
   const resizingRef = useRef<{ index: number; startX: number; startWidth: number } | null>(null);
   
   // Collapse states for panels
@@ -1033,6 +1238,10 @@ export function AgentInfoPanel({ agents, width = 380, taskProgress = 0, selected
                         Tasks
                         <span className="resize-handle" onMouseDown={(e) => handleMouseDown(3, e)} />
                       </th>
+                      <th style={{ width: columnWidths[4] }} title="Average suspicion level from all other agents">
+                        SUS
+                        <span className="resize-handle" onMouseDown={(e) => handleMouseDown(4, e)} />
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1066,13 +1275,25 @@ export function AgentInfoPanel({ agents, width = 380, taskProgress = 0, selected
                         <td className="agent-row__tasks" style={{ width: columnWidths[3] }}>
                           <div className="mini-progress">
                             <div className="mini-progress-bar">
-                              <div 
+                              <div
                                 className="mini-progress-fill"
                                 style={{ width: totalTasks > 0 ? `${(completed / totalTasks) * 100}%` : '0%' }}
                               />
                             </div>
                             <span className="mini-progress-text">{completed}/{totalTasks}</span>
                           </div>
+                        </td>
+                        <td className="agent-row__sus" style={{ width: columnWidths[4] }}>
+                          {(() => {
+                            // Calculate average suspicion others have of this agent
+                            const avgSus = agent.avgSuspicionReceived ?? 0;
+                            const susColor = avgSus >= 70 ? '#e74c3c' : avgSus >= 50 ? '#f39c12' : avgSus >= 30 ? '#f1c40f' : '#2ecc71';
+                            return (
+                              <span className="sus-badge" style={{ color: susColor }} title={`Average suspicion from other agents: ${Math.round(avgSus)}%`}>
+                                {Math.round(avgSus)}
+                              </span>
+                            );
+                          })()}
                         </td>
                       </tr>
                     );

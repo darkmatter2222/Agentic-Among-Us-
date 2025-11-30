@@ -665,17 +665,34 @@ export class AIDecisionService {
 
     const startTime = Date.now();
     let thought: string;
+    let suspicionUpdates: Array<{ targetName: string; delta: number; reason: string }> | undefined;
+    let pendingQuestions: Array<{ targetName: string; question: string; priority: 'low' | 'medium' | 'high' }> | undefined;
     let usedFallback = false;
+    let rawResponse = '';
+    
     try {
-      thought = await this.aiClient.getDecision(systemPrompt, userPrompt, {
+      rawResponse = await this.aiClient.getDecision(systemPrompt, userPrompt, {
         temperature: 0.9,
-        maxTokens: 100
+        maxTokens: 250  // Increased for JSON response
       });
-      // Clean up the thought
-      thought = thought.replace(/^["']|["']$/g, '').trim();
+      
+      // Try to parse as JSON
+      const parsed = this.parseThoughtResponse(rawResponse);
+      
+      if (parsed) {
+        thought = parsed.thought;
+        suspicionUpdates = parsed.suspicionUpdates;
+        pendingQuestions = parsed.pendingQuestions;
+      } else {
+        // JSON parse failed - use raw response as thought with "brain fart" style fallback
+        thought = this.extractThoughtFromFailedJSON(rawResponse);
+        aiLogger.debug('Thought JSON parse failed, extracted text', { agentName: context.agentName, rawResponse: rawResponse.substring(0, 100) });
+      }
+      
+      // Truncate thought if too long
       if (thought.length > 200) thought = thought.substring(0, 200) + '...';
     } catch {
-      // Fallback thought
+      // Complete failure - fallback thought
       thought = this.fallbackThought(context, trigger);
       usedFallback = true;
     }
@@ -691,7 +708,7 @@ export class AIDecisionService {
       requestType: 'thought',
       systemPrompt,
       userPrompt,
-      rawResponse: thought,
+      rawResponse: rawResponse || thought,
       context: {
         zone: context.currentZone,
         visibleAgents: context.visibleAgents.map(a => ({
@@ -720,11 +737,126 @@ export class AIDecisionService {
       timestamp,
       thought,
       trigger,
-      context: context.currentZone || 'unknown'
+      context: context.currentZone || 'unknown',
+      suspicionUpdates,
+      pendingQuestions
     };
 
     this.pendingThoughts.push(event);
     return event;
+  }
+
+  /**
+   * Parse the thought response JSON from LLM
+   * Returns null if parsing fails
+   */
+  private parseThoughtResponse(response: string): {
+    thought: string;
+    suspicionUpdates?: Array<{ targetName: string; delta: number; reason: string }>;
+    pendingQuestions?: Array<{ targetName: string; question: string; priority: 'low' | 'medium' | 'high' }>;
+  } | null {
+    try {
+      // Try to extract JSON from the response (it might have extra text around it)
+      const jsonMatch = response.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) return null;
+      
+      const parsed = JSON.parse(jsonMatch[0]);
+      
+      // Validate required field
+      if (typeof parsed.thought !== 'string' || !parsed.thought.trim()) {
+        return null;
+      }
+      
+      const result: {
+        thought: string;
+        suspicionUpdates?: Array<{ targetName: string; delta: number; reason: string }>;
+        pendingQuestions?: Array<{ targetName: string; question: string; priority: 'low' | 'medium' | 'high' }>;
+      } = {
+        thought: parsed.thought.trim()
+      };
+      
+      // Parse optional suspicion updates
+      if (Array.isArray(parsed.suspicionUpdates) && parsed.suspicionUpdates.length > 0) {
+        const updates = parsed.suspicionUpdates
+          .filter((u: unknown) => {
+            if (typeof u !== 'object' || u === null) return false;
+            const update = u as Record<string, unknown>;
+            return typeof update.targetName === 'string' && 
+                   typeof update.delta === 'number' &&
+                   typeof update.reason === 'string';
+          })
+          .map((u: unknown) => {
+            const update = u as { targetName: string; delta: number; reason: string };
+            return {
+              targetName: update.targetName,
+              delta: Math.max(-20, Math.min(20, update.delta)), // Clamp delta to -20 to +20
+              reason: update.reason
+            };
+          });
+        
+        if (updates.length > 0) {
+          result.suspicionUpdates = updates;
+        }
+      }
+      
+      // Parse optional pending questions
+      if (Array.isArray(parsed.pendingQuestions) && parsed.pendingQuestions.length > 0) {
+        const questions = parsed.pendingQuestions
+          .filter((q: unknown) => {
+            if (typeof q !== 'object' || q === null) return false;
+            const question = q as Record<string, unknown>;
+            return typeof question.targetName === 'string' && 
+                   typeof question.question === 'string';
+          })
+          .map((q: unknown) => {
+            const question = q as { targetName: string; question: string; priority?: string };
+            return {
+              targetName: question.targetName,
+              question: question.question,
+              priority: (['low', 'medium', 'high'].includes(question.priority || '') 
+                ? question.priority as 'low' | 'medium' | 'high' 
+                : 'medium')
+            };
+          });
+        
+        if (questions.length > 0) {
+          result.pendingQuestions = questions;
+        }
+      }
+      
+      return result;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Extract a usable thought from a failed JSON parse
+   * Uses fallback phrases when extraction fails
+   */
+  private extractThoughtFromFailedJSON(response: string): string {
+    // Try to extract a thought field value even from malformed JSON
+    const thoughtMatch = response.match(/"thought"\s*:\s*"([^"]+)"/);
+    if (thoughtMatch && thoughtMatch[1]) {
+      return thoughtMatch[1].trim();
+    }
+    
+    // If no thought field, try to use the raw response if it's short enough
+    const cleaned = response.replace(/[{}\[\]"]/g, '').trim();
+    if (cleaned.length > 10 && cleaned.length < 200) {
+      return cleaned;
+    }
+    
+    // Complete failure - use a "brain fart" style fallback
+    const brainFarts = [
+      "Hmm, what was I thinking about?",
+      "Wait, where was I going with that thought?",
+      "Lost my train of thought for a second there...",
+      "Let me think about this more carefully...",
+      "Something feels off but I can't put my finger on it.",
+      "I should stay focused on the task at hand."
+    ];
+    return brainFarts[Math.floor(Math.random() * brainFarts.length)];
   }
 
   /**
@@ -1119,7 +1251,7 @@ THOUGHT: <your internal thought, 1 sentence>`;
   private buildThoughtUserPrompt(context: AIContext, trigger: ThoughtTrigger): string {
     // Build dynamic trigger description
     let triggerDescription: string;
-    
+
     if (trigger === 'heard_speech' && context.heardSpeechFrom && context.heardSpeechMessage) {
       // Enhanced description for heard speech - include WHO said WHAT
       triggerDescription = `${context.heardSpeechFrom} just said: "${context.heardSpeechMessage.substring(0, 100)}${context.heardSpeechMessage.length > 100 ? '...' : ''}"`;
@@ -1151,20 +1283,23 @@ THOUGHT: <your internal thought, 1 sentence>`;
       ? `\nConsider: Do I respond? What should I say back? Is this suspicious? Should I engage or walk away?`
       : '';
 
-    // Include brief memory context for thoughts
-    const memoryHint = context.memoryContext 
-      ? `\nRecent memory:\n${context.memoryContext.split('\n').slice(0, 8).join('\n')}`
-      : '';
+    // Include JSON-formatted memory context for thoughts (preferred) or fallback to text
+    let memoryHint = '';
+    if (context.memoryContextJSON) {
+      memoryHint = `\nRECENT MEMORY (JSON):\n${JSON.stringify(context.memoryContextJSON, null, 2)}`;
+    } else if (context.memoryContext) {
+      memoryHint = `\nRecent memory:\n${context.memoryContext.split('\n').slice(0, 8).join('\n')}`;
+    }
 
     return `${triggerDescription}
 Location: ${context.currentZone || 'Hallway'}
 Tasks done: ${context.assignedTasks.filter((t: TaskAssignment) => t.isCompleted).length}/${context.assignedTasks.length}
 Visible agents: ${context.visibleAgents.map((a: { name: string }) => a.name).join(', ') || 'None'}${responseGuidance}
 ${memoryHint}
-What are you thinking? (One brief internal thought, stay in character)`;
-  }
 
-  /**
+Respond with valid JSON only. Example:
+{"thought": "Your thought here", "suspicionUpdates": [], "pendingQuestions": []}`;
+  }  /**
    * Should this agent speak given the trigger?
    */
   private shouldSpeak(trigger: ThoughtTrigger, context: AIContext): boolean {

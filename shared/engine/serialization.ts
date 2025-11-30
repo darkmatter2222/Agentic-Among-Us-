@@ -146,8 +146,13 @@ export function serializeAgent(agent: AIAgent, timestamp: number, killStatus?: K
           level: s.level,
           reasons: s.reasons.map(r => ({ reason: r.reason, delta: r.delta, category: r.category })),
         })),
+        suspicionReasons: mem.suspicionReasons,
+        lastKnownLocations: mem.lastKnownLocations,
       };
     })() : undefined,
+
+    // Pending questions from thoughts
+    pendingQuestions: agent.getPendingQuestions ? agent.getPendingQuestions() : undefined,
   };
 }export function serializeAgentSummary(agent: AIAgent): AgentSummarySnapshot {
   const state = agent.getStateMachine().getState();

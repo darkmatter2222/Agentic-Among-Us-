@@ -36,7 +36,7 @@ function App() {
   const [taskProgress, setTaskProgress] = useState(0);
   const [llmQueueStats, setLlmQueueStats] = useState<LLMQueueStats | undefined>(undefined);
   const [gameTimer, setGameTimer] = useState<GameTimerSnapshot | undefined>(undefined);
-  const [panelWidth, setPanelWidth] = useState(380);
+  const [panelWidth, setPanelWidth] = useState(420);
   const [isDraggingPanel, setIsDraggingPanel] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
   const lastMousePos = useRef({ x: 0, y: 0 });
@@ -51,7 +51,7 @@ function App() {
   const [showSpeechBubbles, setShowSpeechBubbles] = useState(true);
   const [lightsOn, setLightsOn] = useState(true);
   const [llmTraceEvents, setLlmTraceEvents] = useState<LLMTraceEvent[]>([]);
-  const [leftPanelWidth, setLeftPanelWidth] = useState(340);
+  const [leftPanelWidth, setLeftPanelWidth] = useState(375);
   
   // Kill audio - preload for instant playback
   const killAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -451,6 +451,20 @@ function App() {
 
       const now = performance.now();
       if (!disposedRef.current && (now - lastSummaryAt >= 200 || lastSummaryAt === 0)) {
+        // Calculate average suspicion each agent receives from others
+        const avgSuspicionReceived: Record<string, number> = {};
+        for (const agent of snapshot.agents) {
+          const suspicionFromOthers: number[] = [];
+          for (const otherAgent of snapshot.agents) {
+            if (otherAgent.id !== agent.id && otherAgent.suspicionLevels?.[agent.id]) {
+              suspicionFromOthers.push(otherAgent.suspicionLevels[agent.id]);
+            }
+          }
+          avgSuspicionReceived[agent.id] = suspicionFromOthers.length > 0
+            ? suspicionFromOthers.reduce((a, b) => a + b, 0) / suspicionFromOthers.length
+            : 0;
+        }
+
         setAgentSummaries(
           snapshot.agents.map(agent => ({
             id: agent.id,
@@ -477,6 +491,14 @@ function App() {
             buddyId: agent.buddyId,
             // Kill status (impostors only)
             killStatus: agent.killStatus,
+            // God Mode status
+            godMode: agent.godMode,
+            // Full memory for detailed display
+            fullMemory: agent.fullMemory,
+            // Pending questions
+            pendingQuestions: agent.pendingQuestions,
+            // Average suspicion from other agents (for SUS column)
+            avgSuspicionReceived: avgSuspicionReceived[agent.id] ?? 0,
           }))
         );
         setTaskProgress(snapshot.taskProgress ?? 0);

@@ -657,7 +657,156 @@ export class AgentMemory {
 
     return lines.length > 0 ? lines.join('\n') : 'No suspicion data yet.';
   }
-  
+
+  // ========== JSON Format Context for LLM ==========
+
+  /**
+   * Build suspicion context in JSON format for LLM prompts
+   * Returns a structured JSON object that's easier for LLMs to parse
+   */
+  buildSuspicionContextJSON(): object {
+    const suspicions: Array<{
+      name: string;
+      level: number;
+      status: 'very_sus' | 'suspicious' | 'neutral' | 'trusted';
+      reasons: string[];
+    }> = [];
+
+    const sortedRecords = Array.from(this.suspicionRecords.values())
+      .sort((a, b) => b.level - a.level);
+
+    for (const record of sortedRecords) {
+      const recentReasons = record.reasons.slice(-3).map(r => r.reason);
+      const status = record.level >= 75 ? 'very_sus' 
+        : record.level >= 55 ? 'suspicious'
+        : record.level >= 45 ? 'neutral' 
+        : 'trusted';
+      
+      suspicions.push({
+        name: record.agentName,
+        level: record.level,
+        status,
+        reasons: recentReasons.length > 0 ? recentReasons : ['no specific reason']
+      });
+    }
+
+    return { suspicions };
+  }
+
+  /**
+   * Build recent memory context in JSON format for LLM prompts
+   * Returns structured observations and conversations that are easier for LLMs to parse
+   */
+  buildMemoryContextJSON(): object {
+    const recentEvents: Array<{
+      type: 'observation' | 'conversation' | 'accusation';
+      timeAgo: string;
+      zone?: string;
+      description: string;
+      speaker?: string;
+      accuser?: string;
+      accused?: string;
+    }> = [];
+
+    // Add recent observations (last 10)
+    const recentObs = this.getRecentObservations(10);
+    for (const obs of recentObs) {
+      recentEvents.push({
+        type: 'observation',
+        timeAgo: this.formatRelativeTime(obs.timestamp),
+        zone: obs.zone || undefined,
+        description: obs.description
+      });
+    }
+
+    // Add recent conversations (last 8)
+    const recentConvs = this.getRecentConversations(8);
+    for (const conv of recentConvs) {
+      const msgPreview = conv.message.length > 80 ? conv.message.substring(0, 77) + '...' : conv.message;
+      recentEvents.push({
+        type: 'conversation',
+        timeAgo: this.formatRelativeTime(conv.timestamp),
+        zone: conv.zone || undefined,
+        speaker: conv.speakerName,
+        description: msgPreview
+      });
+    }
+
+    // Add recent accusations (last 5)
+    const recentAccusations = this.accusations.slice(-5);
+    for (const acc of recentAccusations) {
+      recentEvents.push({
+        type: 'accusation',
+        timeAgo: this.formatRelativeTime(acc.timestamp),
+        accuser: acc.accuserName,
+        accused: acc.accusedName,
+        description: acc.reason
+      });
+    }
+
+    // Sort by timestamp (newest first for JSON format) and limit
+    // Note: we don't have timestamps in the output array, so we sort before pushing
+    // Actually, let's just return in chronological order
+    
+    // Build last known locations
+    const lastKnownLocations: Array<{
+      name: string;
+      zone: string;
+      timeAgo: string;
+      activity: string;
+    }> = [];
+
+    const playerLastSeen = new Map<string, { zone: string; timestamp: number; activity: string }>();
+    for (const obs of this.observations.slice(-30)) {
+      if (obs.subjectName && obs.subjectName !== this.ownerName) {
+        const current = playerLastSeen.get(obs.subjectName);
+        if (!current || obs.timestamp > current.timestamp) {
+          playerLastSeen.set(obs.subjectName, {
+            zone: obs.zone || 'unknown',
+            timestamp: obs.timestamp,
+            activity: obs.type === 'task_activity' ? 'doing task' : 'walking',
+          });
+        }
+      }
+    }
+
+    for (const [name, info] of Array.from(playerLastSeen.entries())) {
+      lastKnownLocations.push({
+        name,
+        zone: info.zone,
+        timeAgo: this.formatRelativeTime(info.timestamp),
+        activity: info.activity
+      });
+    }
+
+    // Build alibis
+    const alibis: Array<{
+      name: string;
+      claimed: string;
+      zone: string;
+      timeAgo: string;
+      verified: boolean;
+      contradicted: boolean;
+    }> = [];
+
+    for (const alibi of this.alibis.slice(-3)) {
+      alibis.push({
+        name: alibi.agentName,
+        claimed: alibi.claimedActivity,
+        zone: alibi.claimedZone,
+        timeAgo: this.formatRelativeTime(alibi.timestamp),
+        verified: alibi.verified ?? false,
+        contradicted: alibi.contradicted ?? false
+      });
+    }
+
+    return {
+      recentEvents: recentEvents.slice(-15), // Keep last 15 events
+      lastKnownLocations,
+      alibis
+    };
+  }
+
   // ========== Serialization ==========
 
   /**
@@ -669,13 +818,37 @@ export class AgentMemory {
     accusations: AccusationEntry[];
     alibis: AlibiEntry[];
     suspicionRecords: SuspicionRecord[];
+    suspicionReasons: Record<string, string[]>;
+    lastKnownLocations: Record<string, { zone: string; timestamp: number }>;
   } {
+    // Build suspicion reasons map (agentId -> array of reason strings)
+    const suspicionReasons: Record<string, string[]> = {};
+    for (const record of this.suspicionRecords.values()) {
+      suspicionReasons[record.agentId] = record.reasons.map(r => r.reason);
+    }
+
+    // Build last known locations map (name -> { zone, timestamp })
+    const lastKnownLocations: Record<string, { zone: string; timestamp: number }> = {};
+    for (const obs of this.observations) {
+      if (obs.subjectName && obs.subjectName !== this.ownerName && obs.zone) {
+        const current = lastKnownLocations[obs.subjectName];
+        if (!current || obs.timestamp > current.timestamp) {
+          lastKnownLocations[obs.subjectName] = {
+            zone: obs.zone,
+            timestamp: obs.timestamp,
+          };
+        }
+      }
+    }
+
     return {
       observations: [...this.observations],
       conversations: [...this.conversations],
       accusations: [...this.accusations],
       alibis: [...this.alibis],
       suspicionRecords: Array.from(this.suspicionRecords.values()),
+      suspicionReasons,
+      lastKnownLocations,
     };
   }
 

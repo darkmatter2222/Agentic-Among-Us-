@@ -273,13 +273,35 @@ export class GameSimulation {
     if (this.aiService) {
       const newThoughts = this.aiService.flushPendingThoughts();
       const newSpeech = this.aiService.flushPendingSpeech();
-      
+
+      // Apply thought side effects (suspicion updates, pending questions)
+      for (const thought of newThoughts) {
+        const agent = this.manager.getAgent(thought.agentId);
+        if (agent) {
+          // Apply suspicion updates from thought to agent's memory
+          if (thought.suspicionUpdates && thought.suspicionUpdates.length > 0) {
+            for (const update of thought.suspicionUpdates) {
+              // Find the target agent by name (color)
+              const targetAgent = this.manager.getAgents().find(a => 
+                a.getName().toLowerCase() === update.targetName.toLowerCase()
+              );
+              if (targetAgent) {
+                agent.getMemory().adjustSuspicion(targetAgent.getId(), targetAgent.getName(), update.delta, update.reason, 'speech');
+              }
+            }
+          }
+          
+          // Update pending questions on the agent
+          if (thought.pendingQuestions && thought.pendingQuestions.length > 0) {
+            agent.addPendingQuestions(thought.pendingQuestions);
+          }
+        }
+      }
+
       // Keep recent events (last 20)
       this.recentThoughts = [...this.recentThoughts, ...newThoughts].slice(-20);
       this.recentSpeech = [...this.recentSpeech, ...newSpeech].slice(-20);
-    }
-
-    this.tick += 1;
+    }    this.tick += 1;
     
     // Build kill status map for impostors
     const killStatusMap = new Map<string, { cooldownRemaining: number; canKill: boolean; hasTargetInRange: boolean; killCount: number }>();
