@@ -1088,6 +1088,11 @@ This is DAMNING evidence! You must TELL EVERYONE and REPORT THIS!
 `;
     }
 
+    // Include memory context with timestamped history
+    const memorySection = context.memoryContext 
+      ? `\nYOUR MEMORY (what you've seen and heard):\n${context.memoryContext}\n`
+      : '';
+
     return `CURRENT SITUATION:
 Location: ${context.currentZone || 'Hallway'}
 Position: (${Math.round(context.currentPosition.x)}, ${Math.round(context.currentPosition.y)})
@@ -1098,7 +1103,7 @@ Current task: ${context.currentTaskIndex !== null ? context.assignedTasks[contex
 
 VISIBLE AGENTS:
 ${visibleInfo}${impostorKillContext}
-
+${memorySection}
 What should I do next?
 
 RESPOND EXACTLY LIKE THIS (replace the placeholders with your actual choice):
@@ -1142,15 +1147,20 @@ THOUGHT: <your internal thought, 1 sentence>`;
     }
 
     // For heard_speech, add response guidance
-    const responseGuidance = trigger === 'heard_speech' 
+    const responseGuidance = trigger === 'heard_speech'
       ? `\nConsider: Do I respond? What should I say back? Is this suspicious? Should I engage or walk away?`
+      : '';
+
+    // Include brief memory context for thoughts
+    const memoryHint = context.memoryContext 
+      ? `\nRecent memory:\n${context.memoryContext.split('\n').slice(0, 8).join('\n')}`
       : '';
 
     return `${triggerDescription}
 Location: ${context.currentZone || 'Hallway'}
 Tasks done: ${context.assignedTasks.filter((t: TaskAssignment) => t.isCompleted).length}/${context.assignedTasks.length}
 Visible agents: ${context.visibleAgents.map((a: { name: string }) => a.name).join(', ') || 'None'}${responseGuidance}
-
+${memoryHint}
 What are you thinking? (One brief internal thought, stay in character)`;
   }
 

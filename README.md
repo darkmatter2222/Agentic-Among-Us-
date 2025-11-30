@@ -20,7 +20,7 @@ This project creates a fully autonomous Among Us simulation where:
 | **Task System** | Complete | Task assignment, navigation, execution with realistic durations |
 | **Vision System** | Complete | Agents see only within configurable vision radius |
 | **AI Decision Making** | Complete | LLM-powered goals: tasks, wandering, following, avoiding, confronting |
-| **Agent Memory** | Complete | Observations, suspicion tracking, conversation history |
+| **Agent Memory** | Complete | Timestamped observations, suspicion tracking, conversation history, player location tracking |
 | **Speech System** | Complete | Agents speak to nearby players (rectangular bubble, toggleable) |
 | **Social Actions** | Complete | Buddy up, follow, avoid, confront, spread rumors, defend self |
 | **Thought System** | Complete | Internal reasoning shown as cloud bubbles (toggleable) |
@@ -170,6 +170,37 @@ Agents can pursue these goals based on LLM reasoning:
 - `SELF_REPORT` — Report own kill
 - `FLEE_BODY` — Escape after kill
 - `CREATE_ALIBI` — Position for cover
+
+### Agent Memory System
+
+Each AI agent maintains a persistent memory that influences their decisions. The memory system provides **timestamped context** to help agents reason about past events:
+
+#### Memory Components
+- **Recent Timeline**: Last 15 events (observations + conversations + accusations) merged chronologically with relative timestamps
+- **Last Known Locations**: Where each player was last seen (e.g., "Red: Cafeteria (2m ago, walking)")
+- **Suspicion Levels**: Tracked per-player with emoji indicators (🔴 VERY SUS, 🟠 Suspicious, 🟡 Slightly sus, 🟢 Trusted)
+- **Alibis Claimed**: What alibis players have stated, with verification status
+
+#### Example Memory Context in LLM Prompt
+```
+=== RECENT HISTORY (what you remember) ===
+[2m ago] in Cafeteria Saw Red in Cafeteria (walking)
+[1m ago] in Admin Blue said: "I was doing wires in Electrical"
+[45s ago] in Electrical Saw Yellow doing task
+[30s ago] ⚠️ Green accused Yellow: "saw you near the body"
+[just now] in Weapons Pink said: "I finished asteroids"
+
+=== LAST KNOWN LOCATIONS ===
+- Red: Cafeteria (2m ago, walking)
+- Blue: Admin (1m ago, walking)
+- Yellow: Electrical (45s ago, doing task)
+
+=== YOUR SUSPICIONS ===
+- Yellow: 🟠 Suspicious (68%) - near body when found; acting nervous
+- Green: 🟢 Trusted (35%)
+```
+
+This context is included in every LLM decision prompt, giving agents the information they need to make realistic, informed decisions.
 
 ---
 

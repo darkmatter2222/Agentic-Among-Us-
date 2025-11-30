@@ -644,7 +644,7 @@ window.setLogLevel('WARN');   // Only warnings and errors
 | **Task Progress Bar** | Smooth animated progress bar (0-100%) while player performs task, with checkmark completion animation. Uses client-side time calculation from task `startedAt` timestamp for smooth rendering |
 | **Impostor Task Faking** | Wait at task location for appropriate duration without progress |
 | **Zone Detection** | Agents know their current room/hallway location |
-| **Agent Memory** | Observations, suspicion levels, conversation history, alibi tracking |
+| **Agent Memory** | Observations, suspicion levels, conversation history, alibi tracking. **Timestamped history** with relative time formatting (e.g., "30s ago", "2m ago") included in LLM prompts. Memory context shows: recent timeline (last 15 events merged chronologically), last known player locations, suspicion levels with reasons, and alibis claimed. |
 | **Thought System** | Internal reasoning triggered by events (room entry, spotting agents, etc.). Thoughts shown as cloud-shaped bubble with trailing circles above player. Toggleable via THT button. |
 | **Thinking Indicator** | Animated "..." dots shown when agent is waiting for LLM response. Toggleable via ... button. |
 | **Speech System** | Agents speak to nearby players, vision-based hearing (same radius and line-of-sight as vision - can't hear through walls). Speech shown as rectangular bubble with tail pointer above player. Toggleable via SPK button. |

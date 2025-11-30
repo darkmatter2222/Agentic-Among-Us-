@@ -438,7 +438,7 @@ export class AgentMemory {
   
   getAllSuspicionLevels(): Record<string, number> {
     const levels: Record<string, number> = {};
-    for (const [agentId, record] of this.suspicionRecords) {
+    for (const [agentId, record] of Array.from(this.suspicionRecords.entries())) {
       levels[agentId] = record.level;
     }
     return levels;
@@ -505,60 +505,156 @@ export class AgentMemory {
   }
   
   // ========== Context Building for LLM ==========
-  
+
+  /**
+   * Format a relative time string (e.g., "30s ago", "2m ago")
+   */
+  private formatRelativeTime(timestamp: number): string {
+    const now = Date.now();
+    const diffMs = now - timestamp;
+    const diffSec = Math.floor(diffMs / 1000);
+    
+    if (diffSec < 5) return 'just now';
+    if (diffSec < 60) return `${diffSec}s ago`;
+    
+    const diffMin = Math.floor(diffSec / 60);
+    if (diffMin < 60) return `${diffMin}m ago`;
+    
+    return `${Math.floor(diffMin / 60)}h ago`;
+  }
+
+  /**
+   * Build a timestamped history context for LLM decision-making
+   * This is the primary memory context that helps agents make informed decisions
+   */
   buildMemoryContext(): string {
+    const now = Date.now();
     const lines: string[] = [];
-    
-    // Recent observations
-    const recentObs = this.getRecentObservations(5);
-    if (recentObs.length > 0) {
-      lines.push('Recent observations:');
-      for (const obs of recentObs) {
-        lines.push(`- ${obs.description}`);
+
+    // === RECENT TIMELINE (merged observations + conversations, chronologically) ===
+    // Combine observations and conversations with their timestamps
+    const timelineEvents: { timestamp: number; type: 'obs' | 'conv' | 'acc'; text: string }[] = [];
+
+    // Add observations (limit to last 10)
+    const recentObs = this.getRecentObservations(10);
+    for (const obs of recentObs) {
+      const timeStr = this.formatRelativeTime(obs.timestamp);
+      const zoneStr = obs.zone ? ` in ${obs.zone}` : '';
+      timelineEvents.push({
+        timestamp: obs.timestamp,
+        type: 'obs',
+        text: `[${timeStr}]${zoneStr} ${obs.description}`,
+      });
+    }
+
+    // Add conversations (limit to last 8)
+    const recentConvs = this.getRecentConversations(8);
+    for (const conv of recentConvs) {
+      const timeStr = this.formatRelativeTime(conv.timestamp);
+      const zoneStr = conv.zone ? ` in ${conv.zone}` : '';
+      const msgPreview = conv.message.length > 80 ? conv.message.substring(0, 77) + '...' : conv.message;
+      timelineEvents.push({
+        timestamp: conv.timestamp,
+        type: 'conv',
+        text: `[${timeStr}]${zoneStr} ${conv.speakerName} said: "${msgPreview}"`,
+      });
+    }
+
+    // Add accusations (limit to last 5)
+    const recentAccusations = this.accusations.slice(-5);
+    for (const acc of recentAccusations) {
+      const timeStr = this.formatRelativeTime(acc.timestamp);
+      timelineEvents.push({
+        timestamp: acc.timestamp,
+        type: 'acc',
+        text: `[${timeStr}] ⚠️ ${acc.accuserName} accused ${acc.accusedName}: "${acc.reason}"`,
+      });
+    }
+
+    // Sort by timestamp (most recent last) and format
+    timelineEvents.sort((a, b) => a.timestamp - b.timestamp);
+
+    if (timelineEvents.length > 0) {
+      lines.push('=== RECENT HISTORY (what you remember) ===');
+      // Take last 15 events to keep prompt manageable
+      const displayEvents = timelineEvents.slice(-15);
+      for (const event of displayEvents) {
+        lines.push(event.text);
       }
     }
-    
-    // Recent conversations
-    const recentConvs = this.getRecentConversations(5);
-    if (recentConvs.length > 0) {
-      lines.push('\nRecent conversations:');
-      for (const conv of recentConvs) {
-        lines.push(`- ${conv.speakerName}: "${conv.message}"`);
-      }
-    }
-    
-    // Top suspicions
-    const suspicious = this.getMostSuspicious(3);
-    if (suspicious.length > 0) {
-      lines.push('\nSuspicion levels:');
-      for (const record of suspicious) {
-        if (record.level > 60) {
-          const topReason = record.reasons[record.reasons.length - 1];
-          lines.push(`- ${record.agentName}: ${record.level}% (${topReason?.reason ?? 'general feeling'})`);
+
+    // === PLAYER TRACKING (who you've seen where recently) ===
+    // Group observations by player to show last known locations
+    const playerLastSeen = new Map<string, { zone: string; timestamp: number; activity: string }>();
+    for (const obs of this.observations.slice(-30)) {
+      if (obs.subjectName && obs.subjectName !== this.ownerName) {
+        const current = playerLastSeen.get(obs.subjectName);
+        if (!current || obs.timestamp > current.timestamp) {
+          playerLastSeen.set(obs.subjectName, {
+            zone: obs.zone || 'unknown',
+            timestamp: obs.timestamp,
+            activity: obs.type === 'task_activity' ? 'doing task' : 'walking',
+          });
         }
       }
     }
-    
-    // Recent accusations
-    const recentAccusations = this.accusations.slice(-3);
-    if (recentAccusations.length > 0) {
-      lines.push('\nRecent accusations:');
-      for (const acc of recentAccusations) {
-        lines.push(`- ${acc.accuserName} accused ${acc.accusedName}: "${acc.reason}"`);
+
+    if (playerLastSeen.size > 0) {
+      lines.push('\n=== LAST KNOWN LOCATIONS ===');
+      for (const [name, info] of Array.from(playerLastSeen.entries())) {
+        const timeStr = this.formatRelativeTime(info.timestamp);
+        lines.push(`- ${name}: ${info.zone} (${timeStr}, ${info.activity})`);
       }
     }
+
+    // === SUSPICION SUMMARY ===
+    const suspicious = this.getMostSuspicious(5);
+    const highSuspicion = suspicious.filter(r => r.level > 55);
+    const lowSuspicion = suspicious.filter(r => r.level < 45);
     
-    return lines.join('\n');
-  }
-  
-  buildSuspicionContext(): string {
-    const lines: string[] = [];
-    
-    for (const record of this.suspicionRecords.values()) {
-      const recentReasons = record.reasons.slice(-3).map(r => r.reason).join('; ');
-      lines.push(`${record.agentName}: ${record.level}% - ${recentReasons || 'No specific reason'}`);
+    if (highSuspicion.length > 0 || lowSuspicion.length > 0) {
+      lines.push('\n=== YOUR SUSPICIONS ===');
+      
+      for (const record of highSuspicion) {
+        const topReasons = record.reasons.slice(-2).map(r => r.reason).join('; ');
+        const levelDesc = record.level >= 80 ? '🔴 VERY SUS' : record.level >= 65 ? '🟠 Suspicious' : '🟡 Slightly sus';
+        lines.push(`- ${record.agentName}: ${levelDesc} (${record.level}%) - ${topReasons || 'gut feeling'}`);
+      }
+      
+      for (const record of lowSuspicion) {
+        lines.push(`- ${record.agentName}: 🟢 Trusted (${record.level}%)`);
+      }
     }
-    
+
+    // === ALIBIS YOU'VE HEARD ===
+    const recentAlibis = this.alibis.slice(-3);
+    if (recentAlibis.length > 0) {
+      lines.push('\n=== ALIBIS CLAIMED ===');
+      for (const alibi of recentAlibis) {
+        const timeStr = this.formatRelativeTime(alibi.timestamp);
+        const verifiedStr = alibi.verified ? ' ✓verified' : alibi.contradicted ? ' ✗CONTRADICTED' : '';
+        lines.push(`- ${alibi.agentName} claimed: "${alibi.claimedActivity}" in ${alibi.claimedZone} [${timeStr}]${verifiedStr}`);
+      }
+    }
+
+    return lines.join('\n');
+  }  buildSuspicionContext(): string {
+    const lines: string[] = [];
+
+    // Sort by suspicion level (highest first)
+    const sortedRecords = Array.from(this.suspicionRecords.values())
+      .sort((a, b) => b.level - a.level);
+
+    for (const record of sortedRecords) {
+      const recentReasons = record.reasons.slice(-3).map(r => {
+        const timeStr = this.formatRelativeTime(r.timestamp);
+        return `${r.reason} [${timeStr}]`;
+      }).join('; ');
+      
+      const levelIcon = record.level >= 75 ? '🔴' : record.level >= 55 ? '🟠' : record.level >= 45 ? '⚪' : '🟢';
+      lines.push(`${levelIcon} ${record.agentName}: ${record.level}% - ${recentReasons || 'No specific reason'}`);
+    }
+
     return lines.length > 0 ? lines.join('\n') : 'No suspicion data yet.';
   }
   
