@@ -16,6 +16,7 @@ import type {
 } from '@shared/types/simulation.types.ts';
 import type { LLMTraceEvent, AgentPositionSnapshot } from '@shared/types/llm-trace.types.ts';
 import { COLOR_NAMES } from '@shared/constants/colors.ts';
+import { parseSuspicionClass, getDefaultSuspicionClass } from '@shared/constants/suspicionClasses.ts';
 import { getPersonalityById } from '@shared/data/personalities.ts';
 import {
   buildCrewmatePrompt,
@@ -787,14 +788,40 @@ export class AIDecisionService {
       } = {
         thought: parsed.thought.trim()
       };
-      
-      // Parse optional suspicion updates
-      if (Array.isArray(parsed.suspicionUpdates) && parsed.suspicionUpdates.length > 0) {
+
+      // Parse suspicion updates from new "sus" classification format
+      // Format: {"sus": {"Red": "ODD", "Blue": "SAFE"}}
+      if (parsed.sus && typeof parsed.sus === 'object' && !Array.isArray(parsed.sus)) {
+        const updates: Array<{ targetName: string; delta: number; reason: string }> = [];
+        
+        for (const [playerColor, classId] of Object.entries(parsed.sus)) {
+          if (typeof classId !== 'string') continue;
+          
+          const suspicionClass = parseSuspicionClass(classId);
+          if (suspicionClass && suspicionClass.delta !== 0) {
+            updates.push({
+              targetName: playerColor,
+              delta: suspicionClass.delta,
+              reason: suspicionClass.label // Use the class label as the reason
+            });
+          }
+        }
+
+        if (updates.length > 0) {
+          result.suspicionUpdates = updates;
+          aiLogger.debug('Parsed suspicion classifications', { 
+            sus: parsed.sus, 
+            updates 
+          });
+        }
+      }
+      // Also support legacy suspicionUpdates format for backwards compatibility
+      else if (Array.isArray(parsed.suspicionUpdates) && parsed.suspicionUpdates.length > 0) {
         const updates = parsed.suspicionUpdates
           .filter((u: unknown) => {
             if (typeof u !== 'object' || u === null) return false;
             const update = u as Record<string, unknown>;
-            return typeof update.targetName === 'string' && 
+            return typeof update.targetName === 'string' &&
                    typeof update.delta === 'number' &&
                    typeof update.reason === 'string';
           })
@@ -806,7 +833,7 @@ export class AIDecisionService {
               reason: update.reason
             };
           });
-        
+
         if (updates.length > 0) {
           result.suspicionUpdates = updates;
         }
@@ -1310,14 +1337,21 @@ THOUGHT: <your internal thought, 1 sentence>`;
       memoryHint = `\nRecent memory:\n${context.memoryContext.split('\n').slice(0, 8).join('\n')}`;
     }
 
+    // Build list of visible player colors for the sus field hint
+    const visibleColors = context.visibleAgents.map((a: { name: string }) => a.name);
+    const susHint = visibleColors.length > 0 
+      ? `Rate suspicion for visible players: ${visibleColors.join(', ')}`
+      : 'No one visible to rate';
+
     return `${triggerDescription}
 Location: ${context.currentZone || 'Hallway'}
 Tasks done: ${context.assignedTasks.filter((t: TaskAssignment) => t.isCompleted).length}/${context.assignedTasks.length}
-Visible agents: ${context.visibleAgents.map((a: { name: string }) => a.name).join(', ') || 'None'}${responseGuidance}
+Visible agents: ${visibleColors.join(', ') || 'None'}${responseGuidance}
 ${memoryHint}
 
-Respond with valid JSON. Write a REAL thought, not placeholder text!
-{"thought": "<your actual thought>", "suspicionUpdates": [], "pendingQuestions": []}`;
+${susHint}
+Respond with valid JSON. Write a REAL thought!
+{"thought": "your thought", "sus": {}}`;
   }  /**
    * Should this agent speak given the trigger?
    */

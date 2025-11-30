@@ -6,6 +6,7 @@
 import type { PlayerRole } from '@shared/types/game.types.ts';
 import type { AIContext, AIDecision, ThoughtTrigger, TaskAssignment, GamePhase } from '@shared/types/simulation.types.ts';
 import { COLOR_NAMES } from '@shared/constants/colors.ts';
+import { buildSuspicionClassPrompt } from '@shared/constants/suspicionClasses.ts';
 import { getPersonalityById, buildPersonalityPrompt } from '@shared/data/personalities.ts';
 import { aiLogger } from '../../logging/index.js';
 
@@ -670,6 +671,9 @@ export function buildThoughtPrompt(context: AIContext, trigger: ThoughtTrigger):
     ? 'Think about: blending in, your cover story, who might suspect you.'
     : 'Think about: your tasks, who you trust, what you observed.';
 
+  // Build the suspicion classification guide
+  const suspicionClassGuide = buildSuspicionClassPrompt();
+
   return `${gameContext}
 
 ${roleDesc}
@@ -678,15 +682,23 @@ Internal thought (private, no one hears this):
 ${triggerContext}
 ${suspicionJSON}${pendingQuestionsHint}
 
+SUSPICION CLASSES (pick one for any player you have an opinion about):
+${suspicionClassGuide}
+
 Respond with JSON only (no markdown, no explanation):
-{"thought": "your one-sentence reaction", "suspicionUpdates": [], "pendingQuestions": []}
+{"thought": "your one-sentence reaction", "sus": {"PlayerColor": "CLASS_ID"}}
 
 Rules:
 - "thought": REQUIRED - one specific sentence about what just happened
-- "suspicionUpdates": optional array like [{"targetName": "Red", "delta": 5, "reason": "why"}]
-- "pendingQuestions": optional array like [{"targetName": "Blue", "question": "Where were you?", "priority": "medium"}]
+- "sus": OPTIONAL - map player colors to suspicion class IDs (e.g. {"Red": "ODD", "Blue": "SAFE"})
 - ${roleHint}
-- Be specific and in-character.`;
+- Be specific and in-character.
+
+Examples:
+{"thought": "Red was just standing there doing nothing, seems off", "sus": {"Red": "ODD"}}
+{"thought": "Blue helped me with wires, seems trustworthy", "sus": {"Blue": "VOUCHED"}}
+{"thought": "Just walking to my next task", "sus": {}}
+{"thought": "I SAW GREEN VENT!", "sus": {"Green": "CAUGHT"}}`;
 }
 
 export function buildSpeechPrompt(context: AIContext): string {
