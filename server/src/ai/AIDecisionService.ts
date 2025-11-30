@@ -1147,26 +1147,26 @@ Keep it brief (1-2 sentences). Start the conversation!`;
       if (imp.canKill && imp.targetsInKillRange.length > 0) {
         const isolatedTargets = imp.targetsInKillRange.filter(t => t.isIsolated);
         if (isolatedTargets.length > 0) {
-          impostorKillContext = `\n\nðŸ”ªðŸ”ªðŸ”ª KILL NOW! ${isolatedTargets[0].name} is ISOLATED and within kill range (${isolatedTargets[0].distance?.toFixed(0) || '?'} units)!
-You MUST use GOAL: KILL and TARGET: ${isolatedTargets[0].name}`;
+          impostorKillContext = `\n\nðŸ”ªðŸ”ªðŸ”ª TAG NOW! ${isolatedTargets[0].name} is ISOLATED and within tag range (${isolatedTargets[0].distance?.toFixed(0) || '?'} units)!
+You MUST use GOAL: TAG and TARGET: ${isolatedTargets[0].name}`;
         } else {
-          impostorKillContext = `\n\nTargets within kill range but have witnesses: ${imp.targetsInKillRange.map(t => `${t.name} (${t.witnessCount} witnesses)`).join(', ')}`;
+          impostorKillContext = `\n\nTargets within tag range but have witnesses: ${imp.targetsInKillRange.map(t => `${t.name} (${t.witnessCount} witnesses)`).join(', ')}`;
         }
       } else if (imp.killCooldownRemaining > 0) {
-        impostorKillContext = `\n\nâ±ï¸ Kill on cooldown: ${imp.killCooldownRemaining.toFixed(0)}s remaining. Cannot kill yet.`;
+        impostorKillContext = `\n\nâ±ï¸ Tag on cooldown: ${imp.killCooldownRemaining.toFixed(0)}s remaining. Cannot tag yet.`;
       } else if (imp.targetsInKillRange.length === 0 && context.visibleAgents.length > 0) {
         // Visible but not in kill range - suggest HUNT
         const closestTarget = context.visibleAgents
           .filter(a => !imp.fellowImpostors?.some(f => f.name === a.name))
           .sort((a, b) => a.distance - b.distance)[0];
         if (closestTarget) {
-          impostorKillContext = `\n\nðŸŽ¯ ${closestTarget.name} visible but out of kill range (${Math.round(closestTarget.distance)} units away, need < 90 units).\nUse HUNT to chase them down!`;
+          impostorKillContext = `\n\nðŸŽ¯ ${closestTarget.name} visible but out of tag range (${Math.round(closestTarget.distance)} units away, need < 90 units).\nUse HUNT to chase them down!`;
         }
       }
       
       // Add hunt status if currently hunting
       if (huntingTarget) {
-        impostorKillContext += `\n\nðŸ” CURRENTLY HUNTING: ${huntingTarget} - continue pursuit until in kill range!`;
+        impostorKillContext += `\n\nðŸ” CURRENTLY HUNTING: ${huntingTarget} - continue pursuit until in tag range!`;
       }
     }
 
@@ -1227,7 +1227,7 @@ Your response MUST be: GOAL: REPORT_BODY
         ? COLOR_NAMES[context.witnessMemory.suspectedKillerColor] || `Unknown (color ${context.witnessMemory.suspectedKillerColor})`
         : null;
       const killerInfo = killerColorName
-        ? `You SAW the killer - it was ${killerColorName}! (${Math.round(context.witnessMemory.colorConfidence * 100)}% certain)`
+        ? `You SAW the trickster - it was ${killerColorName}! (${Math.round(context.witnessMemory.colorConfidence * 100)}% certain)`
         : 'You saw the kill but couldn\'t identify the killer clearly!';
       witnessSection = `
 🔴🔴🔴 CRITICAL: YOU WITNESSED A MURDER! 🔴🔴🔴

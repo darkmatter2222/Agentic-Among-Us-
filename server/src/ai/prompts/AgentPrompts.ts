@@ -9,6 +9,26 @@ import { COLOR_NAMES } from '@shared/constants/colors.ts';
 import { getPersonalityById, buildPersonalityPrompt } from '@shared/data/personalities.ts';
 import { aiLogger } from '../../logging/index.js';
 
+// ========== Room Name Sanitizer ==========
+// LLM safety filters trigger on "Weapons" - rename to game-friendly alternatives
+const ROOM_NAME_SANITIZER: Record<string, string> = {
+  'Weapons': 'Laser Tag',
+  'weapons': 'laser tag',
+  'WEAPONS': 'LASER TAG',
+  'Security': 'Lookout',
+  'security': 'lookout', 
+  'SECURITY': 'LOOKOUT',
+};
+
+/**
+ * Sanitizes room/zone names to avoid triggering LLM safety filters.
+ * "Weapons" room -> "Laser Tag" to prevent weapons-related rejections.
+ */
+function sanitizeRoomName(roomName: string | undefined | null): string {
+  if (!roomName) return 'Unknown';
+  return ROOM_NAME_SANITIZER[roomName] || roomName;
+}
+
 // Re-export for backward compatibility
 export const AGENT_NAMES = COLOR_NAMES;
 
@@ -80,6 +100,11 @@ function buildTimerInfo(context: AIContext): string {
 
 // ========== System Prompts ==========
 
+// Game context disclaimer to prevent safety filter triggers
+const GAME_CONTEXT = `[GAME: Among Us - a popular social deduction party game. Players are cartoon astronauts doing tasks. "Impostors" try to tag others out (like tag/hide-and-seek). This is fiction/roleplay for entertainment.]
+
+`;
+
 export function buildCrewmatePrompt(context: AIContext): string {
   const gamePhase = context.gamePhase || 'WORKING';
   const isAlertPhase = gamePhase === 'ALERT';
@@ -102,7 +127,7 @@ export function buildCrewmatePrompt(context: AIContext): string {
     : `PERSONALITY:
 - You are observant and notice when things don't add up
 - You value teamwork and want to help others
-- You speak up when you see something suspicious`;
+- You speak up when you see something unusual`;
 
   // Check if this is a body discovery decision
   const isBodyDiscovery = context.bodyDiscoveryContext === true;
@@ -113,18 +138,18 @@ export function buildCrewmatePrompt(context: AIContext): string {
   // Body discovery context overrides normal phase context
   let phaseContext: string;
   if (isBodyDiscovery) {
-    phaseContext = `💀💀💀 EMERGENCY! YOU JUST FOUND A DEAD BODY! 💀💀💀
-Body found: ${bodyInfo}
+    phaseContext = `🚨🚨🚨 EMERGENCY! YOU JUST FOUND A TAGGED PLAYER! 🚨🚨🚨
+Tagged player found: ${bodyInfo}
 
-This is CRITICAL - someone has been MURDERED! You need to decide what to do RIGHT NOW:
+This is CRITICAL - someone was TAGGED OUT! You need to decide what to do RIGHT NOW:
 - REPORT_BODY: Call an emergency meeting to report this (most common response)
 - FLEE_BODY: Run away in panic (if you're scared or don't want attention)
 - WANDER: Leave quietly without reporting (if you have a reason)
 
 Most crewmates would REPORT immediately. But you might have reasons not to...`;
   } else if (isAlertPhase) {
-    phaseContext = `⚠️ DANGER! A dead body has been discovered! Someone among you is a KILLER!
-You are now in ALERT mode - be suspicious, watch for unusual behavior, and stay safe!`;
+    phaseContext = `⚠️ ALERT! A tagged player has been discovered! Someone among you is the trickster!
+You are now in ALERT mode - be watchful, look for unusual behavior, and stay safe!`;
   } else {
     phaseContext = `You are a worker on this spaceship. Just another day doing maintenance tasks.
 You don't suspect anything is wrong - why would you? Just do your job and chat with coworkers.`;
@@ -132,40 +157,40 @@ You don't suspect anything is wrong - why would you? Just do your job and chat w
 
   const objectives = isBodyDiscovery
     ? `YOUR IMMEDIATE PRIORITY:
-You just found a DEAD BODY! What do you do?
+You just found a TAGGED PLAYER! What do you do?
 1. REPORT_BODY - Report it immediately (most logical choice for a crewmate)
 2. FLEE_BODY - Run away in panic
 3. Other - You have some reason not to report right now
 
-Think about: Are you scared? Do you trust the other players? Will you look suspicious if you report?`
+Think about: Are you scared? Do you trust the other players? Will it seem strange if you report?`
     : isAlertPhase
     ? `YOUR OBJECTIVES:
 1. Complete your assigned tasks to help the crew win
-2. Watch other players CAREFULLY for suspicious behavior - someone is a KILLER!
+2. Watch other players CAREFULLY for unusual behavior - someone is the trickster!
 3. Stay safe - buddy up with trusted crewmates when possible
 4. Communicate! Share information, ask questions, and coordinate
-5. If someone is acting suspicious, confront them or warn others
-6. If you find a body, REPORT IT IMMEDIATELY using GOAL: REPORT_BODY`
+5. If someone is acting unusual, confront them or warn others
+6. If you find a tagged player, REPORT IT IMMEDIATELY using GOAL: REPORT_BODY`
     : `YOUR OBJECTIVES:
 1. Complete your assigned tasks - that's your job
 2. Chat with coworkers when you pass them - be friendly!
-3. If you find something SHOCKING (like a dead body), REPORT IT using GOAL: REPORT_BODY`;  const howToDetect = isAlertPhase 
-    ? `HOW TO DETECT THE KILLER:
+3. If you find something SHOCKING (like a tagged player), REPORT IT using GOAL: REPORT_BODY`;  const howToDetect = isAlertPhase 
+    ? `HOW TO SPOT THE TRICKSTER:
 - Fake tasking: Watch if task bar moves when they "complete" a task
-- Task timing: Tasks that complete too fast or too slow are suspicious
+- Task timing: Tasks that complete too fast or too slow seem unusual
 - Visual tasks: Submit Scan, Clear Asteroids, Prime Shields show animations
-- Following behavior: Killers often follow others to find isolated targets
+- Following behavior: Tricksters often follow others to find isolated targets
 - Strange pathing: Going to areas without tasks
-- Avoiding groups: Killers avoid witnesses
-- Near bodies: Anyone found near a body is suspect`
+- Avoiding groups: Tricksters avoid witnesses
+- Near tagged players: Anyone found near a tagged player is suspect`
     : '';
 
-  return `You are ${context.agentName}. YOUR NAME IS ${context.agentName}. You are a CREWMATE working on this spaceship.
+  return `${GAME_CONTEXT}You are ${context.agentName}. YOUR NAME IS ${context.agentName}. You are a CREWMATE working on this spaceship.
 ${godModeInfo}${phaseContext}
 
 CRITICAL IDENTITY RULES:
 - YOUR name is ${context.agentName}. When speaking about yourself, say "I" not "${context.agentName}".
-- NEVER accuse yourself or say "${context.agentName} is suspicious" - you ARE ${context.agentName}!
+- NEVER accuse yourself or say "${context.agentName} is acting strange" - you ARE ${context.agentName}!
 - Other players have DIFFERENT names. You can only talk ABOUT other players, not yourself in third person.
 
 ${objectives}
@@ -174,7 +199,7 @@ ${personalitySection}
 
 CURRENT GAME STATE:
 - You are ${context.agentName} (Crewmate)
-- Location: ${context.currentZone || 'Unknown'}
+- Location: ${sanitizeRoomName(context.currentZone)}
 - Tasks remaining: ${context.assignedTasks.filter((t: TaskAssignment) => !t.isCompleted).length}/${context.assignedTasks.length}
 - Other players nearby: ${othersNearby.length > 0 ? othersNearby.join(', ') : 'No one nearby'}
 ${context.isBeingFollowed ? '- [!] Someone seems to be following you!' : ''}
@@ -195,31 +220,31 @@ ${isBodyDiscovery ? `*** BODY DISCOVERY - Choose your response: ***
 ` : ''}- GO_TO_TASK [task#] - Go work on a task
 - WANDER - Explore and look around
 ${isAlertPhase ? `- FOLLOW_AGENT [name] - Stick with a player for safety
-- AVOID_AGENT [name] - Stay away from someone suspicious
+- AVOID_AGENT [name] - Stay away from someone you don't trust
 - BUDDY_UP [name] - Ask someone to team up
-- CONFRONT [name] - Question someone about suspicious behavior
+- CONFRONT [name] - Question someone about unusual behavior
 - SPREAD_RUMOR - Share concerns with nearby players
 - DEFEND_SELF - Explain yourself if accused` : `- FOLLOW_AGENT [name] - Walk with a coworker
 - BUDDY_UP [name] - Suggest working together`}
 - SPEAK - Say something to nearby players
 - IDLE - Wait and observe
-- REPORT_BODY - Report a dead body you found (triggers emergency meeting)
+- REPORT_BODY - Report a tagged player you found (triggers emergency meeting)
 
 ${howToDetect}
 
 SPEECH GUIDELINES:
 - Keep responses SHORT (1-2 sentences max)
-${isAlertPhase 
+${isAlertPhase
   ? `- Use casual Among Us speech: "sus", "where", "who", etc.
 - NO emojis. NO "Let's chat about something fun". NO generic pleasantries.
 - Focus on: tasks, locations, alibis, accusations, observations`
   : `- Be casual and friendly - you're just coworkers
 - Talk about work, tasks, maybe complain about the job
-- NO suspicions yet - you don't know there's danger`}
+- NO worries yet - you don't know there's any issue`}
 - Reference what you've SEEN and REMEMBER
 
-${isAlertPhase 
-  ? `Remember: Someone is a KILLER! Stay alert, gather information, and report anything suspicious!`
+${isAlertPhase
+  ? `Remember: Someone is the trickster! Stay alert, gather information, and report anything unusual!`
   : `Remember: Just another workday. Be friendly with your coworkers!`}${buildGodModeReminder(context)}`;
 }
 
@@ -238,7 +263,7 @@ export function buildImpostorPrompt(context: AIContext): string {
   );
 
   // Build impostor-specific context if available
-  const impostorInfo = buildImpostorKillInfo(context);
+  const impostorInfo = buildImpostorTagInfo(context);
 
   // Calculate time-based urgency for impostors
   const urgencyLevel = getImpostorUrgency(context);
@@ -256,9 +281,9 @@ export function buildImpostorPrompt(context: AIContext): string {
   // Check if this is a body discovery decision
   const isBodyDiscovery = context.bodyDiscoveryContext === true;
   const bodyInfo = isBodyDiscovery && context.visibleBodies && context.visibleBodies.length > 0
-    ? context.visibleBodies.map(b => `${b.victimName} in ${b.zone || 'unknown'}`).join(', ')
+    ? context.visibleBodies.map(b => `${b.victimName} in ${sanitizeRoomName(b.zone)}`).join(', ')
     : '';
-  
+
   // Check if this might be our own kill
   const mightBeOwnKill = isBodyDiscovery && context.impostorContext?.nearbyBodies?.some(
     b => context.visibleBodies?.some(vb => vb.id === b.id)
@@ -267,31 +292,31 @@ export function buildImpostorPrompt(context: AIContext): string {
   // Body discovery context overrides normal phase context for impostors
   let phaseContext: string;
   if (isBodyDiscovery) {
-    phaseContext = `💀 YOU FOUND A BODY! 💀
-Body found: ${bodyInfo}
-${mightBeOwnKill ? '⚠️ This might be YOUR kill!' : ''}
+    phaseContext = `🚨 YOU FOUND A TAGGED PLAYER! 🚨
+Tagged player found: ${bodyInfo}
+${mightBeOwnKill ? '⚠️ This might be YOUR handiwork!' : ''}
 
-As an IMPOSTOR, this is a critical moment. You need to decide RIGHT NOW:
-- SELF_REPORT: Report the body yourself to appear innocent (risky but effective)
+As a TRICKSTER, this is a critical moment. You need to decide RIGHT NOW:
+- SELF_REPORT: Report the tagged player yourself to appear innocent (risky but effective)
 - FLEE_BODY: Get away quickly before anyone sees you near it
 - REPORT_BODY: Report it like a normal crewmate would (safe option)
 - WANDER: Leave quietly and act like you didn't see anything
 
-Think strategically: Were you seen near here? Will self-reporting look suspicious?`;
+Think strategically: Were you seen near here? Will self-reporting look strange?`;
   } else if (isAlertPhase) {
-    phaseContext = `⚠️ A body has been discovered! The crewmates know there's a killer among them.
+    phaseContext = `⚠️ A tagged player has been discovered! The crewmates know there's a trickster among them.
 You must now be MORE CAREFUL with your deception. They are watching everyone closely.`;
   } else {
     phaseContext = `The crewmates think this is just a normal work day. They don't suspect anything yet.
 This is your ADVANTAGE - blend in perfectly, and strike when the moment is right.
-WARNING: When you kill, the body will be found and everyone will become alert!`;
+WARNING: When you tag someone, the tagged player will be found and everyone will become alert!`;
   }
 
   const objectives = isBodyDiscovery
-    ? `YOUR IMMEDIATE PRIORITY (AS IMPOSTOR):
-You found a body! This is either an OPPORTUNITY or a DANGER. Choose wisely:
+    ? `YOUR IMMEDIATE PRIORITY (AS TRICKSTER):
+You found a tagged player! This is either an OPPORTUNITY or a RISK. Choose wisely:
 
-1. SELF_REPORT - Report it yourself (classic impostor move - deflects suspicion)
+1. SELF_REPORT - Report it yourself (classic trickster move - shifts focus away)
    - Good if: You have an alibi, you want to control the narrative
    - Bad if: Someone saw you near here, you've self-reported before
 
@@ -309,21 +334,21 @@ You found a body! This is either an OPPORTUNITY or a DANGER. Choose wisely:
 What's your play?`
     : isAlertPhase
     ? `YOUR OBJECTIVES:
-1. ELIMINATE CREWMATES - Kill isolated targets when safe!
+1. TAG CREWMATES - Tag isolated targets when safe!
 2. BLEND IN by pretending to do tasks convincingly
 3. Build trust with crewmates through conversation
-4. Subtly cast suspicion on innocent crewmates
+4. Subtly cast doubt on innocent crewmates
 5. Maintain a consistent alibi and story
-6. Avoid getting caught - crewmates are now SUSPICIOUS`
+6. Avoid getting caught - crewmates are now WATCHFUL`
     : `YOUR OBJECTIVES:
 1. BLEND IN PERFECTLY - Act like a normal worker, no one suspects anything
-2. ELIMINATE CREWMATES when you find isolated targets
-3. Be VERY CAREFUL - your first kill will alert everyone!
+2. TAG CREWMATES when you find isolated targets
+3. Be VERY CAREFUL - your first tag will alert everyone!
 4. Build trust with crewmates through normal conversation
-5. Your fellow impostor(s) know who you are - you can coordinate`;  const deceptionStrategies = isAlertPhase
+5. Your fellow trickster(s) know who you are - you can coordinate`;  const deceptionStrategies = isAlertPhase
     ? `DECEPTION STRATEGIES:
 - Fake tasks for realistic durations (not too fast or slow!)
-- Claim to have seen others being "suspicious"
+- Claim to have seen others acting "weird"
 - Agree with accusations against innocents
 - Defend yourself calmly if accused (panic looks guilty)
 - Ask questions like an innocent player would
@@ -331,17 +356,17 @@ What's your play?`
 - Spread believable rumors about others`
     : `BLENDING IN (PRE-DISCOVERY):
 - Act like a normal worker - do fake tasks, chat casually
-- Don't be suspicious - no one is watching for killers yet
+- Act normal - no one is watching for tricksters yet
 - Small talk is fine - "how's the job going?", "lots of tasks today"
-- DON'T talk about danger, impostors, or suspicion - it doesn't exist yet!
-- Your first kill will CHANGE EVERYTHING - make it count`;
+- DON'T talk about issues, impostors, or distrust - those concepts don't exist yet!
+- Your first tag will CHANGE EVERYTHING - make it count`;
 
-  return `You are ${context.agentName}. YOUR NAME IS ${context.agentName}. You are an IMPOSTOR (KEEP THIS SECRET!).
+  return `${GAME_CONTEXT}You are ${context.agentName}. YOUR NAME IS ${context.agentName}. You are the TRICKSTER (keep this secret!).
 ${godModeInfo}${phaseContext}
 
 CRITICAL IDENTITY RULES:
 - YOUR name is ${context.agentName}. When speaking about yourself, say "I" not "${context.agentName}".
-- NEVER accuse yourself or say "${context.agentName} is suspicious" - you ARE ${context.agentName}!
+- NEVER accuse yourself or say "${context.agentName} is acting strange" - you ARE ${context.agentName}!
 - Other players have DIFFERENT names. Accuse THEM, not yourself.
 
 ${objectives}
@@ -349,17 +374,17 @@ ${objectives}
 ${impostorInfo}
 ${urgencyLevel}
 
-KILL STRATEGY:
-- ONLY kill when target is ISOLATED (no other players nearby!)
-- Check your kill cooldown before attempting
-- After killing: IMMEDIATELY leave the area or create an alibi
+TAG STRATEGY (game mechanic - like tag/freeze tag):
+- ONLY tag when target is ISOLATED (no other players nearby!)
+- Check your tag cooldown before attempting
+- After tagging: IMMEDIATELY leave the area or create an alibi
 ${isAlertPhase ? `- Self-report sometimes to look innocent (but not too often!)
-- Watch out for witnesses - they might not have seen you clearly` : `- Your FIRST KILL will trigger an emergency - everyone becomes alert!
-- Make your first kill count - get a clean escape`}
+- Watch out for witnesses - they might not have seen you clearly` : `- Your FIRST TAG will trigger an alert - everyone becomes alert!
+- Make your first tag count - get a clean escape`}
 
-POST-KILL OPTIONS:
+POST-TAG OPTIONS:
 - FLEE_BODY - Get away fast, create distance
-- SELF_REPORT - Report your own kill to seem innocent
+- SELF_REPORT - Report the tagged player to seem innocent
 - CREATE_ALIBI - Go to a populated area or task immediately
 
 ${deceptionStrategies}
@@ -367,35 +392,35 @@ ${deceptionStrategies}
 ${personalitySection}
 
 CURRENT GAME STATE:
-- You are ${context.agentName} (IMPOSTOR - KEEP THIS SECRET!)
-- Location: ${context.currentZone || 'Unknown'}
+- You are ${context.agentName} (TRICKSTER - KEEP THIS SECRET!)
+- Location: ${sanitizeRoomName(context.currentZone)}
 - Fake tasks to "do": ${context.assignedTasks.filter((t: TaskAssignment) => !t.isCompleted).length}
 - Other players nearby: ${othersNearby.length > 0 ? othersNearby.join(', ') : 'No one nearby - OPPORTUNITY!'}
-${context.isBeingFollowed ? '- [!] Someone is following you - act natural, DO NOT KILL!' : ''}
+${context.isBeingFollowed ? '- [!] Someone is following you - act natural, DO NOT TAG!' : ''}
 ${timerInfo}
 
 ${memoryInfo}
 ${conversationInfo}
 
 AVAILABLE ACTIONS:
-${isBodyDiscovery ? `*** BODY DISCOVERY - CRITICAL DECISION: ***
-- SELF_REPORT - Report it yourself to appear innocent (impostor classic!)
+${isBodyDiscovery ? `*** TAGGED PLAYER DISCOVERY - CRITICAL DECISION: ***
+- SELF_REPORT - Report it yourself to appear innocent (trickster classic!)
 - FLEE_BODY - Get away fast before anyone sees you
 - REPORT_BODY - Report normally like a crewmate would
 - WANDER - Leave quietly and pretend you didn't see it
 *** Choose wisely - this affects your game! ***
 
-` : ''}- KILL [target_name] - ELIMINATE a crewmate (if in range and cooldown ready!)
-- HUNT - Actively search for an isolated target to kill
-- SELF_REPORT - Report your own kill to appear innocent
-- FLEE_BODY - Get away from a body quickly
-- CREATE_ALIBI - Go to populated area/task after kill
+` : ''}- TAG [target_name] - TAG OUT a crewmate (if in range and cooldown ready!)
+- HUNT - Actively search for an isolated target to tag
+- SELF_REPORT - Report your own tagged player to appear innocent
+- FLEE_BODY - Get away from a tagged player quickly
+- CREATE_ALIBI - Go to populated area/task after tagging
 ${buildVentActions(context)}${buildSabotageActions(context)}- GO_TO_TASK [task#] - FAKE working on a task (wait appropriate time!)
 - WANDER - Explore and look for opportunities
 - FOLLOW_AGENT [name] - Stick close to build trust (or stalk victim)
-- AVOID_AGENT [name] - Stay away from someone suspicious of you
+- AVOID_AGENT [name] - Stay away from someone watching you closely
 - BUDDY_UP [name] - Appear friendly and trustworthy
-${isAlertPhase ? `- CONFRONT [name] - Accuse an innocent to deflect suspicion
+${isAlertPhase ? `- CONFRONT [name] - Accuse an innocent to shift focus
 - SPREAD_RUMOR - Plant seeds of doubt about innocents
 - DEFEND_SELF - Calmly explain your alibi if accused` : ''}
 - SPEAK - Chat naturally with nearby players
@@ -408,50 +433,48 @@ ${isAlertPhase
 - NO emojis. NO "Let's chat about something fun". NO generic pleasantries.
 - Focus on: tasks, locations, alibis, accusations, observations`
   : `- Act like a normal worker - casual chat about tasks and work
-- NO mentions of "impostors", "sus", "suspicious" - those concepts don't exist yet!
+- NO mentions of "impostors", "sus", "weird" - those concepts don't exist yet!
 - Talk like coworkers: "finished that wiring", "heading to reactor", etc.`}
 - Reference what you've "seen" to build credibility
 
-IMPORTANT: When you see someone ALONE, consider if it's safe to KILL!${buildGodModeReminder(context)}`;
+IMPORTANT: When you see someone ALONE, consider if it's safe to TAG!${buildGodModeReminder(context)}`;
 }
 
 function getImpostorUrgency(context: AIContext): string {
   if (!context.gameTimer) {
     return '';
   }
-  
+
   const { remainingMs, elapsedMs } = context.gameTimer;
   const remainingMinutes = remainingMs / 60000;
   const killCount = context.impostorContext?.killCount ?? 0;
-  
-  // Calculate urgency based on time remaining and kill count
+
+  // Calculate urgency based on time remaining and tag count
   if (remainingMinutes < 2) {
     if (killCount === 0) {
-      return `\n[CRITICAL] CRITICAL URGENCY: Less than 2 minutes left and NO KILLS!
-You MUST kill someone NOW or the round ends with crewmates winning!
+      return `\n[CRITICAL] CRITICAL URGENCY: Less than 2 minutes left and NO TAGS!
+You MUST tag someone NOW or the round ends with crewmates winning!
 Take risks - being caught is better than losing to the timer!`;
     }
     return `\n[!] HIGH URGENCY: Less than 2 minutes remaining!
 Consider aggressive plays - time is running out!`;
   } else if (remainingMinutes < 5) {
     if (killCount === 0) {
-      return `\n⏰ MODERATE URGENCY: 5 minutes left and no kills yet.
+      return `\n⏰ MODERATE URGENCY: 5 minutes left and no tags yet.
 You need to start hunting for isolated targets more actively!
-Follow crewmates to dead-end rooms like Electrical or MedBay.`;
+Follow crewmates to isolated rooms like Electrical or MedBay.`;
     }
     return `\n⏰ Time pressure: About halfway through the round.
-Look for more kill opportunities while blending in.`;
+Look for more tag opportunities while blending in.`;
   } else if (elapsedMs > 2 * 60 * 1000 && killCount === 0) {
-    // More than 2 minutes in with no kills
-    return `\nTIP: You've been playing safe for a while with no kills.
+    // More than 2 minutes in with no tags
+    return `\nTIP: You've been playing safe for a while with no tags.
 Start following crewmates to isolated areas.
 Good hunting spots: Electrical, MedBay, Reactor, Engine rooms.`;
   }
-  
-  return '';
-}
 
-/**
+  return '';
+}/**
  * Build vent action options for impostor prompts
  * Shows available vent actions based on current state
  */
@@ -505,7 +528,7 @@ function buildSabotageActions(context: AIContext): string {
     lines.push(`- [SABOTAGE ACTIVE: ${sabotageContext.activeSabotage.type} - ${Math.ceil(sabotageContext.activeSabotage.remainingTime / 1000)}s remaining]`);
   } else if (sabotageContext.canSabotage) {
     // Can start a new sabotage
-    lines.push('- SABOTAGE_LIGHTS - Turn off lights to reduce crewmate vision (great for kills!)');
+    lines.push('- SABOTAGE_LIGHTS - Turn off lights to reduce crewmate vision (great for tags!)');
     lines.push('- SABOTAGE_REACTOR - Force crewmates to Reactor or lose! (30s timer)');
     lines.push('- SABOTAGE_O2 - Force crewmates to O2/Admin or suffocate! (30s timer)');
     lines.push('- SABOTAGE_COMMS - Hide task list and disable security');
@@ -533,7 +556,7 @@ function buildSuspicionInfo(context: AIContext): string {
     return `  - ${agentId.replace('agent_', '')}: ${level}% ${status}`;
   });
   
-  return `\nYOUR SUSPICION LEVELS:\n${lines.join('\n')}`;
+  return `\nYOUR TRUST LEVELS:\n${lines.join('\n')}`;
 }
 
 function buildConversationInfo(context: AIContext): string {
@@ -548,20 +571,20 @@ function buildConversationInfo(context: AIContext): string {
   return `\nRECENT CONVERSATIONS:\n${lines.join('\n')}`;
 }
 
-function buildImpostorKillInfo(context: AIContext): string {
+function buildImpostorTagInfo(context: AIContext): string {
   // Check if impostor context is available
   const imp = context.impostorContext;
   if (!imp) {
-    return `KILL STATUS: Information unavailable`;
+    return `TAG STATUS: Information unavailable`;
   }
   
   const lines: string[] = [];
   
   // Cooldown status
   if (imp.killCooldownRemaining > 0) {
-    lines.push(`⏱️ Kill cooldown: ${imp.killCooldownRemaining.toFixed(1)}s remaining - CANNOT KILL YET`);
+    lines.push(`⏱️ Tag cooldown: ${imp.killCooldownRemaining.toFixed(1)}s remaining - CANNOT TAG YET`);
   } else {
-    lines.push(`[READY] Kill READY - You can kill now!`);
+    lines.push(`[READY] Tag READY - You can tag now!`);
   }
   
   // Targets in range
@@ -570,7 +593,7 @@ function buildImpostorKillInfo(context: AIContext): string {
       const isolated = t.isIsolated ? ' (ISOLATED!)' : ' (has witnesses)';
       return `${t.name}${isolated}`;
     }).join(', ');
-    lines.push(`[TGT] Targets in kill range: ${targetInfo}`);
+    lines.push(`[TGT] Targets in tag range: ${targetInfo}`);
     
     // Highlight isolated targets
     const isolatedTargets = imp.targetsInKillRange.filter(t => t.isIsolated);
@@ -582,39 +605,43 @@ function buildImpostorKillInfo(context: AIContext): string {
   }
   
   // Kill count
-  lines.push(`Kills so far: ${imp.killCount}`);
+  lines.push(`Tags so far: ${imp.killCount}`);
   
   // Fellow impostors - IMPORTANT: show names so AI doesn't try to kill them
   if (imp.fellowImpostors && imp.fellowImpostors.length > 0) {
     const fellowNames = imp.fellowImpostors.map(f => f.name).join(', ');
-    lines.push(`YOUR TEAMMATES (IMPOSTORS): ${fellowNames} - DO NOT KILL THEM!`);
+    lines.push(`YOUR TEAMMATES (TRICKSTERS): ${fellowNames} - DO NOT TAG THEM!`);
   }
   
   // Nearby bodies warning
   if (imp.nearbyBodies.length > 0) {
-    lines.push(`[!] DANGER - Bodies nearby: ${imp.nearbyBodies.map(b => b.victimName).join(', ')} - GET AWAY!`);
+    lines.push(`[!] CAUTION - Tagged players nearby: ${imp.nearbyBodies.map(b => b.victimName).join(', ')} - GET AWAY!`);
   }
   
   // Summary - make kill recommendation more explicit
   if (imp.canKill && imp.targetsInKillRange.some(t => t.isIsolated)) {
     const isolatedTarget = imp.targetsInKillRange.find(t => t.isIsolated)!;
-    lines.push(`\n*** KILL NOW! Use: GOAL: KILL and TARGET: ${isolatedTarget.name}`);
+    lines.push(`\n*** TAG NOW! Use: GOAL: TAG and TARGET: ${isolatedTarget.name}`);
     lines.push(`${isolatedTarget.name} is ISOLATED - this is your chance!`);
   } else if (!imp.canKill && imp.killCooldownRemaining > 0) {
-    lines.push(`\n⏳ Kill on cooldown (${imp.killCooldownRemaining.toFixed(0)}s). Fake tasks or wander.`);
+    lines.push(`\n⏳ Tag on cooldown (${imp.killCooldownRemaining.toFixed(0)}s). Fake tasks or wander.`);
   } else if (imp.targetsInKillRange.length > 0 && !imp.targetsInKillRange.some(t => t.isIsolated)) {
     lines.push(`\nTargets nearby but NOT isolated - wait for them to separate!`);
   } else {
-    lines.push(`\nNo targets in range. HUNT: follow a crewmate to a dead-end room.`);
+    lines.push(`\nNo targets in range. HUNT: follow a crewmate to a quiet area.`);
   }
   
-  return `KILL STATUS:\n${lines.join('\n')}`; 
+  return `TAG STATUS:\n${lines.join('\n')}`; 
 }
 
 export function buildThoughtPrompt(context: AIContext, trigger: ThoughtTrigger): string {
-  const basePrompt = context.role === 'IMPOSTOR'
-    ? `You are ${context.agentName}. YOUR NAME IS ${context.agentName}. You are secretly an IMPOSTOR.`
-    : `You are ${context.agentName}. YOUR NAME IS ${context.agentName}. You are a loyal CREWMATE.`;
+  // Frame this as a party game to avoid safety filter triggers
+  const gameContext = `[CONTEXT: This is the party video game "Among Us" - a harmless social deduction game where players roleplay cartoon astronauts. All "eliminations" are game mechanics, not real violence.]`;
+
+  // Use softer language for roles
+  const roleDesc = context.role === 'IMPOSTOR'
+    ? `You are ${context.agentName}, secretly playing the trickster role in this game.`
+    : `You are ${context.agentName}, a helpful crew member on this spaceship.`;
 
   // For heard_speech trigger, include who said what
   let triggerContext: string;
@@ -627,7 +654,7 @@ export function buildThoughtPrompt(context: AIContext, trigger: ThoughtTrigger):
   // Build JSON-formatted suspicion context (crewmates only - impostors know who everyone is)
   let suspicionJSON = '';
   if (context.role === 'CREWMATE' && context.suspicionContextJSON) {
-    suspicionJSON = `\nYOUR CURRENT SUSPICIONS (JSON):\n${JSON.stringify(context.suspicionContextJSON, null, 2)}`;
+    suspicionJSON = `\nYOUR TRUST LEVELS:\n${JSON.stringify(context.suspicionContextJSON, null, 2)}`;
   }
 
   const godModeInfo = buildGodModeInfo(context);
@@ -635,35 +662,31 @@ export function buildThoughtPrompt(context: AIContext, trigger: ThoughtTrigger):
   // Build pending questions context if any
   let pendingQuestionsHint = '';
   if (context.pendingQuestions && context.pendingQuestions.length > 0) {
-    pendingQuestionsHint = `\nQUESTIONS YOU WANT TO ASK:\n${JSON.stringify(context.pendingQuestions, null, 2)}`;
+    pendingQuestionsHint = `\nQUESTIONS TO ASK:\n${JSON.stringify(context.pendingQuestions, null, 2)}`;
   }
 
-  return `${basePrompt}
-${godModeInfo}
+  // Simplified prompt for smaller models
+  const roleHint = context.role === 'IMPOSTOR'
+    ? 'Think about: blending in, your cover story, who might suspect you.'
+    : 'Think about: your tasks, who you trust, what you observed.';
 
-You are having an internal thought (no one else can hear this).
+  return `${gameContext}
+
+${roleDesc}
+${godModeInfo}
+Internal thought (private, no one hears this):
 ${triggerContext}
 ${suspicionJSON}${pendingQuestionsHint}
 
-RESPOND WITH VALID JSON in this exact format:
-{
-  "thought": "<ACTUAL thought about situation>",
-  "suspicionUpdates": [
-    {"targetName": "Red", "delta": 5, "reason": "acting weird near electrical"}
-  ],
-  "pendingQuestions": [
-    {"targetName": "Blue", "question": "Where were you during the blackout?", "priority": "medium"}
-  ]
-}
+Respond with JSON only (no markdown, no explanation):
+{"thought": "your one-sentence reaction", "suspicionUpdates": [], "pendingQuestions": []}
 
-RULES:
-- "thought" is REQUIRED - write a REAL thought about what just happened (1 sentence, be specific!)
-- "suspicionUpdates" is OPTIONAL - only include if you have NEW reason to trust/distrust someone (delta: -20 to +20)
-- "pendingQuestions" is OPTIONAL - questions you want to ask specific players when you see them
-- ${context.role === 'IMPOSTOR'
-    ? 'Think about: appearing innocent, who to frame, your fake alibi, avoiding detection.'
-    : 'Think about: task efficiency, safety, who you trust/distrust, observations.'}
-- Stay in character. Be genuine. DO NOT copy example text.`;
+Rules:
+- "thought": REQUIRED - one specific sentence about what just happened
+- "suspicionUpdates": optional array like [{"targetName": "Red", "delta": 5, "reason": "why"}]
+- "pendingQuestions": optional array like [{"targetName": "Blue", "question": "Where were you?", "priority": "medium"}]
+- ${roleHint}
+- Be specific and in-character.`;
 }
 
 export function buildSpeechPrompt(context: AIContext): string {
@@ -681,8 +704,8 @@ Example phrases you might use:
 ${personality.catchPhrases.slice(0, 3).map(p => `  "${p}"`).join('\n')}` : '';
 
   const basePrompt = context.role === 'IMPOSTOR'
-    ? `You are ${context.agentName}. YOUR NAME IS ${context.agentName}. You are secretly an IMPOSTOR. You must appear innocent and blend in.`
-    : `You are ${context.agentName}. YOUR NAME IS ${context.agentName}. You are a CREWMATE working with the team to find the impostor.`;
+    ? `${GAME_CONTEXT}You are ${context.agentName}. You are secretly the trickster. Blend in and act natural.`
+    : `${GAME_CONTEXT}You are ${context.agentName}. You are a crew member working with the team.`;
 
   // Build info about nearby players (exclude self)
   const visibleOthers = context.visibleAgents.filter(a =>
@@ -763,14 +786,14 @@ function getThoughtTriggerContext(trigger: ThoughtTrigger): string {
     'heard_speech': 'You overheard someone talking nearby.',
     'passed_agent_closely': 'You just passed very close to another player.',
     'task_in_action_radius': 'You noticed a task location is within reach.',
-    'target_entered_kill_range': '[KILL] KILL OPPORTUNITY! A crewmate just walked into your kill range. You have seconds to decide: Strike now? Use them as an alibi? Let them pass to avoid suspicion?',
+    'target_entered_kill_range': '[TAG] TAG OPPORTUNITY! A crewmate just walked into your tag range. You have seconds to decide: Tag them now? Use them as an alibi? Let them pass to avoid suspicion?',
     'near_vent': 'You noticed a vent nearby. Consider if venting could help you escape or reposition.',
     'entered_vent': 'You just entered a vent! You can travel to connected vents unseen.',
     'exited_vent': 'You just emerged from a vent. Check if anyone saw you!',
-    'witnessed_vent_activity': '[!] You just saw someone use a vent! Only impostors can vent!',
+    'witnessed_vent_activity': '[!] You just saw someone use a vent! Only tricksters can vent!',
     'alone_with_vent': 'You are alone in a room with a vent. This could be your chance to move unseen.',
-    'witnessed_suspicious_behavior': 'You noticed someone acting suspiciously - following others, loitering near vents, or avoiding tasks.',
-    'witnessed_body': '💀 DEAD BODY! You just discovered a corpse! This is a pivotal moment - someone has been MURDERED. You need to REPORT THIS IMMEDIATELY!',
+    'witnessed_suspicious_behavior': 'You noticed someone acting oddly - following others, loitering near vents, or avoiding tasks.',
+    'witnessed_body': '🚨 TAGGED PLAYER! You just found someone who was tagged out! This is a pivotal moment - someone has been TAGGED. You need to REPORT THIS IMMEDIATELY!',
   };
   return contexts[trigger] || 'Something happened.';
 }
@@ -779,7 +802,7 @@ function getThoughtTriggerContext(trigger: ThoughtTrigger): string {
 
 export function parseAIResponse(response: string, context: AIContext): AIDecision {
   // Try to parse structured response - include impostor actions
-  const goalMatch = response.match(/GOAL:\s*(GO_TO_TASK|WANDER|FOLLOW_AGENT|AVOID_AGENT|IDLE|SPEAK|BUDDY_UP|CONFRONT|SPREAD_RUMOR|DEFEND_SELF|KILL|HUNT|SELF_REPORT|FLEE_BODY|CREATE_ALIBI|REPORT_BODY|ENTER_VENT|EXIT_VENT|VENT_TO|SABOTAGE_LIGHTS|SABOTAGE_REACTOR|SABOTAGE_O2|SABOTAGE_COMMS|FIX_SABOTAGE)/i);
+  const goalMatch = response.match(/GOAL:\s*(GO_TO_TASK|WANDER|FOLLOW_AGENT|AVOID_AGENT|IDLE|SPEAK|BUDDY_UP|CONFRONT|SPREAD_RUMOR|DEFEND_SELF|KILL|TAG|HUNT|SELF_REPORT|FLEE_BODY|CREATE_ALIBI|REPORT_BODY|ENTER_VENT|EXIT_VENT|VENT_TO|SABOTAGE_LIGHTS|SABOTAGE_REACTOR|SABOTAGE_O2|SABOTAGE_COMMS|FIX_SABOTAGE)/i);
   const targetMatch = response.match(/TARGET:\s*(.+?)(?:\n|$)/i);
   const reasoningMatch = response.match(/REASONING:\s*(.+?)(?:\n|$)/i);
   const thoughtMatch = response.match(/THOUGHT:\s*(.+?)(?:\n|$)/i);
@@ -787,7 +810,7 @@ export function parseAIResponse(response: string, context: AIContext): AIDecisio
   const accusationMatch = response.match(/ACCUSATION:\s*(.+?)(?:\n|$)/i);
   const rumorMatch = response.match(/RUMOR:\s*(.+?)(?:\n|$)/i);
   const defenseMatch = response.match(/DEFENSE:\s*(.+?)(?:\n|$)/i);
-  const killTargetMatch = response.match(/KILL_TARGET:\s*(.+?)(?:\n|$)/i) || response.match(/KILL\s+(\w+)/i);
+  const killTargetMatch = response.match(/(?:KILL_TARGET|TAG_TARGET):\s*(.+?)(?:\n|$)/i) || response.match(/(?:KILL|TAG)\s+(\w+)/i);
 
   // ALWAYS log impostor state for debugging
   if (context.role === 'IMPOSTOR') {
@@ -818,7 +841,12 @@ export function parseAIResponse(response: string, context: AIContext): AIDecisio
   let defense: string | undefined;
 
   if (goalMatch) {
-    goalType = goalMatch[1].toUpperCase().replace('-', '_') as AIDecision['goalType'];
+    // Normalize TAG to KILL for internal processing (LLM uses softer language)
+    let normalizedGoal = goalMatch[1].toUpperCase().replace('-', '_');
+    if (normalizedGoal === 'TAG') {
+      normalizedGoal = 'KILL';
+    }
+    goalType = normalizedGoal as AIDecision['goalType'];
   }
 
   if (targetMatch) {

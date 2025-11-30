@@ -799,6 +799,22 @@ AI Backend:        Llama-3.2-1B-Instruct (Q5_K_M) via llama.cpp Docker
 LLM Performance:   ~60-150 tokens/sec, ~300-500ms per decision
 ```
 
+### LLM Prompt Optimizations
+
+The simulation includes several optimizations for smaller language models like Llama 3.2 1B:
+
+1. **Game Context Framing**: All prompts include a disclaimer explaining that Among Us is a harmless party game with cartoon astronauts. This prevents safety filter triggers on words like "kill" or "impostor".
+
+2. **Softer Language**: Instead of "IMPOSTOR" and "KILL", prompts use "TRICKSTER" and "TAG" to reduce safety filter activations.
+
+3. **Simplified JSON Format**: Thought prompts use a minimal JSON structure that smaller models can reliably generate.
+
+4. **Markdown Block Handling**: The JSON parser strips markdown code blocks (```json...```) that smaller models sometimes add.
+
+5. **Safety Refusal Detection**: The system detects when the LLM refuses a request and falls back to generic "brain fart" thoughts instead of crashing.
+
+6. **Placeholder Rejection**: Multiple patterns are detected to prevent the LLM from copying example text verbatim.
+
 ### Map Data Available
 
 The simulation has full Skeld map data including:
