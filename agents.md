@@ -801,19 +801,25 @@ LLM Performance:   ~60-150 tokens/sec, ~300-500ms per decision
 
 ### LLM Prompt Optimizations
 
-The simulation includes several optimizations for smaller language models like Llama 3.2 1B:
+The simulation includes several optimizations for smaller language models like Llama 3.2 1B/3B:
 
-1. **Game Context Framing**: All prompts include a disclaimer explaining that Among Us is a harmless party game with cartoon astronauts. This prevents safety filter triggers on words like "kill" or "impostor".
+1. **Game Context Framing**: All prompts include a strong disclaimer explaining that Among Us is a "fun party video game for all ages (rated E10+)" with "cute cartoon astronauts". This prevents safety filter triggers.
 
-2. **Softer Language**: Instead of "IMPOSTOR" and "KILL", prompts use "TRICKSTER" and "TAG" to reduce safety filter activations.
+2. **Softer Language**: Instead of "IMPOSTOR" and "KILL", prompts use "TRICKSTER" and "TAG" to reduce safety filter activations. "Suspicion" is replaced with "trust" in prompts.
 
 3. **Simplified JSON Format**: Thought prompts use a minimal JSON structure that smaller models can reliably generate.
 
 4. **Markdown Block Handling**: The JSON parser strips markdown code blocks (```json...```) that smaller models sometimes add.
 
-5. **Safety Refusal Detection**: The system detects when the LLM refuses a request and falls back to generic "brain fart" thoughts instead of crashing.
+5. **LLM Refusal Detection**: The system detects 20+ patterns of LLM refusals (e.g., "I cannot provide", "I can't create", "sexual coercion", "involves minors") and uses contextual fallbacks instead of storing refusals. This prevents cascade failures where refusals in memory poison future prompts.
 
-6. **Placeholder Rejection**: Multiple patterns are detected to prevent the LLM from copying example text verbatim.
+6. **Refusal Cascade Prevention**: Refusals are NEVER stored in agent memory or conversation history. This prevents the cascade where the LLM sees its own refusal and thinks the conversation is harmful.
+
+7. **Placeholder Rejection**: Multiple patterns are detected to prevent the LLM from copying example text verbatim.
+
+8. **Room Name Sanitization**: "Weapons" room is renamed to "Laser Tag" in prompts to avoid weapons-related safety triggers.
+
+9. **Trust Class System**: Instead of asking for numeric "suspicion deltas", the LLM picks from 10 discrete trust classes (CLEARED, VOUCHED, SAFE, NEUTRAL, ODD, CAUGHT, etc.) which smaller models handle more reliably.
 
 ### Map Data Available
 

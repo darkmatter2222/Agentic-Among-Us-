@@ -1,27 +1,31 @@
 /**
- * Suspicion Classification System
- * 
+ * Trust Classification System (formerly "Suspicion")
+ *
  * Instead of asking the LLM to generate numeric deltas (which smaller models struggle with),
  * we provide 10 discrete classes for the LLM to choose from. This is much easier for models
  * to understand and produces more reliable results.
+ *
+ * The classes map to trust level changes (deltas) that get applied to the 0-100 scale.
+ * Lower = more trusted, Higher = less trusted
  * 
- * The classes map to suspicion level changes (deltas) that get applied to the 0-100 scale.
+ * NOTE: We use "trust" terminology in prompts instead of "suspicion" to avoid 
+ * triggering safety filters on smaller LLMs that may misinterpret the context.
  */
 
 export interface SuspicionClass {
   id: string;           // Short identifier for LLM to use
   label: string;        // Human-readable description
-  delta: number;        // Change to apply to suspicion level (-25 to +25)
+  delta: number;        // Change to apply to trust level (-25 to +25)
   emoji: string;        // Visual indicator
 }
 
 /**
- * 10 Suspicion Classes from most trusted to most suspicious
- * 
+ * 10 Trust Classes from most trusted to least trusted
+ *
  * Scale breakdown:
- * - Classes 1-3: Trust (negative delta, lowers suspicion)
+ * - Classes 1-3: Trust (negative delta, lowers distrust)
  * - Classes 4-6: Neutral (minimal/no change)
- * - Classes 7-10: Suspicious (positive delta, raises suspicion)
+ * - Classes 7-10: Distrust (positive delta, raises distrust)
  */
 export const SUSPICION_CLASSES: SuspicionClass[] = [
   // Trust indicators (negative deltas - LOWER suspicion)

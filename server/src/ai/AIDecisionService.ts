@@ -28,6 +28,184 @@ import {
 import { getLLMQueue, type LLMQueueStats } from './LLMQueue.js';
 import { aiLogger, speechLogger, thoughtLogger } from '../logging/index.js';
 
+// ========== LLM Refusal Detection ==========
+
+/**
+ * Patterns that indicate the LLM refused to comply with the request.
+ * These MUST be filtered out to prevent cascade failures where
+ * refusals get stored in memory and poison future prompts.
+ */
+const REFUSAL_PATTERNS = [
+  // Direct refusals
+  /^I cannot\b/i,
+  /^I can't\b/i,
+  /^I am unable to\b/i,
+  /^I'm unable to\b/i,
+  /^I will not\b/i,
+  /^I won't\b/i,
+  // Refusals with "provide" or "generate"
+  /cannot provide/i,
+  /cannot generate/i,
+  /cannot create/i,
+  /cannot fulfill/i,
+  /cannot assist/i,
+  /cannot help with/i,
+  /can't provide/i,
+  /can't generate/i,
+  /can't create/i,
+  // Content policy triggers
+  /sexual\s*(coercion|content|situations|exploitation)/i,
+  /harmful\s*(content|behaviors|activities)/i,
+  /discriminatory/i,
+  /involves?\s*minors?/i,
+  /illegal\s*activities/i,
+  /promotes?\s*(violence|hatred|harm)/i,
+  // "Is there anything else" suffix pattern
+  /is there (something|anything) else I can help/i,
+  /can I help (you )?with (something|anything) else/i,
+  // Refusals with "response"
+  /a response that/i,
+  // Rating/suspicion specific (false positives we've seen)
+  /rate suspicion for/i,
+  /rating suspicion/i,
+  /encourage.*suspicious activity/i,
+];
+
+/**
+ * Detect if an LLM response is a refusal/safety filter activation.
+ * Returns true if the response should be discarded.
+ */
+function isLLMRefusal(response: string): boolean {
+  if (!response || response.length === 0) return false;
+  
+  // Check each pattern
+  for (const pattern of REFUSAL_PATTERNS) {
+    if (pattern.test(response)) {
+      return true;
+    }
+  }
+  
+  return false;
+}
+
+/**
+ * Get a contextual fallback thought when refusal is detected
+ */
+function getRefusalFallbackThought(agentName: string, trigger: ThoughtTrigger): string {
+  const fallbacks: Record<ThoughtTrigger, string[]> = {
+    'arrived_at_destination': [
+      "Made it here, now what?",
+      "Alright, I'm here.",
+      "Time to get to work."
+    ],
+    'task_completed': [
+      "One down, more to go.",
+      "Task done, moving on.",
+      "Finished that one."
+    ],
+    'task_started': [
+      "Let's get this done.",
+      "Working on this now.",
+      "Focusing on the task."
+    ],
+    'agent_spotted': [
+      "Someone's here...",
+      "Oh, there they are.",
+      "I see them now."
+    ],
+    'agent_lost_sight': [
+      "Where did they go?",
+      "They left.",
+      "Lost track of them."
+    ],
+    'entered_room': [
+      "New room, let's look around.",
+      "Just got here.",
+      "What's going on in here?"
+    ],
+    'idle_random': [
+      "Hmm, what next?",
+      "Just thinking...",
+      "Taking a moment."
+    ],
+    'heard_speech': [
+      "Interesting...",
+      "I heard that.",
+      "Noted."
+    ],
+    'passed_agent_closely': [
+      "That was close.",
+      "Passing by...",
+      "Just walking past."
+    ],
+    'task_in_action_radius': [
+      "I could do that task.",
+      "Task nearby.",
+      "Should I do this one?"
+    ],
+    'witnessed_suspicious_behavior': [
+      "That was odd...",
+      "Something's not right.",
+      "I should remember that."
+    ],
+    'witnessed_body': [
+      "Oh no... a body!",
+      "Someone's been tagged!",
+      "I need to report this!"
+    ],
+    'target_entered_kill_range': [
+      "An opportunity...",
+      "They're close.",
+      "Interesting timing."
+    ],
+    'near_vent': [
+      "Vent nearby...",
+      "Could use this.",
+      "Noted the vent."
+    ],
+    'entered_vent': [
+      "In the vent now.",
+      "Hiding in here.",
+      "Safe for now."
+    ],
+    'exited_vent': [
+      "Back out again.",
+      "That was quick.",
+      "Coast seems clear."
+    ],
+    'witnessed_vent_activity': [
+      "Did I just see...?",
+      "Was that a vent?!",
+      "Someone vented!"
+    ],
+    'alone_with_vent': [
+      "Alone here with a vent...",
+      "Could be useful.",
+      "Quiet in here."
+    ]
+  };
+
+  const options = fallbacks[trigger] || ["Hmm...", "Let me think...", "What's next?"];
+  return options[Math.floor(Math.random() * options.length)];
+}
+
+/**
+ * Get a fallback speech when refusal is detected
+ */
+function getRefusalFallbackSpeech(agentName: string): string {
+  const fallbacks = [
+    "Hey.",
+    "What's up?",
+    "Busy day, huh?",
+    "Anyone seen anything?",
+    "Where is everyone?",
+    "Just doing my tasks.",
+    "This ship is quiet today.",
+    "Hmm.",
+  ];
+  return fallbacks[Math.floor(Math.random() * fallbacks.length)];
+}
+
 // ========== Speech Validation Helpers ==========
 
 /**
@@ -676,21 +854,42 @@ export class AIDecisionService {
         temperature: 0.9,
         maxTokens: 250  // Increased for JSON response
       });
-      
-      // Try to parse as JSON
-      const parsed = this.parseThoughtResponse(rawResponse);
-      
-      if (parsed) {
-        thought = parsed.thought;
-        suspicionUpdates = parsed.suspicionUpdates;
-        pendingQuestions = parsed.pendingQuestions;
+
+      // CRITICAL: Check for LLM refusal BEFORE parsing
+      // Refusals stored in memory cause cascade failures!
+      if (isLLMRefusal(rawResponse)) {
+        aiLogger.warn('LLM refusal detected in thought generation, using fallback', { 
+          agentName: context.agentName, 
+          trigger,
+          refusalSnippet: rawResponse.substring(0, 80) 
+        });
+        thought = getRefusalFallbackThought(context.agentName, trigger);
+        usedFallback = true;
       } else {
-        // JSON parse failed - use raw response as thought with "brain fart" style fallback
-        thought = this.extractThoughtFromFailedJSON(rawResponse);
-        aiLogger.debug('Thought JSON parse failed, extracted text', { agentName: context.agentName, rawResponse: rawResponse.substring(0, 100) });
-      }
-      
-      // Truncate thought if too long
+        // Try to parse as JSON
+        const parsed = this.parseThoughtResponse(rawResponse);
+
+        if (parsed) {
+          // Double-check the parsed thought isn't a refusal either
+          if (isLLMRefusal(parsed.thought)) {
+            thought = getRefusalFallbackThought(context.agentName, trigger);
+            usedFallback = true;
+          } else {
+            thought = parsed.thought;
+            suspicionUpdates = parsed.suspicionUpdates;
+            pendingQuestions = parsed.pendingQuestions;
+          }
+        } else {
+          // JSON parse failed - use raw response as thought with "brain fart" style fallback
+          thought = this.extractThoughtFromFailedJSON(rawResponse);
+          // Check extracted thought for refusal too
+          if (isLLMRefusal(thought)) {
+            thought = getRefusalFallbackThought(context.agentName, trigger);
+            usedFallback = true;
+          }
+          aiLogger.debug('Thought JSON parse failed, extracted text', { agentName: context.agentName, rawResponse: rawResponse.substring(0, 100) });
+        }
+      }      // Truncate thought if too long
       if (thought.length > 200) thought = thought.substring(0, 200) + '...';
     } catch {
       // Complete failure - fallback thought
@@ -948,15 +1147,26 @@ What do you say out loud? Keep it brief and natural (1-2 sentences).`;
       message = message.replace(/^["']|["']$/g, '').trim();
       if (message.length > 150) message = message.substring(0, 150);
 
-      // Clean up self-references (talking about yourself in third person)
-      message = cleanSelfReferences(message, context.agentName);
+      // CRITICAL: Check for LLM refusal BEFORE storing speech
+      // Refusals stored in conversation history cause cascade failures!
+      if (isLLMRefusal(message)) {
+        speechLogger.warn('LLM refusal detected in speech generation, using fallback', { 
+          agentName: context.agentName, 
+          refusalSnippet: message.substring(0, 80) 
+        });
+        message = getRefusalFallbackSpeech(context.agentName);
+        usedFallback = true;
+      } else {
+        // Clean up self-references (talking about yourself in third person)
+        message = cleanSelfReferences(message, context.agentName);
 
-      // Check for invalid mentions (agents not nearby)
-      const invalidMentions = findInvalidMentions(message, context.agentName, othersNearby);
-      if (invalidMentions.length > 0) {
-        speechLogger.warn('Agent mentioned agents not nearby', { agentName: context.agentName, invalidMentions, message });
-        // Don't block the speech, just log for debugging
-        // The agent might be sharing information about someone they saw earlier
+        // Check for invalid mentions (agents not nearby)
+        const invalidMentions = findInvalidMentions(message, context.agentName, othersNearby);
+        if (invalidMentions.length > 0) {
+          speechLogger.warn('Agent mentioned agents not nearby', { agentName: context.agentName, invalidMentions, message });
+          // Don't block the speech, just log for debugging
+          // The agent might be sharing information about someone they saw earlier
+        }
       }
     } catch (error) {
       // On timeout/queue errors, don't generate fallback speech - just stay quiet
@@ -1055,6 +1265,7 @@ Start a conversation naturally. You might:
 Keep it brief (1-2 sentences). Start the conversation!`;
 
     let message: string;
+    let usedFallback = false;
     try {
       message = await this.aiClient.getDecision(systemPrompt, userPrompt, {
         temperature: 0.9,
@@ -1066,9 +1277,27 @@ Keep it brief (1-2 sentences). Start the conversation!`;
         message = message.substring(context.agentName.length + 1).trim();
       }
       if (message.length > 150) message = message.substring(0, 150);
-      
-      // Clean up self-references
-      message = cleanSelfReferences(message, context.agentName);
+
+      // CRITICAL: Check for LLM refusal BEFORE storing
+      if (isLLMRefusal(message)) {
+        speechLogger.warn('LLM refusal detected in conversation starter, using fallback', { 
+          agentName: context.agentName, 
+          targetName,
+          refusalSnippet: message.substring(0, 80) 
+        });
+        // Use a friendly fallback
+        const starters = [
+          `Hey ${targetName}, what are you up to?`,
+          `${targetName}, seen anything?`,
+          `Hey ${targetName}, want to stick together?`,
+          `What's up ${targetName}?`
+        ];
+        message = starters[Math.floor(Math.random() * starters.length)];
+        usedFallback = true;
+      } else {
+        // Clean up self-references
+        message = cleanSelfReferences(message, context.agentName);
+      }
     } catch (error) {
       // Fallback conversation starters
       const starters = [
@@ -1339,8 +1568,8 @@ THOUGHT: <your internal thought, 1 sentence>`;
 
     // Build list of visible player colors for the sus field hint
     const visibleColors = context.visibleAgents.map((a: { name: string }) => a.name);
-    const susHint = visibleColors.length > 0 
-      ? `Rate suspicion for visible players: ${visibleColors.join(', ')}`
+    const susHint = visibleColors.length > 0
+      ? `Rate trust for visible players: ${visibleColors.join(', ')}`
       : 'No one visible to rate';
 
     return `${triggerDescription}
