@@ -637,6 +637,7 @@ window.setLogLevel('WARN');   // Only warnings and errors
 | System | Details |
 |--------|---------|
 | **Universal Logging System** | Structured JSON logging with color-coded console output, single 1GB log file, log levels (TRACE-FATAL), 22 categories (AI, SIMULATION, WEBSOCKET, RENDER, AUDIO, MOVEMENT, TASK, KILL, VENT, MEETING, SABOTAGE, MEMORY, VISION, ZONE, HTTP, SYSTEM, PERF, GOD, SPEECH, THOUGHT, ERROR, GENERAL), lazy-loaded shared loggers, separate client/server transports, text prefixes instead of emojis |
+| **LLM Training Data Logger** | Automatic capture of all LLM interactions for training data collection. Saves to `LLM-training-data/success/` (valid responses) and `LLM-training-data/fail/` (refusals, parse failures, fallbacks). JSON files auto-rotate at 20MB with sequential naming (training-data-1.json, training-data-2.json, etc.). Captures: system prompt, user prompt, raw response, agent context, success/fail status. Buffered writes (50 entries or 5s interval) for performance. Graceful shutdown flushes pending data. Directory is git-ignored. |
 | **Movement & Physics** | A* pathfinding, steering behaviors, collision avoidance, wall-whisker detection |
 | **Navigation Mesh** | Full Skeld map with walkable zones, room labels, hallways |
 | **Vision System** | Configurable vision radius, line-of-sight calculations |

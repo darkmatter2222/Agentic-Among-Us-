@@ -1,4 +1,5 @@
 import { buildServer } from './app.js';
+import { shutdownLLMTrainingDataLogger } from './ai/LLMTrainingDataLogger.js';
 
 const PORT = Number(process.env.PORT ?? 4000);
 const HOST = process.env.HOST ?? '0.0.0.0';
@@ -10,6 +11,10 @@ async function start() {
   const shutdown = async (signal: string) => {
     server.log.info(`Received ${signal}, shutting down gracefully...`);
     try {
+      // Flush LLM training data before closing
+      await shutdownLLMTrainingDataLogger();
+      server.log.info('LLM training data flushed');
+      
       await server.close();
       server.log.info('Server closed successfully');
       process.exit(0);

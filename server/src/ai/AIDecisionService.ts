@@ -26,6 +26,7 @@ import {
   parseAIResponse
 } from './prompts/AgentPrompts.js';
 import { getLLMQueue, type LLMQueueStats } from './LLMQueue.js';
+import { logLLMTrainingData } from './LLMTrainingDataLogger.js';
 import { aiLogger, speechLogger, thoughtLogger } from '../logging/index.js';
 
 // ========== LLM Refusal Detection ==========
@@ -468,6 +469,11 @@ export class AIDecisionService {
    * Emit a trace event to all listeners
    */
   private emitTraceEvent(trace: LLMTraceEvent): void {
+    // Log to training data files (async, fire-and-forget)
+    logLLMTrainingData(trace).catch(error => {
+      aiLogger.error('Failed to log LLM training data', { error: error as Error });
+    });
+
     for (const listener of this.traceListeners) {
       try {
         listener(trace);
