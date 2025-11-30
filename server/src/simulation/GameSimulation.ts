@@ -248,6 +248,9 @@ export class GameSimulation {
     if (deltaSeconds > 0) {
       this.manager.update(deltaSeconds);
       
+      // Update sabotage system (timers, fix progress, etc.)
+      this.manager.updateSabotage(deltaSeconds);
+      
       // Update AI service with current agent positions for trace capture
       if (this.aiService) {
         const agents = this.manager.getAgents();
@@ -303,6 +306,7 @@ export class GameSimulation {
       recentVentEvents: this.recentVentEvents,
       gameTimer: this.getGameTimer(),
       killStatusMap,
+      sabotageState: this.buildSabotageSnapshot(),
     };
     
     // Clear the body report after one tick (it's only for UI animation trigger)
@@ -553,5 +557,25 @@ export class GameSimulation {
    */
   getPlayersInVents(): string[] {
     return this.manager.getPlayersInVents();
+  }
+
+  // ==================== SABOTAGE SYSTEM METHODS ====================
+
+  /**
+   * Build sabotage snapshot for world state broadcast
+   */
+  private buildSabotageSnapshot(): import('@shared/types/simulation.types.ts').SabotageSnapshot {
+    const context = this.manager.getSabotageContext();
+    
+    return {
+      activeSabotage: context.activeSabotage ? {
+        type: context.activeSabotage.type,
+        timeRemaining: context.activeSabotage.timeRemaining,
+        fixProgress: context.activeSabotage.fixProgress,
+        fixLocations: context.activeSabotage.fixLocations,
+      } : undefined,
+      lightsOn: context.lightsOn,
+      commsActive: context.commsActive,
+    };
   }
 }

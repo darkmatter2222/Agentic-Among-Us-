@@ -187,6 +187,8 @@ export interface WorldDelta {
   bodies?: import('./simulation.types.ts').BodySnapshot[];
   // LLM Queue stats for monitoring
   llmQueueStats?: LLMQueueStats;
+  // Sabotage state
+  sabotageState?: import('./simulation.types.ts').SabotageSnapshot;
 }
 
 export interface AgentDelta {

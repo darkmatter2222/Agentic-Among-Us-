@@ -183,6 +183,7 @@ export interface SerializeWorldOptions {
   recentVentEvents?: VentEvent[];
   gameTimer?: import('../types/simulation.types.ts').GameTimerSnapshot;
   killStatusMap?: Map<string, KillStatusInfo>;
+  sabotageState?: import('../types/simulation.types.ts').SabotageSnapshot;
 }
 
 function serializeBody(body: DeadBody): BodySnapshot {
@@ -249,5 +250,6 @@ export function serializeWorld(
     recentHeard: options.recentHeard ?? [],
     taskProgress: options.taskProgress ?? 0,
     llmQueueStats: options.llmQueueStats,
+    sabotageState: options.sabotageState,
   };
 }

@@ -53,6 +53,7 @@ export {
   taskLog,
   killLog,
   ventLog,
+  sabotageLog,
   memLog,
   speechLog,
   thoughtLog,

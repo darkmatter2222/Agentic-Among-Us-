@@ -201,5 +201,6 @@ export function diffWorldSnapshots(previous: WorldSnapshot | null, current: Worl
     recentSpeech: current.recentSpeech,
     bodies: current.bodies,
     llmQueueStats: current.llmQueueStats,
+    sabotageState: current.sabotageState,
   };
 }

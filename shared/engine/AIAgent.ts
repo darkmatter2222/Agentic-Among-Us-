@@ -12,7 +12,7 @@ import type { Pathfinder } from './Pathfinder.ts';
 import { PathSmoother } from './PathSmoother.ts';
 import { AgentMemory, type ObservationEntry, type ConversationEntry, type SuspicionRecord } from './AgentMemory.ts';
 import type { PlayerRole, PlayerState } from '../types/game.types.ts';
-import { aiLog, speechLog, taskLog, killLog, moveLog, godLog } from '../logging/index.ts';
+import { aiLog, speechLog, taskLog, killLog, moveLog, godLog, ventLog, sabotageLog } from '../logging/index.ts';
 import type { 
   TaskAssignment, 
   AIContext, 
@@ -151,12 +151,20 @@ export class AIAgent {
 
   // Body report callback (set by manager) - returns true if report succeeded
   private reportBodyCallback: ((reporterId: string) => boolean) | null = null;
-  
+
+  // Vent request callbacks (set by manager for impostor only)
+  private ventEnterCallback: ((impostorId: string, ventId: string) => boolean) | null = null;
+  private ventExitCallback: ((impostorId: string) => boolean) | null = null;
+  private ventTravelCallback: ((impostorId: string, targetVentId: string) => boolean) | null = null;
+  private ventContextCallback: ((impostorId: string) => AIContext['ventContext']) | null = null;
+
+  // Sabotage callback (set by manager for impostor only)
+  private sabotageCallback: ((impostorId: string, sabotageType: 'LIGHTS' | 'REACTOR' | 'O2' | 'COMMS') => boolean) | null = null;
+  private sabotageContextCallback: ((agentId: string) => AIContext['sabotageContext']) | null = null;
+
   // Vent state
   private _isInVent: boolean = false;
-  private _currentVentId: string | undefined = undefined;
-
-  // Conversation state - tracks pending replies
+  private _currentVentId: string | undefined = undefined;  // Conversation state - tracks pending replies
   private pendingConversationReply: {
     speakerId: string;
     speakerName: string;
@@ -286,7 +294,40 @@ export class AIAgent {
   setReportBodyCallback(callback: (reporterId: string) => boolean): void {
     this.reportBodyCallback = callback;
   }
-  
+
+  /**
+   * Set vent request callbacks (impostor only)
+   */
+  setVentCallbacks(
+    enterCallback: (impostorId: string, ventId: string) => boolean,
+    exitCallback: (impostorId: string) => boolean,
+    travelCallback: (impostorId: string, targetVentId: string) => boolean,
+    contextCallback: (impostorId: string) => AIContext['ventContext']
+  ): void {
+    this.ventEnterCallback = enterCallback;
+    this.ventExitCallback = exitCallback;
+    this.ventTravelCallback = travelCallback;
+    this.ventContextCallback = contextCallback;
+  }
+
+  /**
+   * Set sabotage callback for impostor actions
+   */
+  setSabotageCallback(
+    callback: (impostorId: string, sabotageType: 'LIGHTS' | 'REACTOR' | 'O2' | 'COMMS') => boolean
+  ): void {
+    this.sabotageCallback = callback;
+  }
+
+  /**
+   * Set sabotage context callback for AI decision making (all agents)
+   */
+  setSabotageContextCallback(
+    callback: (agentId: string) => AIContext['sabotageContext']
+  ): void {
+    this.sabotageContextCallback = callback;
+  }
+
     /**
    * Receive speech from another agent
    * This may trigger a conversation response
@@ -778,12 +819,73 @@ export class AIAgent {
         this.selfReport();
         break;
         
+        
       case 'FLEE_BODY':
         await this.fleeFromBody();
         break;
-        
+
       case 'CREATE_ALIBI':
         await this.createAlibi();
+        break;
+
+      // ===== Vent actions (impostor only) =====
+      case 'ENTER_VENT':
+        ventLog.get().info('Attempting to enter vent', { agentName: this.config.name, targetVentId: decision.targetVentId });
+        if (decision.targetVentId && this.ventEnterCallback) {
+          const success = this.ventEnterCallback(this.config.id, decision.targetVentId);
+          if (success) {
+            this.behaviorState.currentGoal = 'Hiding in vent';
+            this.behaviorState.nextDecisionTime = Date.now() + 3000; // Wait before next decision
+          } else {
+            ventLog.get().warn('Failed to enter vent', { agentName: this.config.name, ventId: decision.targetVentId });
+            this.behaviorState.currentGoal = 'Failed to enter vent';
+          }
+        }
+        break;
+
+      case 'EXIT_VENT':
+        ventLog.get().info('Attempting to exit vent', { agentName: this.config.name });
+        if (this.ventExitCallback) {
+          const success = this.ventExitCallback(this.config.id);
+          if (success) {
+            this.behaviorState.currentGoal = 'Exited vent';
+            this.behaviorState.nextDecisionTime = Date.now() + 1500; // Short cooldown after exiting
+          } else {
+            ventLog.get().warn('Failed to exit vent', { agentName: this.config.name });
+          }
+        }
+        break;
+
+      case 'VENT_TO':
+        ventLog.get().info('Attempting to travel through vents', { agentName: this.config.name, targetVentId: decision.targetVentId });
+        if (decision.targetVentId && this.ventTravelCallback) {
+          const success = this.ventTravelCallback(this.config.id, decision.targetVentId);
+          if (success) {
+            this.behaviorState.currentGoal = `Traveled to ${decision.targetVentId}`;
+            this.behaviorState.nextDecisionTime = Date.now() + 2000; // Wait after travel
+          } else {
+            ventLog.get().warn('Failed to travel through vent', { agentName: this.config.name, targetVentId: decision.targetVentId });
+          }
+        }
+        break;
+
+      // ===== Sabotage actions (impostor only) =====
+      case 'SABOTAGE_LIGHTS':
+      case 'SABOTAGE_REACTOR':
+      case 'SABOTAGE_O2':
+      case 'SABOTAGE_COMMS':
+        const sabotageType = decision.sabotageType || decision.goalType.replace('SABOTAGE_', '') as 'LIGHTS' | 'REACTOR' | 'O2' | 'COMMS';
+        sabotageLog.get().info('Attempting sabotage', { agentName: this.config.name, sabotageType });
+        if (this.sabotageCallback) {
+          const success = this.sabotageCallback(this.config.id, sabotageType);
+          if (success) {
+            this.behaviorState.currentGoal = `Sabotaged ${sabotageType}`;
+            this.behaviorState.nextDecisionTime = Date.now() + 5000; // Wait after sabotage
+            this.addRecentEvent(`Sabotaged ${sabotageType.toLowerCase()}`);
+          } else {
+            sabotageLog.get().warn('Failed to sabotage', { agentName: this.config.name, sabotageType });
+          }
+        }
         break;
 
       case 'REPORT_BODY':
@@ -791,7 +893,7 @@ export class AIAgent {
         killLog.get().info('Executing REPORT_BODY decision', { agentId: this.config.id, agentName: this.config.name });
         this.reportBody();
         break;
-        
+
       case 'IDLE':
       default:
         this.behaviorState.idleTimeRemaining = 2000 + Math.random() * 3000;
@@ -800,14 +902,12 @@ export class AIAgent {
         break;
     }
   }
-  
+
   /**
    * Fallback decision when AI is unavailable
    */
   private fallbackDecision(): AIDecision {
-    const nextTaskIndex = this.findNextTask();
-    
-    if (nextTaskIndex !== -1) {
+    const nextTaskIndex = this.findNextTask();    if (nextTaskIndex !== -1) {
       return {
         goalType: 'GO_TO_TASK',
         targetTaskIndex: nextTaskIndex,
@@ -1445,18 +1545,32 @@ export class AIAgent {
    * Set player state (ALIVE, DEAD, GHOST)
    */
   setPlayerState(state: PlayerState): void {
+    const previousState = this.aiState.playerState;
     this.aiState.playerState = state;
-    
+
     if (state === 'DEAD') {
       // Stop all activity
       this.movementController.stop();
       this.stateMachine.transitionTo(PlayerActivityState.IDLE, 'Dead');
       this.behaviorState.currentGoal = null;
       this.aiState.isDoingTask = false;
+    } else if (state === 'GHOST') {
+      // Ghost state - can resume activity, continue tasks
+      // Enable wall-passing for ghost
+      this.movementController.setCollisionEnabled(false);
+      
+      // Ghosts can continue their tasks
+      // Resume to IDLE state, will pick up next task via AI decision
+      this.stateMachine.transitionTo(PlayerActivityState.IDLE, 'Became Ghost');
+      
+      aiLog.get().info('Agent transitioned to GHOST', {
+        id: this.config.id,
+        name: this.config.name,
+        previousState,
+        remainingTasks: this.aiState.assignedTasks.filter(t => !t.isCompleted).length,
+      });
     }
-  }
-  
-  /**
+  }  /**
    * Find the index of the last completed task
    */
   private findLastCompletedTask(): number {
@@ -1866,7 +1980,11 @@ export class AIAgent {
     // Add impostor-specific context
     if (this.aiState.role === 'IMPOSTOR') {
       context.impostorContext = this.buildImpostorContext();
+      context.ventContext = this.buildVentContext();
     }
+
+    // Add sabotage context for all agents (crewmates need to see active sabotages to fix)
+    context.sabotageContext = this.buildSabotageContext();
 
     return context;
   }
@@ -1939,7 +2057,44 @@ export class AIAgent {
       nearbyBodies,
     };
   }
-  
+
+  /**
+   * Build vent context for impostor AI decisions
+   */
+  private buildVentContext(): AIContext['ventContext'] {
+    // Vent context is provided by the manager via callback
+    if (this.ventContextCallback) {
+      return this.ventContextCallback(this.config.id);
+    }
+
+    // Fallback if no callback - return basic state
+    return {
+      isInVent: this._isInVent,
+      currentVentId: this._currentVentId || null,
+      connectedVents: [],
+      nearbyVents: [],
+      ventCooldownRemaining: 0,
+    };
+  }
+
+  /**
+   * Build sabotage context for AI decisions
+   */
+  private buildSabotageContext(): AIContext['sabotageContext'] {
+    // Sabotage context is provided by the manager via callback
+    if (this.sabotageContextCallback) {
+      return this.sabotageContextCallback(this.config.id);
+    }
+
+    // Fallback if no callback - return empty context
+    return {
+      activeSabotage: null,
+      cooldownRemaining: 0,
+      canSabotage: false,
+      availableSabotages: [],
+    };
+  }
+
   /**
    * Get kill cooldown remaining (placeholder - will be connected to KillSystem)
    */

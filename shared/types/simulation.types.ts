@@ -312,22 +312,46 @@ export interface WorldSnapshot {
   recentHeard?: HeardSpeechEvent[];  // Recent hearing events for visual feedback
   taskProgress?: number; // 0-100 percentage of total tasks completed
   llmQueueStats?: import('./protocol.types.ts').LLMQueueStats; // LLM queue monitoring
+  // Sabotage state
+  sabotageState?: SabotageSnapshot;
+}
+
+// ========== Sabotage Snapshot ==========
+
+export interface SabotageSnapshot {
+  /** Currently active sabotage, if any */
+  activeSabotage?: {
+    type: 'LIGHTS' | 'REACTOR' | 'O2' | 'COMMS';
+    timeRemaining: number;  // Seconds remaining for critical sabotages
+    fixProgress: number;    // 0-100 progress on fix
+    /** Fix locations for this sabotage */
+    fixLocations: Array<{
+      id: string;
+      position: { x: number; y: number };
+      isFixed: boolean;
+    }>;
+  };
+  /** Whether lights are currently on */
+  lightsOn: boolean;
+  /** Whether comms are currently active */
+  commsActive: boolean;
 }
 
 // ========== AI Decision Types ==========
 
 export type AIGoalType = 
-  | 'GO_TO_TASK' 
-  | 'WANDER' 
-  | 'FOLLOW_AGENT' 
-  | 'AVOID_AGENT' 
-  | 'IDLE' 
-  | 'SPEAK' 
-  | 'BUDDY_UP' 
-  | 'CONFRONT' 
-  | 'SPREAD_RUMOR' 
+  | 'GO_TO_TASK'
+  | 'WANDER'
+  | 'FOLLOW_AGENT'
+  | 'AVOID_AGENT'
+  | 'IDLE'
+  | 'SPEAK'
+  | 'BUDDY_UP'
+  | 'CONFRONT'
+  | 'SPREAD_RUMOR'
   | 'DEFEND_SELF'
   | 'REPORT_BODY'    // Report a dead body (triggers meeting)
+  | 'FIX_SABOTAGE'   // Go to fix location to repair sabotage (crewmate)
   // Impostor-only actions
   | 'KILL'
   | 'HUNT'           // Actively seek isolated targets
@@ -337,7 +361,12 @@ export type AIGoalType =
   // Vent actions (Impostor-only)
   | 'ENTER_VENT'     // Go to and enter nearest accessible vent
   | 'EXIT_VENT'      // Exit current vent at chosen destination
-  | 'VENT_TO';       // Navigate through vent network to specific destination
+  | 'VENT_TO'        // Navigate through vent network to specific destination
+  // Sabotage actions (Impostor-only)
+  | 'SABOTAGE_LIGHTS'    // Sabotage the lights to reduce crewmate vision
+  | 'SABOTAGE_REACTOR'   // Sabotage reactor (critical - forces crewmates to fix)
+  | 'SABOTAGE_O2'        // Sabotage O2 (critical - forces crewmates to fix)
+  | 'SABOTAGE_COMMS';    // Sabotage comms (hides task list)
 
 export interface AIDecision {
   goalType: AIGoalType;
@@ -355,6 +384,8 @@ export interface AIDecision {
   killTarget?: string; // Agent ID to kill
   // Vent context (impostor only)
   targetVentId?: string; // Vent ID for ENTER_VENT, EXIT_VENT, VENT_TO
+  // Sabotage context (impostor only)
+  sabotageType?: 'LIGHTS' | 'REACTOR' | 'O2' | 'COMMS';
 }
 
 export interface AIContext {
@@ -452,7 +483,19 @@ export interface AIContext {
     /** Cooldown remaining before can use vent again */
     ventCooldownRemaining: number;
   };
-  
+
+  // ===== Sabotage context (only provided when role is IMPOSTOR) =====
+  sabotageContext?: {
+    /** Currently active sabotage if any */
+    activeSabotage: { type: 'LIGHTS' | 'REACTOR' | 'O2' | 'COMMS'; remainingTime: number } | null;
+    /** Cooldown remaining before can sabotage again */
+    cooldownRemaining: number;
+    /** Can start a new sabotage */
+    canSabotage: boolean;
+    /** Available sabotage types to trigger */
+    availableSabotages: Array<'LIGHTS' | 'REACTOR' | 'O2' | 'COMMS'>;
+  };
+
   // ===== Body/witness context (for both roles) =====
   visibleBodies?: Array<{
     id: string;

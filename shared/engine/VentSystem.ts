@@ -110,13 +110,18 @@ export class VentSystem {
   private ventEvents: VentEvent[];
   private playerCooldowns: Map<string, number>; // playerId -> next available time (ms)
   private playersInVents: Map<string, string>; // playerId -> ventId
-  
+
   /** Callback for line-of-sight checks (injected for decoupling from NavMesh) */
   private lineOfSightChecker?: (from: Point, to: Point) => boolean;
 
-  constructor(vents: Vent[], config: Partial<VentSystemConfig> = {}) {
+  constructor(
+    vents: Vent[],
+    lineOfSightChecker?: (from: Point, to: Point) => boolean,
+    config: Partial<VentSystemConfig> = {}
+  ) {
     this.config = { ...DEFAULT_VENT_CONFIG, ...config };
     this.vents = new Map(vents.map(v => [v.id, v]));
+    this.lineOfSightChecker = lineOfSightChecker;
     this.ventStates = new Map();
     this.ventEvents = [];
     this.playerCooldowns = new Map();
@@ -579,6 +584,32 @@ export class VentSystem {
    */
   getVentState(ventId: string): VentState | undefined {
     return this.ventStates.get(ventId);
+  }
+
+  /**
+   * Get a player's vent status (for AI decision making)
+   */
+  getPlayerVentState(playerId: string): {
+    isInVent: boolean;
+    currentVentId: string | null;
+    cooldownRemaining: number;
+  } {
+    const currentVentId = this.playersInVents.get(playerId) || null;
+    const cooldownEnd = this.playerCooldowns.get(playerId) || 0;
+    const cooldownRemaining = Math.max(0, (cooldownEnd - Date.now()) / 1000);
+
+    return {
+      isInVent: currentVentId !== null,
+      currentVentId,
+      cooldownRemaining,
+    };
+  }
+
+  /**
+   * Alias for getNearbyVents - get vents within interaction range of a position
+   */
+  getVentsInRange(position: Point, range: number = 150): Vent[] {
+    return this.getNearbyVents(position, range).map(v => v.vent);
   }
 
   // ========== Event History ==========

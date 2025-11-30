@@ -40,6 +40,7 @@ export class MovementController {
   private lastProgressPosition: Point;
   private timeSinceProgress: number = 0;
   private stuck: boolean = false;
+  private collisionEnabled: boolean = true; // Can be disabled for ghosts
 
   constructor(startPosition: Point, speed?: number) {
     if (!isPointWalkable(startPosition.x, startPosition.y, WALKABLE_ZONES, OBSTACLES)) {
@@ -356,6 +357,11 @@ export class MovementController {
   }
 
   private resolveCollision(start: Point, end: Point): Point {
+    // If collision is disabled (ghost mode), skip collision resolution
+    if (!this.collisionEnabled) {
+      return end;
+    }
+
     if (this.isWalkable(end)) {
       return end;
     }
@@ -520,5 +526,19 @@ export class MovementController {
     if (this.timeSinceProgress >= this.stuckTimeThreshold) {
       this.stuck = true;
     }
+  }
+
+  /**
+   * Enable or disable collision detection (disabled for ghosts)
+   */
+  setCollisionEnabled(enabled: boolean): void {
+    this.collisionEnabled = enabled;
+  }
+
+  /**
+   * Check if collision is enabled
+   */
+  isCollisionEnabled(): boolean {
+    return this.collisionEnabled;
   }
 }

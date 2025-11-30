@@ -662,6 +662,9 @@ window.setLogLevel('WARN');   // Only warnings and errors
 | **Phase-Aware AI Prompts** | Crewmate prompts: WORKING phase = friendly workers, no danger awareness; ALERT phase = suspicious investigators with alibis. Impostor prompts: blend in more during WORKING, strategic killing/deception during ALERT. |
 | **Full Memory Display** | Memory tab in agent profile shows complete dump: All Observations (color-coded by type), All Conversations, Accusations, Alibis, and Recently Heard. Scrollable lists with timestamps and zones. |
 | **LLM Timeline Filters** | Filter panel with: (1) Agent color circles - click to filter by specific agents, (2) Goal type buttons - filter by decision types like GO_TO_TASK, WANDER, HUNT, KILL, REPORT_BODY. Filters combinable with clear buttons. |
+| **Vent System AI Integration** | Full vent mechanics: entry/exit animations, vent-to-vent travel, cooldowns, witness detection. AI agents can ENTER_VENT, EXIT_VENT, VENT_TRAVEL as goal types. Vent context provided to LLM with current state, connected vents, and nearby witnesses. Sound effects on vent use. |
+| **Sabotage System** | Full sabotage mechanics via SabotageSystem.ts: LIGHTS, REACTOR, O2, COMMS sabotage types. Impostor AI can trigger sabotages via SABOTAGE goal type. Crewmate AI can FIX_SABOTAGE. Cooldowns between sabotages. State broadcast to clients via WorldSnapshot/WorldDelta. Lights affect vision (crewmate vision reduced to 0.25x). |
+| **Ghost Mode** | GhostSystem.ts manages ghost transitions. Dead players (DEAD state) transition to GHOST state when body is reported or after 30s timeout. Ghosts: (1) Can pass through walls (collision disabled), (2) Get unlimited vision (10x multiplier), (3) Can continue completing tasks, (4) Can only communicate with other ghosts. Ghosts rendered as semi-transparent floating sprites. |
 
 ### God Mode System (Active)
 
@@ -772,14 +775,14 @@ alone_with_vent        - IMPOSTOR ONLY: Alone in a room with a vent
 | **Discussion Phase** | No | No meeting chat or accusations |
 | **Voting System** | No | No vote casting or counting |
 | **Ejection** | No | No player removal |
-| **Sabotage (Reactor)** | No | Timer and fix mechanics not active |
-| **Sabotage (O2)** | No | Timer and fix mechanics not active |
-| **Sabotage (Lights)** | No | Vision reduction not implemented |
-| **Sabotage (Comms)** | No | Task hiding not implemented |
+| **Sabotage (Reactor)** | Partial | SabotageSystem supports REACTOR type with timers, but requires 2-player fix coordination (not fully tested) |
+| **Sabotage (O2)** | Partial | SabotageSystem supports O2 type with timers, but requires 2-location code entry (not fully tested) |
+| **Sabotage (Lights)** | ✅ Implemented | Vision reduction active (crewmate vision × 0.25), fix mechanics in Electrical |
+| **Sabotage (Comms)** | Partial | SabotageSystem supports COMMS type, task hiding not yet implemented |
 | **Door System** | No | Doors don't close or block movement |
-| **Vent System** | Partial | VentSystem class implemented with entry/exit/travel mechanics, witness detection, cooldowns. Integration with AI agents pending |
+| **Vent System** | ✅ Implemented | Full AI integration: ENTER_VENT, EXIT_VENT, VENT_TRAVEL goals, cooldowns, witness detection, vent context in prompts |
 | **Win Conditions** | No | Game runs indefinitely |
-| **Ghost Mode** | No | Dead players cannot continue |
+| **Ghost Mode** | ✅ Implemented | GhostSystem manages DEAD→GHOST transitions, wall-passing, unlimited vision, ghost-only communication |
 | **Security Cameras** | No | No camera monitoring |
 | **Admin Table** | No | No player location display |
 

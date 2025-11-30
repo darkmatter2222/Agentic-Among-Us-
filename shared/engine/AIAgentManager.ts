@@ -15,7 +15,9 @@ import type { PlayerRole } from '../types/game.types.ts';
 import type { TaskAssignment, AIContext, AIDecision } from '../types/simulation.types.ts';
 import { KillSystem, type KillSystemConfig, type DeadBody, type KillEvent, type WitnessRecord } from './KillSystem.ts';
 import { VentSystem, type VentSystemConfig, type VentEvent, type VentState, type VentWitness } from './VentSystem.ts';
-import { simLog, killLog, speechLog, zoneLog, moveLog } from '../logging/index.ts';
+import { SabotageSystem, type SabotageType, type SabotageEvent, type ActiveSabotage } from './SabotageSystem.ts';
+import { GhostSystem, type GhostSystemConfig } from './GhostSystem.ts';
+import { simLog, killLog, speechLog, zoneLog, moveLog, sabotageLog } from '../logging/index.ts';
 import { selectPersonalitiesForGame, type AgentPersonality } from '../data/personalities.ts';
 
 // ========== Configuration ==========
@@ -72,6 +74,8 @@ export class AIAgentManager {
   private impostorIds: Set<string>;
   private killSystem: KillSystem;
   private ventSystem: VentSystem;
+  private sabotageSystem: SabotageSystem;
+  private ghostSystem: GhostSystem;
 
   // AI Decision callbacks (can be set externally for LLM integration)
   private decisionCallback: AIDecisionCallback | null = null;
@@ -114,7 +118,16 @@ export class AIAgentManager {
       (from, to) => this.pathfinder.hasLineOfSight(from, to),
       config.ventSystemConfig || {}
     );
-    
+
+    // Initialize sabotage system
+    this.sabotageSystem = new SabotageSystem();
+
+    // Initialize ghost system
+    this.ghostSystem = new GhostSystem();
+    this.ghostSystem.setOnBecomeGhostCallback((agentId) => {
+      this.handleBecomeGhost(agentId);
+    });
+
     // Create agents with roles and tasks
     this.agents = [];
     const numImpostors = config.numImpostors ?? 2;
@@ -137,8 +150,37 @@ export class AIAgentManager {
       agent.setReportBodyCallback((reporterId) => {
         return this.handleReportBody(reporterId);
       });
+      // Set up vent callbacks for impostors
+      if (this.impostorIds.has(agent.getId())) {
+        agent.setVentCallbacks(
+          (impostorId: string, ventId: string) => {
+            const event = this.attemptEnterVent(impostorId, ventId);
+            return event !== null;
+          },
+          (impostorId: string) => {
+            const event = this.attemptExitVent(impostorId);
+            return event !== null;
+          },
+          (impostorId: string, targetVentId: string) => {
+            const event = this.attemptVentTravel(impostorId, targetVentId);
+            return event !== null;
+          },
+          (impostorId: string) => {
+            return this.buildVentContext(impostorId);
+          }
+        );
+        // Set up sabotage callback for impostor
+        agent.setSabotageCallback((impostorId: string, sabotageType: SabotageType) => {
+          return this.attemptSabotage(impostorId, sabotageType) !== null;
+        });
+      }
+
+      // Set up sabotage context callback for all agents (crewmates need to see active sabotages)
+      agent.setSabotageContextCallback((agentId: string) => {
+        return this.buildSabotageContext(agentId);
+      });
     }
-    
+
     // Initialize kill system with impostor IDs
     for (const impostorId of this.impostorIds) {
       this.killSystem.initializeImpostor(impostorId);
@@ -311,11 +353,12 @@ export class AIAgentManager {
    */
   update(deltaTime: number): void {
     const currentTime = Date.now();
-    
+
     // Update kill system (cooldowns, animations)
     this.killSystem.update(deltaTime);
-    
-    // Collect all agent data for kill system target updates
+
+    // Update ghost system (auto-ghost transitions after timeout)
+    this.ghostSystem.update(deltaTime);    // Collect all agent data for kill system target updates
     const agentDataForKillSystem: Array<{
       id: string;
       position: Point;
@@ -445,11 +488,12 @@ export class AIAgentManager {
       killLog.get().debug('Kill attempt failed', { reason: killAttempt.reason });
       return null;
     }
-    
+
     // Kill succeeded! Update the target agent
     target.setPlayerState('DEAD');
-    
-    // Create the kill event to return
+
+    // Register death with ghost system - will become ghost when body is reported or after timeout
+    this.ghostSystem.registerDeath(targetId, impostorId);    // Create the kill event to return
     const killEvent: KillEvent = {
       id: `kill_${Date.now()}`,
       killerId: impostorId,
@@ -530,9 +574,12 @@ export class AIAgentManager {
 
   /**
    * Clear all dead bodies from the map (called after body report)
+   * Also triggers ghost transition for all dead players
    */
   clearAllBodies(): void {
     this.killSystem.clearAllBodies();
+    // When bodies are cleared (after report), all pending ghosts transition to GHOST state
+    this.ghostSystem.transitionAllPendingToGhosts();
   }
   
   /**
@@ -635,6 +682,11 @@ export class AIAgentManager {
   
   /**
    * Broadcast speech from one agent to all agents in hearing range
+   * Ghost rules:
+   * - DEAD agents can't speak (body on ground)
+   * - GHOST agents can speak but only to other GHOSTs
+   * - ALIVE agents can speak to other ALIVE agents
+   * - GHOSTs can hear ALIVE agents (optionally, based on config)
    */
   private broadcastSpeech(speakerId: string, message: string, zone: string | null): void {
     const speaker = this.agents.find(a => a.getId() === speakerId);
@@ -643,13 +695,19 @@ export class AIAgentManager {
       return;
     }
 
-    // Dead agents can't speak
+    // Dead agents (body on ground) can't speak
     if (speaker.getPlayerState() === 'DEAD') {
-      speechLog.get().debug('broadcastSpeech: Speaker is dead', { speakerName: speaker.getName() });
+      speechLog.get().debug('broadcastSpeech: Speaker is dead (body)', { speakerName: speaker.getName() });
       return;
     }
 
-    speechLog.get().info('Broadcasting speech', { speakerName: speaker.getName(), messagePreview: message.substring(0, 50), zone });
+    const isGhostSpeaker = speaker.getPlayerState() === 'GHOST';
+    speechLog.get().info('Broadcasting speech', { 
+      speakerName: speaker.getName(), 
+      messagePreview: message.substring(0, 50), 
+      zone,
+      isGhost: isGhostSpeaker 
+    });
 
     const speakerPos = speaker.getPosition();
     let listenersReached = 0;
@@ -657,8 +715,10 @@ export class AIAgentManager {
     for (const listener of this.agents) {
       if (listener.getId() === speakerId) continue; // Don't broadcast to self
 
-      // Dead agents can't hear
-      if (listener.getPlayerState() === 'DEAD') continue;
+      // Check ghost communication rules
+      if (!this.ghostSystem.canHear(listener.getId(), listener.getPlayerState(), speakerId, speaker.getPlayerState())) {
+        continue;
+      }
 
       const listenerPos = listener.getPosition();
       const dx = listenerPos.x - speakerPos.x;
@@ -770,31 +830,33 @@ export class AIAgentManager {
       return null;
     }
 
-    // Get witnesses (other players who can see the vent)
-    const potentialWitnesses: Array<{ id: string; position: Point; visionRadius: number }> = [];
-    for (const agent of this.agents) {
-      if (agent.getId() === impostorId || agent.getPlayerState() !== 'ALIVE') continue;
-      potentialWitnesses.push({
-        id: agent.getId(),
-        position: agent.getPosition(),
-        visionRadius: agent.getVisionRadius(),
-      });
-    }
+    // Build player location info for witness detection
+    const allPlayers: import('./VentSystem.ts').PlayerLocationInfo[] = this.agents.map(a => ({
+      id: a.getId(),
+      name: a.getName(),
+      position: a.getPosition(),
+      visionRadius: a.getVisionRadius(),
+      isAlive: a.getPlayerState() === 'ALIVE',
+      role: a.getRole() as 'CREWMATE' | 'IMPOSTOR',
+      isInVent: this.ventSystem.getPlayerVentState(a.getId()).isInVent,
+    }));
 
-    const result = this.ventSystem.enterVent(
+    const ventEvent = this.ventSystem.enterVent(
       impostorId,
+      impostor.getName(),
       impostor.getPosition(),
+      'IMPOSTOR',
       ventId,
-      potentialWitnesses
+      allPlayers
     );
 
-    if (result.success && result.event) {
+    if (ventEvent) {
       // Update agent state to be in vent
       impostor.setInVent(true, ventId);
-      
+
       // Record memories for witnesses
-      for (const witness of result.witnesses || []) {
-        const witnessAgent = this.agents.find(a => a.getId() === witness.witnessId);
+      for (const witness of ventEvent.witnesses || []) {
+        const witnessAgent = this.agents.find(a => a.getId() === witness.id);
         if (witnessAgent) {
           witnessAgent.getMemory().addObservation({
             type: 'VENT_SEEN',
@@ -805,15 +867,14 @@ export class AIAgentManager {
           });
         }
       }
-      
-      return result.event;
+
+      return ventEvent;
     }
 
     return null;
-  }
-
-  /**
+  }  /**
    * Attempt to exit a vent (impostor only)
+   * Exits at the current vent location
    */
   attemptExitVent(impostorId: string): VentEvent | null {
     // Verify impostor
@@ -827,8 +888,8 @@ export class AIAgentManager {
     }
 
     // Get the vent they're currently in
-    const ventState = this.ventSystem.getVentState(impostorId);
-    if (!ventState || !ventState.currentVentId) {
+    const ventState = this.ventSystem.getPlayerVentState(impostorId);
+    if (!ventState.isInVent || !ventState.currentVentId) {
       return null;
     }
 
@@ -837,27 +898,33 @@ export class AIAgentManager {
       return null;
     }
 
-    // Get witnesses (other players who can see the vent)
-    const potentialWitnesses: Array<{ id: string; position: Point; visionRadius: number }> = [];
-    for (const agent of this.agents) {
-      if (agent.getId() === impostorId || agent.getPlayerState() !== 'ALIVE') continue;
-      potentialWitnesses.push({
-        id: agent.getId(),
-        position: agent.getPosition(),
-        visionRadius: agent.getVisionRadius(),
-      });
-    }
+    // Build player location info for witness detection
+    const allPlayers: import('./VentSystem.ts').PlayerLocationInfo[] = this.agents.map(a => ({
+      id: a.getId(),
+      name: a.getName(),
+      position: a.getPosition(),
+      visionRadius: a.getVisionRadius(),
+      isAlive: a.getPlayerState() === 'ALIVE',
+      role: a.getRole() as 'CREWMATE' | 'IMPOSTOR',
+      isInVent: this.ventSystem.getPlayerVentState(a.getId()).isInVent,
+    }));
 
-    const result = this.ventSystem.exitVent(impostorId, potentialWitnesses);
+    // Exit at current vent (same destination as current)
+    const ventEvent = this.ventSystem.exitVent(
+      impostorId,
+      impostor.getName(),
+      ventState.currentVentId,
+      allPlayers
+    );
 
-    if (result.success && result.event) {
+    if (ventEvent) {
       // Update agent state - no longer in vent and teleport to vent position
       impostor.setInVent(false, undefined);
       impostor.setPosition(vent.position);
-      
+
       // Record memories for witnesses
-      for (const witness of result.witnesses || []) {
-        const witnessAgent = this.agents.find(a => a.getId() === witness.witnessId);
+      for (const witness of ventEvent.witnesses || []) {
+        const witnessAgent = this.agents.find(a => a.getId() === witness.id);
         if (witnessAgent) {
           witnessAgent.getMemory().addObservation({
             type: 'VENT_SEEN',
@@ -868,8 +935,8 @@ export class AIAgentManager {
           });
         }
       }
-      
-      return result.event;
+
+      return ventEvent;
     }
 
     return null;
@@ -889,12 +956,27 @@ export class AIAgentManager {
       return null;
     }
 
-    const result = this.ventSystem.travelInVent(impostorId, targetVentId);
+    const success = this.ventSystem.travelInVent(impostorId, targetVentId);
 
-    if (result.success && result.event) {
+    if (success) {
       // Update the agent's current vent
       impostor.setInVent(true, targetVentId);
-      return result.event;
+      
+      // Get destination vent info for the event
+      const destVent = this.ventSystem.getVent(targetVentId);
+      
+      // Return a VentEvent for the travel
+      const event: VentEvent = {
+        type: 'VENT',
+        timestamp: Date.now(),
+        playerId: impostorId,
+        playerName: impostor.getName(),
+        ventId: targetVentId,
+        ventRoom: destVent?.room || 'unknown',
+        action: 'travel',
+        witnesses: [], // Travel is hidden inside vents
+      };
+      return event;
     }
 
     return null;
@@ -919,21 +1001,21 @@ export class AIAgentManager {
       return null;
     }
 
-    const ventState = this.ventSystem.getVentState(impostorId);
+    const ventState = this.ventSystem.getPlayerVentState(impostorId);
     const nearbyVents = this.ventSystem.getVentsInRange(impostor.getPosition());
 
     // Get connected vents if currently in a vent
     let connectedVents: string[] = [];
-    if (ventState?.isInVent && ventState.currentVentId) {
+    if (ventState.isInVent && ventState.currentVentId) {
       const currentVent = this.ventSystem.getVent(ventState.currentVentId);
       if (currentVent) {
-        connectedVents = currentVent.connectedVents;
+        connectedVents = currentVent.connectedTo;
       }
     }
 
     return {
-      isInVent: ventState?.isInVent || false,
-      currentVentId: ventState?.currentVentId || null,
+      isInVent: ventState.isInVent,
+      currentVentId: ventState.currentVentId,
       connectedVents,
       nearbyVents: nearbyVents.map(v => ({
         ventId: v.id,
@@ -941,9 +1023,94 @@ export class AIAgentManager {
           Math.pow(v.position.x - impostor.getPosition().x, 2) +
           Math.pow(v.position.y - impostor.getPosition().y, 2)
         ),
-        room: v.room,
+        room: v.room || 'unknown',
       })),
-      ventCooldownRemaining: ventState?.cooldownRemaining || 0,
+      ventCooldownRemaining: ventState.cooldownRemaining,
+    };
+  }
+
+  /**
+   * Build vent context for AI decision making (returns format matching AIContext['ventContext'])
+   */
+  buildVentContext(impostorId: string): import('../types/simulation.types.ts').AIContext['ventContext'] {
+    if (!this.impostorIds.has(impostorId)) {
+      return {
+        isInVent: false,
+        currentVentId: null,
+        connectedVents: [],
+        nearbyVents: [],
+        ventCooldownRemaining: 0,
+      };
+    }
+
+    const impostor = this.agents.find(a => a.getId() === impostorId);
+    if (!impostor) {
+      return {
+        isInVent: false,
+        currentVentId: null,
+        connectedVents: [],
+        nearbyVents: [],
+        ventCooldownRemaining: 0,
+      };
+    }
+
+    const ventState = this.ventSystem.getPlayerVentState(impostorId);
+    const nearbyVentsRaw = this.ventSystem.getVentsInRange(impostor.getPosition());
+
+    // Calculate witness risk for each vent
+    const calculateWitnessRisk = (ventPosition: { x: number; y: number }): number => {
+      let witnessCount = 0;
+      for (const agent of this.agents) {
+        if (agent.getId() === impostorId || agent.getPlayerState() !== 'ALIVE') continue;
+        const dist = Math.sqrt(
+          Math.pow(agent.getPosition().x - ventPosition.x, 2) +
+          Math.pow(agent.getPosition().y - ventPosition.y, 2)
+        );
+        if (dist < agent.getVisionRadius()) {
+          witnessCount++;
+        }
+      }
+      // Convert witness count to risk percentage (0 witnesses = 0%, 3+ = 100%)
+      return Math.min(100, witnessCount * 33);
+    };
+
+    // Build connected vents if in a vent
+    let connectedVents: Array<{ id: string; room: string; witnessRisk: number }> = [];
+    if (ventState.isInVent && ventState.currentVentId) {
+      const currentVent = this.ventSystem.getVent(ventState.currentVentId);
+      if (currentVent) {
+        connectedVents = currentVent.connectedTo.map(ventId => {
+          const vent = this.ventSystem.getVent(ventId);
+          return {
+            id: ventId,
+            room: vent?.room || 'unknown',
+            witnessRisk: vent ? calculateWitnessRisk(vent.position) : 100,
+          };
+        });
+      }
+    }
+
+    // Build nearby vents if not in a vent
+    const nearbyVents = nearbyVentsRaw.map(v => {
+      const distance = Math.sqrt(
+        Math.pow(v.position.x - impostor.getPosition().x, 2) +
+        Math.pow(v.position.y - impostor.getPosition().y, 2)
+      );
+      return {
+        id: v.id,
+        room: v.room || 'unknown',
+        distance,
+        canEnter: distance <= 1.5, // Interaction range
+        witnessRisk: calculateWitnessRisk(v.position),
+      };
+    });
+
+    return {
+      isInVent: ventState.isInVent,
+      currentVentId: ventState.currentVentId,
+      connectedVents,
+      nearbyVents,
+      ventCooldownRemaining: ventState.cooldownRemaining,
     };
   }
 
@@ -982,5 +1149,176 @@ export class AIAgentManager {
    */
   getPlayersInVents(): string[] {
     return this.ventSystem.getPlayersInVents();
+  }
+
+  // ==================== SABOTAGE METHODS ====================
+
+  /**
+   * Attempt to start a sabotage (impostor only)
+   */
+  attemptSabotage(impostorId: string, sabotageType: SabotageType): SabotageEvent | null {
+    // Verify impostor
+    if (!this.impostorIds.has(impostorId)) {
+      sabotageLog.get().warn('Non-impostor attempted sabotage', { playerId: impostorId, sabotageType });
+      return null;
+    }
+
+    const impostor = this.agents.find(a => a.getId() === impostorId);
+    if (!impostor || impostor.getPlayerState() !== 'ALIVE') {
+      sabotageLog.get().warn('Dead or missing impostor attempted sabotage', { playerId: impostorId });
+      return null;
+    }
+
+    const event = this.sabotageSystem.startSabotage(sabotageType, impostorId);
+    
+    if (event) {
+      sabotageLog.get().info('Sabotage started', { 
+        playerId: impostorId,
+        sabotageType,
+        event 
+      });
+    }
+
+    return event;
+  }
+
+  /**
+   * Attempt to fix a sabotage (any alive player)
+   */
+  attemptFixSabotage(playerId: string, sabotageType: SabotageType): boolean {
+    const player = this.agents.find(a => a.getId() === playerId);
+    if (!player || player.getPlayerState() !== 'ALIVE') {
+      return false;
+    }
+
+    const playerPosition = player.getPosition();
+    return this.sabotageSystem.attemptFix(sabotageType, playerId, playerPosition);
+  }
+
+  /**
+   * Build sabotage context for AI decision making
+   */
+  buildSabotageContext(agentId: string): import('../types/simulation.types.ts').AIContext['sabotageContext'] {
+    const isImpostor = this.impostorIds.has(agentId);
+    const context = this.sabotageSystem.getSabotageContext();
+
+    return {
+      activeSabotage: context.activeSabotage ? {
+        type: context.activeSabotage.type,
+        timeRemaining: context.activeSabotage.timeRemaining,
+        fixProgress: context.activeSabotage.fixProgress,
+        fixLocations: context.activeSabotage.fixLocations,
+      } : null,
+      cooldownRemaining: isImpostor ? context.cooldownRemaining : 0,
+      canSabotage: isImpostor && context.canSabotage,
+      availableSabotages: isImpostor ? context.availableSabotages : [],
+    };
+  }
+
+  /**
+   * Update the sabotage system (called each tick)
+   */
+  updateSabotage(deltaTime: number): void {
+    this.sabotageSystem.update(deltaTime);
+  }
+
+  /**
+   * Get the sabotage system for external configuration (e.g., setting callbacks)
+   */
+  getSabotageSystem(): SabotageSystem {
+    return this.sabotageSystem;
+  }
+
+  /**
+   * Get current sabotage context for UI/state broadcasting
+   */
+  getSabotageContext(): ReturnType<SabotageSystem['getSabotageContext']> {
+    return this.sabotageSystem.getSabotageContext();
+  }
+
+  // ========== Ghost System Methods ==========
+
+  /**
+   * Handle an agent becoming a ghost (callback from GhostSystem)
+   */
+  private handleBecomeGhost(agentId: string): void {
+    const agent = this.getAgent(agentId);
+    if (!agent) return;
+
+    // Transition the agent to GHOST state
+    agent.setPlayerState('GHOST');
+
+    simLog.get().info('Agent became ghost', {
+      agentId,
+      name: agent.getName(),
+      color: agent.getColor(),
+    });
+  }
+
+  /**
+   * Check if an agent is a ghost
+   */
+  isGhost(agentId: string): boolean {
+    return this.ghostSystem.isGhost(agentId);
+  }
+
+  /**
+   * Check if source agent can see target agent (accounting for ghost rules)
+   */
+  canSeeAgent(sourceId: string, targetId: string): boolean {
+    const source = this.getAgent(sourceId);
+    const target = this.getAgent(targetId);
+    if (!source || !target) return false;
+
+    return this.ghostSystem.canSee(
+      sourceId,
+      source.getPlayerState(),
+      targetId,
+      target.getPlayerState()
+    );
+  }
+
+  /**
+   * Check if source agent can hear target agent (accounting for ghost rules)
+   */
+  canHearAgent(sourceId: string, targetId: string): boolean {
+    const source = this.getAgent(sourceId);
+    const target = this.getAgent(targetId);
+    if (!source || !target) return false;
+
+    return this.ghostSystem.canHear(
+      sourceId,
+      source.getPlayerState(),
+      targetId,
+      target.getPlayerState()
+    );
+  }
+
+  /**
+   * Get vision multiplier for an agent (ghosts get massive vision)
+   */
+  getVisionMultiplier(agentId: string): number {
+    return this.ghostSystem.getVisionMultiplier(agentId);
+  }
+
+  /**
+   * Get the ghost system for external access
+   */
+  getGhostSystem(): GhostSystem {
+    return this.ghostSystem;
+  }
+
+  /**
+   * Get all ghost agent IDs
+   */
+  getAllGhostIds(): string[] {
+    return this.ghostSystem.getAllGhostIds();
+  }
+
+  /**
+   * Record a task completion by a ghost
+   */
+  recordGhostTaskCompletion(agentId: string): void {
+    this.ghostSystem.recordGhostTaskCompletion(agentId);
   }
 }

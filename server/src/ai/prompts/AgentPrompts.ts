@@ -390,7 +390,7 @@ ${isBodyDiscovery ? `*** BODY DISCOVERY - CRITICAL DECISION: ***
 - SELF_REPORT - Report your own kill to appear innocent
 - FLEE_BODY - Get away from a body quickly
 - CREATE_ALIBI - Go to populated area/task after kill
-- GO_TO_TASK [task#] - FAKE working on a task (wait appropriate time!)
+${buildVentActions(context)}${buildSabotageActions(context)}- GO_TO_TASK [task#] - FAKE working on a task (wait appropriate time!)
 - WANDER - Explore and look for opportunities
 - FOLLOW_AGENT [name] - Stick close to build trust (or stalk victim)
 - AVOID_AGENT [name] - Stay away from someone suspicious of you
@@ -449,6 +449,71 @@ Good hunting spots: Electrical, MedBay, Reactor, Engine rooms.`;
   }
   
   return '';
+}
+
+/**
+ * Build vent action options for impostor prompts
+ * Shows available vent actions based on current state
+ */
+function buildVentActions(context: AIContext): string {
+  const ventContext = context.ventContext;
+  if (!ventContext) {
+    return '';
+  }
+
+  const lines: string[] = [];
+
+  if (ventContext.isInVent) {
+    // Currently in a vent - show exit and travel options
+    lines.push('- EXIT_VENT - Exit the vent (check for witnesses first!)');
+    
+    if (ventContext.connectedVents && ventContext.connectedVents.length > 0) {
+      const ventOptions = ventContext.connectedVents
+        .map(v => `${v.id} (${v.room}, ${v.witnessRisk}% risk)`)
+        .join(', ');
+      lines.push(`- VENT_TO [vent_id] - Travel to connected vent: ${ventOptions}`);
+    }
+  } else {
+    // Not in a vent - show nearby vents to enter
+    if (ventContext.nearbyVents && ventContext.nearbyVents.length > 0) {
+      const canEnterVents = ventContext.nearbyVents.filter(v => v.canEnter);
+      if (canEnterVents.length > 0) {
+        const ventOptions = canEnterVents
+          .map(v => `${v.id} in ${v.room}`)
+          .join(', ');
+        lines.push(`- ENTER_VENT [vent_id] - Enter a nearby vent to escape/reposition: ${ventOptions}`);
+      }
+    }
+  }
+
+  return lines.length > 0 ? lines.join('\n') + '\n' : '';
+}
+
+/**
+ * Build sabotage action options for impostor prompts
+ */
+function buildSabotageActions(context: AIContext): string {
+  const sabotageContext = context.sabotageContext;
+  if (!sabotageContext) {
+    return '';
+  }
+
+  const lines: string[] = [];
+
+  if (sabotageContext.activeSabotage) {
+    // There's already an active sabotage
+    lines.push(`- [SABOTAGE ACTIVE: ${sabotageContext.activeSabotage.type} - ${Math.ceil(sabotageContext.activeSabotage.remainingTime / 1000)}s remaining]`);
+  } else if (sabotageContext.canSabotage) {
+    // Can start a new sabotage
+    lines.push('- SABOTAGE_LIGHTS - Turn off lights to reduce crewmate vision (great for kills!)');
+    lines.push('- SABOTAGE_REACTOR - Force crewmates to Reactor or lose! (30s timer)');
+    lines.push('- SABOTAGE_O2 - Force crewmates to O2/Admin or suffocate! (30s timer)');
+    lines.push('- SABOTAGE_COMMS - Hide task list and disable security');
+  } else if (sabotageContext.cooldownRemaining > 0) {
+    lines.push(`- [SABOTAGE COOLDOWN: ${Math.ceil(sabotageContext.cooldownRemaining / 1000)}s]`);
+  }
+
+  return lines.length > 0 ? lines.join('\n') + '\n' : '';
 }
 
 function buildSuspicionInfo(context: AIContext): string {
@@ -690,7 +755,7 @@ function getThoughtTriggerContext(trigger: ThoughtTrigger): string {
 
 export function parseAIResponse(response: string, context: AIContext): AIDecision {
   // Try to parse structured response - include impostor actions
-  const goalMatch = response.match(/GOAL:\s*(GO_TO_TASK|WANDER|FOLLOW_AGENT|AVOID_AGENT|IDLE|SPEAK|BUDDY_UP|CONFRONT|SPREAD_RUMOR|DEFEND_SELF|KILL|HUNT|SELF_REPORT|FLEE_BODY|CREATE_ALIBI|REPORT_BODY)/i);
+  const goalMatch = response.match(/GOAL:\s*(GO_TO_TASK|WANDER|FOLLOW_AGENT|AVOID_AGENT|IDLE|SPEAK|BUDDY_UP|CONFRONT|SPREAD_RUMOR|DEFEND_SELF|KILL|HUNT|SELF_REPORT|FLEE_BODY|CREATE_ALIBI|REPORT_BODY|ENTER_VENT|EXIT_VENT|VENT_TO|SABOTAGE_LIGHTS|SABOTAGE_REACTOR|SABOTAGE_O2|SABOTAGE_COMMS|FIX_SABOTAGE)/i);
   const targetMatch = response.match(/TARGET:\s*(.+?)(?:\n|$)/i);
   const reasoningMatch = response.match(/REASONING:\s*(.+?)(?:\n|$)/i);
   const thoughtMatch = response.match(/THOUGHT:\s*(.+?)(?:\n|$)/i);
@@ -719,6 +784,8 @@ export function parseAIResponse(response: string, context: AIContext): AIDecisio
   let targetTaskIndex: number | undefined;
   let targetAgentId: string | undefined;
   let killTarget: string | undefined;
+  let targetVentId: string | undefined;
+  let sabotageType: 'LIGHTS' | 'REACTOR' | 'O2' | 'COMMS' | undefined;
   let reasoning = 'Continuing tasks';
   let thought: string | undefined;
   let speech: string | undefined;
@@ -811,6 +878,50 @@ export function parseAIResponse(response: string, context: AIContext): AIDecisio
     }
   }
 
+  // Handle vent target extraction (for impostors)
+  if (goalType === 'ENTER_VENT' || goalType === 'VENT_TO') {
+    // Try to extract vent ID from TARGET field or VENT_TO pattern
+    const ventTargetMatch = response.match(/(?:VENT_TO|ENTER_VENT)\s+(\w+)/i) || targetMatch;
+    if (ventTargetMatch) {
+      const ventId = ventTargetMatch[1].trim().toLowerCase();
+      // Validate against available vents
+      if (context.ventContext) {
+        if (goalType === 'ENTER_VENT') {
+          const nearbyVent = context.ventContext.nearbyVents?.find(v => 
+            v.id.toLowerCase() === ventId || v.id.toLowerCase().includes(ventId)
+          );
+          if (nearbyVent) {
+            targetVentId = nearbyVent.id;
+          } else if (context.ventContext.nearbyVents && context.ventContext.nearbyVents.length > 0) {
+            // Default to first nearby vent that can be entered
+            const canEnter = context.ventContext.nearbyVents.find(v => v.canEnter);
+            if (canEnter) {
+              targetVentId = canEnter.id;
+            }
+          }
+        } else if (goalType === 'VENT_TO') {
+          const connectedVent = context.ventContext.connectedVents?.find(v =>
+            v.id.toLowerCase() === ventId || v.id.toLowerCase().includes(ventId)
+          );
+          if (connectedVent) {
+            targetVentId = connectedVent.id;
+          } else if (context.ventContext.connectedVents && context.ventContext.connectedVents.length > 0) {
+            // Default to first connected vent
+            targetVentId = context.ventContext.connectedVents[0].id;
+          }
+        }
+      }
+    }
+  }
+
+  // Handle sabotage type extraction (for impostors)
+  if (goalType.startsWith('SABOTAGE_')) {
+    const sabotageMatch = goalType.match(/SABOTAGE_(LIGHTS|REACTOR|O2|COMMS)/i);
+    if (sabotageMatch) {
+      sabotageType = sabotageMatch[1].toUpperCase() as 'LIGHTS' | 'REACTOR' | 'O2' | 'COMMS';
+    }
+  }
+
   // Fallback: if no clear goal, default to next task
   if (!goalMatch && context.assignedTasks.some((t: TaskAssignment) => !t.isCompleted)) {
     goalType = 'GO_TO_TASK';
@@ -832,6 +943,8 @@ export function parseAIResponse(response: string, context: AIContext): AIDecisio
     targetTaskIndex,
     targetAgentId,
     killTarget,
+    targetVentId,
+    sabotageType,
     reasoning,
     thought,
     speech,
