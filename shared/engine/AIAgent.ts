@@ -788,6 +788,7 @@ export class AIAgent {
 
       case 'REPORT_BODY':
         // Report the nearest visible body
+        killLog.get().info('Executing REPORT_BODY decision', { agentId: this.config.id, agentName: this.config.name });
         this.reportBody();
         break;
         
@@ -1277,8 +1278,15 @@ export class AIAgent {
    * This is the legitimate report action (not self-report)
    */
   private reportBody(): void {
+    killLog.get().info('Agent attempting to report body', { 
+      agentId: this.config.id, 
+      agentName: this.config.name,
+      hasCallback: !!this.reportBodyCallback 
+    });
+
     if (!this.reportBodyCallback) {
       // No callback set - just speak about it
+      killLog.get().warn('No report body callback set!', { agentName: this.config.name });
       this.speak("BODY! There's a dead body here!");
       this.behaviorState.currentGoal = 'Reporting body';
       this.behaviorState.nextDecisionTime = Date.now() + 3000;
@@ -1287,23 +1295,24 @@ export class AIAgent {
     }
 
     // Call the report callback
+    killLog.get().info('Calling report body callback', { agentId: this.config.id });
     const success = this.reportBodyCallback(this.config.id);
-    
+    killLog.get().info('Report body callback returned', { agentId: this.config.id, success });
+
     if (success) {
       // Report succeeded - the callback handles broadcasting
       this.behaviorState.currentGoal = 'Reported body!';
       this.addRecentEvent('REPORTED A BODY!');
+      this.speak("BODY! Everyone come quick!");
     } else {
       // Report failed (no bodies in range?)
       this.speak("Wait... where did the body go?");
       this.behaviorState.currentGoal = 'Body report failed';
       this.addRecentEvent('Tried to report body but failed');
     }
-    
+
     this.behaviorState.nextDecisionTime = Date.now() + 3000;
-  }
-  
-  /**
+  }  /**
    * Create alibi after kill - move toward task or witness
    */
   private async createAlibi(): Promise<void> {

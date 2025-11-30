@@ -600,16 +600,21 @@ export class AIAgentManager {
    * Returns true if the report was successful
    */
   private handleReportBody(reporterId: string): boolean {
+    killLog.get().info('AIAgentManager.handleReportBody called', { 
+      reporterId, 
+      hasExternalCallback: !!this.reportBodyCallback 
+    });
+
     // Delegate to the external callback (GameSimulation.reportBody)
     if (!this.reportBodyCallback) {
-      simLog.get().warn('Body report failed: no callback set', { reporterId });
+      killLog.get().warn('Body report failed: no external callback set', { reporterId });
       return false;
     }
-    
-    return this.reportBodyCallback(reporterId);
-  }
-  
-  /**
+
+    const result = this.reportBodyCallback(reporterId);
+    killLog.get().info('External body report callback returned', { reporterId, success: result });
+    return result;
+  }  /**
    * Get overall task progress (crewmate tasks only)
    */
   getTaskProgress(): number {

@@ -367,6 +367,8 @@ export class GameSimulation {
    * @returns The body report event if successful, null if failed
    */
   reportBody(reporterId: string): BodyReportEvent | null {
+    simulationLogger.info('GameSimulation.reportBody called', { reporterId });
+
     const reporter = this.manager.getAgent(reporterId);
     if (!reporter) {
       simulationLogger.warn('Body report failed: Invalid reporter', { reporterId });
@@ -375,6 +377,8 @@ export class GameSimulation {
 
     // Get all unreported bodies
     const bodies = this.manager.getBodies();
+    simulationLogger.info('Bodies found for report', { reporterId, bodyCount: bodies.length, bodyIds: bodies.map(b => b.id) });
+
     if (bodies.length === 0) {
       simulationLogger.warn('Body report failed: No bodies to report', { reporterId });
       return null;
@@ -416,10 +420,21 @@ export class GameSimulation {
     this.broadcastBodyReport(reportEvent);
 
     // Remove all bodies from the map
+    simulationLogger.info('Clearing all bodies from map after report', { bodyCount: bodies.length });
     this.manager.clearAllBodies();
+
+    // Verify bodies are cleared
+    const remainingBodies = this.manager.getBodies();
+    simulationLogger.info('Bodies remaining after clear', { remainingCount: remainingBodies.length });
 
     // Store for next tick's snapshot
     this.recentBodyReport = reportEvent;
+
+    simulationLogger.info('Body report completed successfully', { 
+      reporterId, 
+      reporterName: reporter.getName(),
+      bodiesReported: bodies.length 
+    });
 
     return reportEvent;
   }
