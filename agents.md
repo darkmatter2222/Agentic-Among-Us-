@@ -778,21 +778,14 @@ alone_with_vent        - IMPOSTOR ONLY: Alone in a room with a vent
 
 | System | Status | Notes |
 |--------|--------|-------|
-| **Kill Mechanics** | ✅ Implemented | Full kill flow: cooldowns, range checks, witnesses, victim state set to DEAD, ghost system notified, body created, killer/witness notifications. Agents can now actually die! |
-| **Body Discovery** | ✅ Implemented | witnessed_body trigger, REPORT_BODY goal, body report callback chain, phase transition, memory broadcast, UI overlay with audio |
-| **Vent Witness System** | ✅ Implemented | Witnesses who see impostor vent get suspicion set to 100% immediately (conclusive proof). Uses witnessVent() method with proper memory recording. |
 | **Emergency Meetings** | No | Button location exists but non-functional |
 | **Discussion Phase** | No | No meeting chat or accusations |
 | **Voting System** | No | No vote casting or counting |
 | **Ejection** | No | No player removal |
 | **Sabotage (Reactor)** | Partial | SabotageSystem supports REACTOR type with timers, but requires 2-player fix coordination (not fully tested) |
 | **Sabotage (O2)** | Partial | SabotageSystem supports O2 type with timers, but requires 2-location code entry (not fully tested) |
-| **Sabotage (Lights)** | ✅ Implemented | Vision reduction active (crewmate vision × 0.25), fix mechanics in Electrical |
 | **Sabotage (Comms)** | Partial | SabotageSystem supports COMMS type, task hiding not yet implemented |
 | **Door System** | No | Doors don't close or block movement |
-| **Vent System** | ✅ Implemented | Full AI integration: ENTER_VENT, EXIT_VENT, VENT_TRAVEL goals, cooldowns, witness detection, vent context in prompts |
-| **Win Conditions** | Yes | Task completion (100%), impostor parity, time limit (10 min). Game Over overlay with winner, countdown, auto-restart. |
-| **Ghost Mode** | ✅ Implemented | GhostSystem manages DEAD→GHOST transitions, wall-passing, unlimited vision, ghost-only communication |
 | **Security Cameras** | No | No camera monitoring |
 | **Admin Table** | No | No player location display |
 

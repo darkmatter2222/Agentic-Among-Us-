@@ -1,6 +1,8 @@
 # Agentic Among Us
 
-An AI-powered simulation of **Among Us** where autonomous LLM-driven agents play as Crewmates and Impostors. Watch AI agents navigate The Skeld, complete tasks, form alliances, spread rumors, and (eventually) eliminate each other—all powered by large language models.
+⭐ **If you find this project interesting, please leave a star!** It keeps me motivated to continue developing this AI simulation. ⭐
+
+An AI-powered simulation of **Among Us** where autonomous LLM-driven agents play as Crewmates and Impostors. Watch AI agents navigate The Skeld, complete tasks, form alliances, spread rumors, and eliminate each other—all powered by large language models.
 
 ## What Is This?
 
@@ -15,35 +17,44 @@ This project creates a fully autonomous Among Us simulation where:
 
 | Feature | Status | Details |
 |---------|--------|---------|
-| **Movement & Pathfinding** | Complete | A* on visibility graph, steering behaviors, collision avoidance |
-| **Navigation Mesh** | Complete | Full Skeld map with walkable zones, rooms, and hallways |
-| **Task System** | Complete | Task assignment, navigation, execution with realistic durations |
-| **Vision System** | Complete | Agents see only within configurable vision radius |
-| **AI Decision Making** | Complete | LLM-powered goals: tasks, wandering, following, avoiding, confronting |
-| **Agent Memory** | Complete | Timestamped observations, suspicion tracking, conversation history, player location tracking |
-| **Speech System** | Complete | Agents speak to nearby players (rectangular bubble, toggleable) |
-| **Social Actions** | Complete | Buddy up, follow, avoid, confront, spread rumors, defend self |
-| **Thought System** | Complete | Internal reasoning shown as cloud bubbles (toggleable) |
-| **Thinking Indicator** | Complete | Animated "..." dots shown during LLM calls (toggleable) |
-| **Impostor Task Faking** | Complete | Impostors fake tasks without contributing to task bar |
-| **WebSocket Streaming** | Complete | Real-time state sync with delta compression |
-| **PixiJS Visualization** | Complete | Map, agents, vision cones, paths, speech bubbles, info panels |
-| **Logging System** | Complete | Structured JSON logging with color-coded console output, single 1GB log file |
+| **Movement & Pathfinding** | ✅ Complete | A* on visibility graph, steering behaviors, collision avoidance |
+| **Navigation Mesh** | ✅ Complete | Full Skeld map with walkable zones, rooms, and hallways |
+| **Task System** | ✅ Complete | Task assignment, navigation, execution with realistic durations |
+| **Task Progress Bar** | ✅ Complete | Smooth animated progress bar while performing tasks |
+| **Vision System** | ✅ Complete | Agents see only within configurable vision radius |
+| **AI Decision Making** | ✅ Complete | LLM-powered goals: tasks, wandering, following, avoiding, confronting |
+| **Agent Memory** | ✅ Complete | Timestamped observations, suspicion tracking, conversation history |
+| **Speech System** | ✅ Complete | Agents speak to nearby players (rectangular bubble, toggleable) |
+| **Hearing System** | ✅ Complete | Visual ear icon with directional sound waves when agents hear speech |
+| **Social Actions** | ✅ Complete | Buddy up, follow, avoid, confront, spread rumors, defend self |
+| **Thought System** | ✅ Complete | Internal reasoning shown as cloud bubbles (toggleable) |
+| **Thinking Indicator** | ✅ Complete | Animated "..." dots shown during LLM calls (toggleable) |
+| **Kill System** | ✅ Complete | Impostors can kill crewmates with cooldowns, range checks, witnesses |
+| **Body Discovery** | ✅ Complete | Agents witness bodies, choose to report/flee, phase transitions |
+| **Vent System** | ✅ Complete | Full vent mechanics: entry/exit, travel, cooldowns, witness detection |
+| **Sabotage System** | ✅ Complete | Lights, Reactor, O2, Comms sabotages with fix mechanics |
+| **Ghost Mode** | ✅ Complete | Dead players become ghosts (wall-pass, unlimited vision, can finish tasks) |
+| **Win Conditions** | ✅ Complete | Task completion, impostor parity, time limit (10 min) |
+| **Game Timer** | ✅ Complete | Real-time countdown with color-coded warnings |
+| **Player Count** | ✅ Complete | Live "👥 X/8 alive" display |
+| **Pause/Resume** | ✅ Complete | Pause simulation from UI with server-side support |
+| **God Mode** | ✅ Complete | Divine control: direct commands, whispers, persistent principles |
+| **LLM Timeline** | ✅ Complete | Filter by agent/goal, export JSON, clear events |
+| **WebSocket Streaming** | ✅ Complete | Real-time state sync with delta compression |
+| **PixiJS Visualization** | ✅ Complete | Map, agents, vision cones, paths, speech bubbles, info panels |
+| **Logging System** | ✅ Complete | Structured JSON logging with color-coded console output |
+| **Agent Personalities** | ✅ Complete | 12 unique personalities affecting speech and behavior |
 
 ## Planned / Not Yet Implemented
 
 | Feature | Status |
 |---------|--------|
-| Kill System | Partial (KillSystem class exists, full integration pending) |
-| Body Discovery & Reporting | Not implemented |
 | Emergency Meetings | Not implemented |
 | Discussion & Voting | Not implemented |
 | Ejection Mechanics | Not implemented |
-| Sabotage System | Not implemented |
-| Vent System | Partial (VentSystem class exists, AI integration pending) |
 | Door System | Not implemented |
-| Win Conditions | Not implemented |
-| Ghost Mode | Not implemented |
+| Security Cameras | Not implemented |
+| Admin Table | Not implemented |
 
 ---
 

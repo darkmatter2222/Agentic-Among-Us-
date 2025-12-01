@@ -546,6 +546,11 @@ function App() {
             }
           }
         } else if (!snapshot.gameEndState || snapshot.gameEndState.reason === 'ONGOING') {
+          // Detect new match starting (was in game over, now ongoing with low tick)
+          if (lastGameEndReasonRef.current !== null && snapshot.tick < 100) {
+            // Clear LLM trace events on new match to prevent memory buildup
+            setLlmTraceEvents([]);
+          }
           // Reset the ref when game restarts
           lastGameEndReasonRef.current = null;
         }
