@@ -926,21 +926,55 @@ export function LLMTimelinePanel({ width = 320, events, onClear }: LLMTimelinePa
 
   // Build conversation groups for quick lookup
   const conversationGroups = useMemo(() => groupConversationEvents(events), [events]);
-  
-  // Check if an event has a related conversation thread
-  const hasConversationThread = useCallback((event: LLMTraceEvent): boolean => {
-    if (event.conversationId && conversationGroups.has(event.conversationId)) {
-      return (conversationGroups.get(event.conversationId)?.length || 0) > 1;
-    }
-    // For events without ID, check by participants
-    if (event.conversationWith) {
-      const related = findRelatedConversationEvents(event, events);
-      return related.length > 1;
-    }
-    return false;
-  }, [conversationGroups, events]);
 
-  // Auto-scroll to bottom when new events arrive (newest events at bottom)
+  // Precompute which events have conversation threads (O(n) instead of O(n²))
+  const eventsWithThreads = useMemo(() => {
+    const hasThread = new Set<string>();
+    
+    // Events with conversationId that have multiple turns
+    for (const [, group] of conversationGroups) {
+      if (group.length > 1) {
+        for (const event of group) {
+          hasThread.add(event.id);
+        }
+      }
+    }
+    
+    // For events without conversationId but with conversationWith,
+    // build a simpler lookup by participant pairs within time window
+    const participantPairs = new Map<string, LLMTraceEvent[]>();
+    for (const event of events) {
+      if (!event.conversationId && event.conversationWith) {
+        // Create a consistent key for the participant pair
+        const participants = [event.agentName, event.conversationWith].sort().join('|');
+        const existing = participantPairs.get(participants) || [];
+        existing.push(event);
+        participantPairs.set(participants, existing);
+      }
+    }
+    
+    // Mark events that have multiple interactions within time window
+    for (const [, group] of participantPairs) {
+      if (group.length > 1) {
+        // Check if any are within 60s of each other
+        for (let i = 0; i < group.length; i++) {
+          for (let j = i + 1; j < group.length; j++) {
+            if (Math.abs(group[i].timestamp - group[j].timestamp) <= 60000) {
+              hasThread.add(group[i].id);
+              hasThread.add(group[j].id);
+            }
+          }
+        }
+      }
+    }
+    
+    return hasThread;
+  }, [events, conversationGroups]);
+
+  // Simple O(1) lookup for whether an event has a thread
+  const hasConversationThread = useCallback((eventId: string): boolean => {
+    return eventsWithThreads.has(eventId);
+  }, [eventsWithThreads]);  // Auto-scroll to bottom when new events arrive (newest events at bottom)
   // Uses requestAnimationFrame to ensure DOM is updated before scrolling
   useEffect(() => {
     const latestEventId = events.length > 0 ? events[0]?.id : null;
@@ -966,42 +1000,50 @@ export function LLMTimelinePanel({ width = 320, events, onClear }: LLMTimelinePa
     // Consider "at bottom" if within 100px of the bottom
     const isAtBottom = scrollHeight - scrollTop - clientHeight < 100;
     setAutoScroll(isAtBottom);
-  }, []);  // Events come in newest-first from App.tsx, reverse to show chronologically (oldest at top, newest at bottom)
-  const chronologicalEvents = [...events].reverse();
-  
-  const filteredEvents = chronologicalEvents.filter(e => {
-    // Agent color filter - if any colors selected, only show those agents
-    if (selectedAgentColors.size > 0 && !selectedAgentColors.has(e.agentColor)) {
-      return false;
-    }
+  }, []);
 
-    // Goal type filter - if any goal types selected, only show matching decisions
-    if (selectedGoalTypes.size > 0) {
-      // For decision events, check if goalType matches
-      if (e.parsedDecision?.goalType && !selectedGoalTypes.has(e.parsedDecision.goalType)) {
+  // Memoize reversed events to avoid creating new arrays on every render
+  const chronologicalEvents = useMemo(() => [...events].reverse(), [events]);
+
+  // Memoize filtered events to avoid expensive filter on every render
+  const filteredEvents = useMemo(() => {
+    return chronologicalEvents.filter(e => {
+      // Agent color filter - if any colors selected, only show those agents
+      if (selectedAgentColors.size > 0 && !selectedAgentColors.has(e.agentColor)) {
         return false;
       }
-      // Non-decision events pass through if no goal filter OR if type filter includes them
-    }
 
-    // Type filter (all, decision, thought, speech)
-    if (filter === 'all') return true;
-    if (filter === 'speech') {
-      // Include speech/conversation events AND decisions that generated speech
-      return e.requestType === 'speech' ||
-             e.requestType === 'conversation' ||
-             (e.requestType === 'decision' && e.parsedDecision?.speech);
-    }
-    if (filter === 'decision') {
-      // For decision filter, exclude decisions that are primarily speech
-      // to avoid duplication when user switches between tabs
-      return e.requestType === 'decision' && !e.parsedDecision?.speech;
-    }
-    return e.requestType === filter;
-  });  // Limit to last MAX_EVENTS (newest events at bottom, chronological order)
-  const displayEvents = filteredEvents.slice(-MAX_EVENTS);
+      // Goal type filter - if any goal types selected, only show matching decisions
+      if (selectedGoalTypes.size > 0) {
+        // For decision events, check if goalType matches
+        if (e.parsedDecision?.goalType && !selectedGoalTypes.has(e.parsedDecision.goalType)) {
+          return false;
+        }
+        // Non-decision events pass through if no goal filter OR if type filter includes them
+      }
 
-  // Copy filtered events to clipboard as JSON
+      // Type filter (all, decision, thought, speech)
+      if (filter === 'all') return true;
+      if (filter === 'speech') {
+        // Include speech/conversation events AND decisions that generated speech
+        return e.requestType === 'speech' ||
+               e.requestType === 'conversation' ||
+               (e.requestType === 'decision' && e.parsedDecision?.speech);
+      }
+      if (filter === 'decision') {
+        // For decision filter, exclude decisions that are primarily speech
+        // to avoid duplication when user switches between tabs
+        return e.requestType === 'decision' && !e.parsedDecision?.speech;
+      }
+      return e.requestType === filter;
+    });
+  }, [chronologicalEvents, selectedAgentColors, selectedGoalTypes, filter]);
+
+  // Memoize display events slice
+  const displayEvents = useMemo(() => 
+    filteredEvents.slice(-MAX_EVENTS), 
+    [filteredEvents]
+  );  // Copy filtered events to clipboard as JSON
   const handleCopyFiltered = useCallback(async () => {
     if (displayEvents.length === 0) return;
     try {
@@ -1158,7 +1200,7 @@ export function LLMTimelinePanel({ width = 320, events, onClear }: LLMTimelinePa
               key={event.id}
               event={event}
               onClick={() => setSelectedEvent(event)}
-              hasThread={hasConversationThread(event)}
+              hasThread={hasConversationThread(event.id)}
               onConversationClick={() => setConversationThread([event])}
             />
           ))
