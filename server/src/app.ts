@@ -155,7 +155,26 @@ export async function buildServer(options: BuildOptions = {}) {
     return {
       status: 'ok',
       tick: snapshot.tick,
-      agents: snapshot.agents.length
+      agents: snapshot.agents.length,
+      paused: simulationLoop.isPaused()
+    };
+  });
+
+  // Pause/Resume endpoints
+  fastify.post('/simulation/pause', async () => {
+    simulationLoop.pause();
+    return { status: 'paused', paused: true };
+  });
+
+  fastify.post('/simulation/resume', async () => {
+    simulationLoop.resume();
+    return { status: 'resumed', paused: false };
+  });
+
+  fastify.get('/simulation/status', async () => {
+    return {
+      running: simulationLoop.isRunning(),
+      paused: simulationLoop.isPaused()
     };
   });
 

@@ -5,7 +5,7 @@ import { Poly3MapRenderer } from './rendering/Poly3MapRenderer';
 import { RoomLightingRenderer } from './rendering/RoomLightingRenderer';
 import { AIAgentVisualRenderer } from './rendering/AIAgentVisualRenderer';
 import { getSimulationClient } from './ai/SimulationClient';
-import type { WorldSnapshot, SpeechEvent, ThoughtEvent, HeardSpeechEvent, GameTimerSnapshot } from '@shared/types/simulation.types.ts';
+import type { WorldSnapshot, SpeechEvent, ThoughtEvent, HeardSpeechEvent, GameTimerSnapshot, GameEndState } from '@shared/types/simulation.types.ts';
 import type { LLMQueueStats } from '@shared/types/protocol.types.ts';
 import type { LLMTraceEvent } from '@shared/types/llm-trace.types.ts';
 import { AgentInfoPanel, type AgentSummary } from './components/AgentInfoPanel';
@@ -73,6 +73,16 @@ function App() {
     reporterName: string;
     bodies: Array<{ victimName: string; victimColor: number; location: string | null }>;
   } | null>(null);
+
+  // Game end state
+  const [gameEndState, setGameEndState] = useState<GameEndState | null>(null);
+
+  // Pause state
+  const [isPaused, setIsPaused] = useState(false);
+
+  // Game over audio
+  const gameOverAudioRef = useRef<HTMLAudioElement | null>(null);
+  const lastGameEndReasonRef = useRef<string | null>(null);
 
   // Preload kill sound on mount
   useEffect(() => {
@@ -170,6 +180,20 @@ function App() {
     });
     bodyReportAudio.load();
 
+    // Game over sound
+    const gameOverAudio = new Audio('/audio/among-us-victory.mp3');
+    gameOverAudio.preload = 'auto';
+    gameOverAudio.volume = 0.6;
+    gameOverAudioRef.current = gameOverAudio;
+
+    gameOverAudio.addEventListener('canplaythrough', () => {
+      audioLogger.info('Game over sound loaded and ready to play');
+    });
+    gameOverAudio.addEventListener('error', (e) => {
+      audioLogger.error('Error loading game over sound', { error: e });
+    });
+    gameOverAudio.load();
+
     return () => {
       if (ventInAudioRef.current) {
         ventInAudioRef.current.pause();
@@ -182,6 +206,10 @@ function App() {
       if (bodyReportAudioRef.current) {
         bodyReportAudioRef.current.pause();
         bodyReportAudioRef.current = null;
+      }
+      if (gameOverAudioRef.current) {
+        gameOverAudioRef.current.pause();
+        gameOverAudioRef.current = null;
       }
     };
   }, []);  // ResizeObserver to track viewport size changes and resize PIXI renderer
@@ -504,6 +532,25 @@ function App() {
         setTaskProgress(snapshot.taskProgress ?? 0);
         setLlmQueueStats(snapshot.llmQueueStats);
         setGameTimer(snapshot.gameTimer);
+        
+        // Play game over sound when game ends
+        if (snapshot.gameEndState && snapshot.gameEndState.reason !== 'ONGOING') {
+          const gameEndKey = `${snapshot.gameEndState.reason}-${snapshot.gameEndState.matchDuration}`;
+          if (gameEndKey !== lastGameEndReasonRef.current) {
+            lastGameEndReasonRef.current = gameEndKey;
+            if (gameOverAudioRef.current) {
+              gameOverAudioRef.current.currentTime = 0;
+              gameOverAudioRef.current.play()
+                .then(() => audioLogger.info('Game over sound playing'))
+                .catch((err) => audioLogger.warn('Failed to play game over sound', { error: err.message }));
+            }
+          }
+        } else if (!snapshot.gameEndState || snapshot.gameEndState.reason === 'ONGOING') {
+          // Reset the ref when game restarts
+          lastGameEndReasonRef.current = null;
+        }
+        
+        setGameEndState(snapshot.gameEndState ?? null);
         lastSummaryAt = now;
       }
     });
@@ -520,7 +567,6 @@ function App() {
 
     // Subscribe to LLM trace events for the timeline panel
     const unsubscribeLLMTrace = simulationClient.onLLMTrace((trace) => {
-      console.debug('[App] LLM trace event received:', trace.id, trace.agentName);
       setLlmTraceEvents((prev) => {
         const updated = [trace, ...prev];
         // Keep only the most recent MAX_TRACE_EVENTS
@@ -828,6 +874,17 @@ function App() {
     });
   }, []);
 
+  const handleTogglePause = useCallback(async () => {
+    try {
+      const endpoint = isPaused ? '/simulation/resume' : '/simulation/pause';
+      const response = await fetch(`http://localhost:3000${endpoint}`, { method: 'POST' });
+      const data = await response.json();
+      setIsPaused(data.paused);
+    } catch (error) {
+      console.error('Failed to toggle pause:', error);
+    }
+  }, [isPaused]);
+
   const handleToggleLights = useCallback(() => {
     setLightsOn(prev => {
       const newValue = !prev;
@@ -874,9 +931,10 @@ function App() {
 
   return (
     <div className="app-shell">
-      <LLMTimelinePanel 
+      <LLMTimelinePanel
         width={leftPanelWidth}
         events={llmTraceEvents}
+        onClear={() => setLlmTraceEvents([])}
       />
       <div className="map-wrapper" ref={mapWrapperRef}>
         <div className="controls-panel">
@@ -927,6 +985,14 @@ function App() {
           >
             💬
           </button>
+          <div className="control-divider" />
+          <button
+            className={`control-btn ${isPaused ? 'active' : ''}`}
+            onClick={handleTogglePause}
+            title={isPaused ? 'Resume Simulation' : 'Pause Simulation'}
+          >
+            {isPaused ? '▶️' : '⏸️'}
+          </button>
         </div>
         {/* Body Report Overlay */}
         {showBodyReportOverlay && bodyReportData && (
@@ -951,18 +1017,82 @@ function App() {
             </div>
           </div>
         )}
-        {/* Game Timer Display */}
-        {gameTimer && (
-          <div className={`game-timer ${gameTimer.remainingMs < 120000 ? 'urgent' : gameTimer.remainingMs < 300000 ? 'warning' : ''}`}>
-            <span className="timer-icon">⏱️</span>
-            <span className="timer-value">
-              {Math.floor(gameTimer.remainingMs / 60000)}:{String(Math.floor((gameTimer.remainingMs % 60000) / 1000)).padStart(2, '0')}
-            </span>
+        {/* Game Over Overlay */}
+        {gameEndState && (
+          <div className={`game-over-overlay ${gameEndState.winner === 'CREWMATES' ? 'crew-win' : gameEndState.winner === 'IMPOSTORS' ? 'imp-win' : 'draw'}`}>
+            <div className="game-over-content">
+              <div className="game-over-title">
+                {gameEndState.winner === 'CREWMATES' && '🎉 CREWMATES WIN! 🎉'}
+                {gameEndState.winner === 'IMPOSTORS' && '💀 IMPOSTORS WIN! 💀'}
+                {gameEndState.winner === 'NONE' && "⏰ TIME'S UP!"}
+              </div>
+              <div className="game-over-reason">
+                {gameEndState.reason === 'CREW_WIN_TASKS' && 'All tasks completed!'}
+                {gameEndState.reason === 'CREW_WIN_VOTE' && 'All impostors eliminated!'}
+                {gameEndState.reason === 'IMP_WIN_PARITY' && 'Impostors have taken over!'}
+                {gameEndState.reason === 'IMP_WIN_SABOTAGE' && 'Critical sabotage not fixed!'}
+                {gameEndState.reason === 'TIME_UP' && 'Match time expired'}
+              </div>
+              <div className="game-over-stats">
+                <div className="stat-row">
+                  <span className="stat-label">Match Duration:</span>
+                  <span className="stat-value">{Math.floor(gameEndState.matchDuration / 60000)}m {Math.floor((gameEndState.matchDuration % 60000) / 1000)}s</span>
+                </div>
+                <div className="stat-row">
+                  <span className="stat-label">Total Kills:</span>
+                  <span className="stat-value">{gameEndState.totalKills}</span>
+                </div>
+                <div className="stat-row">
+                  <span className="stat-label">Task Progress:</span>
+                  <span className="stat-value">{Math.round(gameEndState.taskProgress)}%</span>
+                </div>
+              </div>
+              <div className="game-over-reveal">
+                <div className="reveal-title">The Impostors Were:</div>
+                <div className="reveal-names">
+                  {gameEndState.impostorReveal.map((name, idx) => (
+                    <span key={idx} className="impostor-name">{name}</span>
+                  ))}
+                </div>
+              </div>
+              <div className="game-over-survivors">
+                {gameEndState.survivingCrewmates.length > 0 && (
+                  <div className="survivor-group crew">
+                    <span className="survivor-label">Surviving Crew:</span>
+                    <span className="survivor-names">{gameEndState.survivingCrewmates.join(', ')}</span>
+                  </div>
+                )}
+                {gameEndState.survivingImpostors.length > 0 && (
+                  <div className="survivor-group imp">
+                    <span className="survivor-label">Surviving Imps:</span>
+                    <span className="survivor-names">{gameEndState.survivingImpostors.join(', ')}</span>
+                  </div>
+                )}
+              </div>
+              <div className="game-over-countdown">
+                Next match in {Math.ceil(gameEndState.nextMatchCountdown / 1000)}s...
+              </div>
+            </div>
           </div>
         )}
+        {/* Game Timer & Player Count Display */}
+        <div className="game-status-bar">
+          <div className={`game-timer ${gameTimer && gameTimer.remainingMs < 120000 ? 'urgent' : gameTimer && gameTimer.remainingMs < 300000 ? 'warning' : ''}`}>
+            <span className="timer-icon">⏱️</span>
+            <span className="timer-value">
+              {gameTimer ? `${Math.floor(gameTimer.remainingMs / 60000)}:${String(Math.floor((gameTimer.remainingMs % 60000) / 1000)).padStart(2, '0')}` : '--:--'}
+            </span>
+          </div>
+          <div className="player-count">
+            <span className="player-icon">👥</span>
+            <span className="player-value">
+              {agentSummaries.filter(a => a.state === 'ALIVE').length}/{agentSummaries.length}
+            </span>
+          </div>
+        </div>
         {followingAgentId && (
-          <button 
-            className="stop-following-btn" 
+          <button
+            className="stop-following-btn"
             onClick={handleStopFollowing}
             title="Stop following agent"
           >

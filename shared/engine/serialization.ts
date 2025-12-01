@@ -189,6 +189,7 @@ export interface SerializeWorldOptions {
   gameTimer?: import('../types/simulation.types.ts').GameTimerSnapshot;
   killStatusMap?: Map<string, KillStatusInfo>;
   sabotageState?: import('../types/simulation.types.ts').SabotageSnapshot;
+  gameEndState?: import('../types/simulation.types.ts').GameEndState;
 }
 
 function serializeBody(body: DeadBody): BodySnapshot {
@@ -241,6 +242,7 @@ export function serializeWorld(
     timestamp,
     gamePhase: options.gamePhase ?? 'WORKING',
     gameTimer: options.gameTimer,
+    gameEndState: options.gameEndState,
     firstBodyDiscovered: options.firstBodyDiscovered ?? false,
     recentBodyReport: options.recentBodyReport,
     agents: agents.map(agent => {

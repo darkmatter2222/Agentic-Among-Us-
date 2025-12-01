@@ -1,7 +1,7 @@
 import { AIAgentManager } from '@shared/engine/AIAgentManager.ts';
 import { serializeWorld, type SerializeWorldOptions } from '@shared/engine/serialization.ts';
 import { WALKABLE_ZONES, LABELED_ZONES, TASKS, VENTS } from '@shared/data/poly3-map.ts';
-import type { WorldSnapshot, ThoughtEvent, SpeechEvent, HeardSpeechEvent, AIContext, GameTimerSnapshot, GamePhase, BodyReportEvent } from '@shared/types/simulation.types.ts';
+import type { WorldSnapshot, ThoughtEvent, SpeechEvent, HeardSpeechEvent, AIContext, GameTimerSnapshot, GamePhase, BodyReportEvent, GameEndReason, GameEndState } from '@shared/types/simulation.types.ts';
 import { AIDecisionService } from '../ai/AIDecisionService.js';
 import type { KillEvent } from '@shared/engine/KillSystem.ts';
 import type { VentEvent } from '@shared/engine/VentSystem.ts';
@@ -46,6 +46,13 @@ export class GameSimulation {
   private gameStartTime: number;
   private readonly options: Required<SimulationOptions>;
 
+  // Game end state
+  private gameEndReason: GameEndReason;
+  private gameEndState: GameEndState | null;
+  private restartCountdown: number; // Time until next match starts (ms)
+  private totalKills: number;
+  private readonly RESTART_DELAY_MS = 8000; // 8 seconds between matches
+
   constructor(options: SimulationOptions = {}) {
     this.options = { ...DEFAULT_OPTIONS, ...options };
     
@@ -83,6 +90,12 @@ export class GameSimulation {
     // Initialize game timer
     this.gameDurationMs = this.options.gameDurationMs;
     this.gameStartTime = Date.now();
+
+    // Initialize game end state
+    this.gameEndReason = 'ONGOING';
+    this.gameEndState = null;
+    this.restartCountdown = 0;
+    this.totalKills = 0;
 
     // Log game setup
     this.logGameStart();
@@ -198,8 +211,8 @@ export class GameSimulation {
    * Restart the game with new agents and impostors
    */
   restart(): void {
-    simulationLogger.info('GAME TIMER EXPIRED - RESTARTING GAME');
-    
+    simulationLogger.info('GAME RESTARTING - NEW MATCH STARTING');
+
     // Create fresh manager with new impostor selection
     this.manager = new AIAgentManager({
       walkableZones: WALKABLE_ZONES,
@@ -210,7 +223,7 @@ export class GameSimulation {
       numImpostors: this.options.numImpostors,
       tasksPerAgent: this.options.tasksPerAgent,
     });
-    
+
     // Reset AI service if enabled
     if (this.options.enableAI && this.aiService) {
       // Re-initialize AI state for each agent
@@ -235,22 +248,165 @@ export class GameSimulation {
     // Reset timer
     this.gameStartTime = Date.now();
 
+    // Reset game end state
+    this.gameEndReason = 'ONGOING';
+    this.gameEndState = null;
+    this.restartCountdown = 0;
+    this.totalKills = 0;
+
     this.logGameStart();
-  }  step(timestamp = Date.now()): WorldSnapshot {
-    // Check if game should restart
-    if (this.isTimerExpired()) {
-      this.restart();
+  }
+
+  /**
+   * Check win conditions and return the reason if game should end
+   */
+  private checkWinConditions(): GameEndReason {
+    // Don't check if game already ended
+    if (this.gameEndReason !== 'ONGOING') {
+      return this.gameEndReason;
     }
+
+    const agents = this.manager.getAgents();
     
+    // Count living players by role
+    let livingCrewmates = 0;
+    let livingImpostors = 0;
+    
+    for (const agent of agents) {
+      const state = agent.getPlayerState();
+      if (state === 'ALIVE') {
+        if (agent.getRole() === 'CREWMATE') {
+          livingCrewmates++;
+        } else if (agent.getRole() === 'IMPOSTOR') {
+          livingImpostors++;
+        }
+      }
+    }
+
+    // Check impostor parity victory (impostors >= crewmates while at least 1 impostor alive)
+    if (livingImpostors > 0 && livingImpostors >= livingCrewmates) {
+      simulationLogger.info('GAME OVER: Impostor Parity Victory!', { livingImpostors, livingCrewmates });
+      return 'IMP_WIN_PARITY';
+    }
+
+    // Check if all impostors are dead (crewmate vote win - future voting feature)
+    if (livingImpostors === 0 && livingCrewmates > 0) {
+      simulationLogger.info('GAME OVER: Crewmates eliminated all impostors!', { livingCrewmates });
+      return 'CREW_WIN_VOTE';
+    }
+
+    // Check task completion victory
+    const taskProgress = this.manager.getTaskProgress();
+    if (taskProgress >= 100) {
+      simulationLogger.info('GAME OVER: Crewmates completed all tasks!', { taskProgress });
+      return 'CREW_WIN_TASKS';
+    }
+
+    // Check sabotage victory (reactor or O2 timeout)
+    const sabotage = this.manager.getSabotageContext();
+    if (sabotage?.activeSabotage) {
+      const { type, timeRemaining } = sabotage.activeSabotage;
+      if ((type === 'REACTOR' || type === 'O2') && timeRemaining <= 0) {
+        simulationLogger.info('GAME OVER: Critical sabotage not fixed!', { type });
+        return 'IMP_WIN_SABOTAGE';
+      }
+    }
+
+    // Check timer expiry
+    if (this.isTimerExpired()) {
+      simulationLogger.info('GAME OVER: Time expired!');
+      return 'TIME_UP';
+    }
+
+    return 'ONGOING';
+  }
+
+  /**
+   * Build game end state for UI display
+   */
+  private buildGameEndState(reason: GameEndReason): GameEndState {
+    const agents = this.manager.getAgents();
+    
+    const survivingCrewmates: string[] = [];
+    const survivingImpostors: string[] = [];
+    const impostorReveal: string[] = [];
+    
+    for (const agent of agents) {
+      if (agent.getRole() === 'IMPOSTOR') {
+        impostorReveal.push(agent.getName());
+        if (agent.getPlayerState() === 'ALIVE') {
+          survivingImpostors.push(agent.getName());
+        }
+      } else if (agent.getPlayerState() === 'ALIVE') {
+        survivingCrewmates.push(agent.getName());
+      }
+    }
+
+    // Determine winner
+    let winner: 'CREWMATES' | 'IMPOSTORS' | 'NONE';
+    if (reason === 'CREW_WIN_TASKS' || reason === 'CREW_WIN_VOTE') {
+      winner = 'CREWMATES';
+    } else if (reason === 'IMP_WIN_PARITY' || reason === 'IMP_WIN_SABOTAGE') {
+      winner = 'IMPOSTORS';
+    } else {
+      winner = 'NONE'; // TIME_UP
+    }
+
+    return {
+      reason,
+      winner,
+      survivingCrewmates,
+      survivingImpostors,
+      impostorReveal,
+      taskProgress: this.manager.getTaskProgress(),
+      totalKills: this.totalKills,
+      matchDuration: Date.now() - this.gameStartTime,
+      nextMatchCountdown: this.restartCountdown,
+    };
+  }
+
+  step(timestamp = Date.now()): WorldSnapshot {
     const deltaSeconds = Math.max(0, (timestamp - this.lastTimestamp) / 1000);
+    const deltaMs = deltaSeconds * 1000;
     this.lastTimestamp = timestamp;
 
-    if (deltaSeconds > 0) {
+    // Handle game-over countdown and restart
+    if (this.gameEndReason !== 'ONGOING') {
+      this.restartCountdown -= deltaMs;
+      if (this.gameEndState) {
+        this.gameEndState.nextMatchCountdown = Math.max(0, this.restartCountdown);
+      }
+      if (this.restartCountdown <= 0) {
+        this.restart();
+        // Return fresh state after restart
+        return serializeWorld(this.manager.getAgents(), this.tick, timestamp, {
+          gamePhase: this.gamePhase,
+          gameTimer: this.getGameTimer(),
+        });
+      }
+    } else {
+      // Check win conditions only when game is ongoing
+      const winCheck = this.checkWinConditions();
+      if (winCheck !== 'ONGOING') {
+        this.gameEndReason = winCheck;
+        this.gamePhase = 'GAME_OVER';
+        this.restartCountdown = this.RESTART_DELAY_MS;
+        this.gameEndState = this.buildGameEndState(winCheck);
+        simulationLogger.info('MATCH ENDED', { 
+          reason: winCheck, 
+          winner: this.gameEndState.winner,
+          matchDuration: Math.floor(this.gameEndState.matchDuration / 1000) + 's'
+        });
+      }
+    }
+
+    // Only update simulation if game is still running
+    if (this.gameEndReason === 'ONGOING' && deltaSeconds > 0) {
       this.manager.update(deltaSeconds);
-      
+
       // Update sabotage system (timers, fix progress, etc.)
       this.manager.updateSabotage(deltaSeconds);
-      
+
       // Update AI service with current agent positions for trace capture
       if (this.aiService) {
         const agents = this.manager.getAgents();
@@ -267,9 +423,7 @@ export class GameSimulation {
         }));
         this.aiService.updateAgentPositions(positions);
       }
-    }
-
-    // Collect AI events
+    }    // Collect AI events
     if (this.aiService) {
       const newThoughts = this.aiService.flushPendingThoughts();
       const newSpeech = this.aiService.flushPendingSpeech();
@@ -301,8 +455,10 @@ export class GameSimulation {
       // Keep recent events (last 20)
       this.recentThoughts = [...this.recentThoughts, ...newThoughts].slice(-20);
       this.recentSpeech = [...this.recentSpeech, ...newSpeech].slice(-20);
-    }    this.tick += 1;
-    
+    }
+
+    this.tick += 1;
+
     // Build kill status map for impostors
     const killStatusMap = new Map<string, { cooldownRemaining: number; canKill: boolean; hasTargetInRange: boolean; killCount: number }>();
     for (const agent of this.manager.getAgents()) {
@@ -313,7 +469,7 @@ export class GameSimulation {
         }
       }
     }
-    
+
     const options: SerializeWorldOptions = {
       gamePhase: this.gamePhase,
       firstBodyDiscovered: this.firstBodyDiscovered,
@@ -329,9 +485,8 @@ export class GameSimulation {
       gameTimer: this.getGameTimer(),
       killStatusMap,
       sabotageState: this.buildSabotageSnapshot(),
-    };
-    
-    // Clear the body report after one tick (it's only for UI animation trigger)
+      gameEndState: this.gameEndState ?? undefined,
+    };    // Clear the body report after one tick (it's only for UI animation trigger)
     this.recentBodyReport = null;
     
     // Clear old kills (keep only last 10)
@@ -383,6 +538,7 @@ export class GameSimulation {
     const killEvent = this.manager.attemptKill(impostorId, targetId);
     if (killEvent) {
       this.recentKills.push(killEvent);
+      this.totalKills++;
     }
     return killEvent;
   }

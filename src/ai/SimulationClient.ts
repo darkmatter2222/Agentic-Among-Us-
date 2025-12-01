@@ -62,14 +62,7 @@ export class SimulationClient {
     });
 
     this.socket.addEventListener('message', (event) => {
-      const payloadPreview = event.data instanceof ArrayBuffer
-        ? `ArrayBuffer(${event.data.byteLength})`
-        : event.data instanceof Blob
-          ? `Blob(${event.data.size})`
-          : typeof event.data === 'string'
-            ? `${event.data.slice(0, 60)}${event.data.length > 60 ? '…' : ''}`
-            : typeof event.data;
-      console.debug('[simulation] websocket message received', { preview: payloadPreview });
+      // High-frequency - don't log every message
       this.handleMessage(event.data);
     });
 
@@ -174,33 +167,26 @@ export class SimulationClient {
 
   onWorldUpdate(listener: WorldListener): () => void {
     this.listeners.add(listener);
-    console.debug('[simulation] registered world listener', { count: this.listeners.size });
     if (this.world) {
-      console.debug('[simulation] replaying latest world to new listener', { tick: this.world.tick });
       listener(this.world);
     }
     return () => {
       this.listeners.delete(listener);
-      console.debug('[simulation] removed world listener', { count: this.listeners.size });
     };
   }
 
   onConnectionStateChange(listener: ConnectionListener): () => void {
     this.connectionListeners.add(listener);
-    console.debug('[simulation] registered connection listener', { count: this.connectionListeners.size });
-    listener(this.state);
+    listener(this.getConnectionState());
     return () => {
       this.connectionListeners.delete(listener);
-      console.debug('[simulation] removed connection listener', { count: this.connectionListeners.size });
     };
   }
 
   onLLMTrace(listener: LLMTraceListener): () => void {
     this.llmTraceListeners.add(listener);
-    console.debug('[simulation] registered LLM trace listener', { count: this.llmTraceListeners.size });
     return () => {
       this.llmTraceListeners.delete(listener);
-      console.debug('[simulation] removed LLM trace listener', { count: this.llmTraceListeners.size });
     };
   }
 
@@ -238,23 +224,22 @@ export class SimulationClient {
 
     switch (message.type) {
       case 'handshake': {
-          console.debug('[simulation] received handshake');
-          this.lastHeartbeatAt = Date.now();
+        this.lastHeartbeatAt = Date.now();
         break;
       }
       case 'snapshot': {
-        console.debug('[simulation] received snapshot tick', message.payload.tick);
+        // Snapshot received - logged only on initial connection
         this.world = this.cloneWorld(message.payload);
         this.emitWorldUpdate();
         break;
       }
       case 'state-update': {
-        console.debug('[simulation] received delta tick', message.payload.tick, 'agents', message.payload.agents.length);
+        // High-frequency delta - don't log
         this.applyDelta(message.payload);
         break;
       }
       case 'heartbeat': {
-        console.debug('[simulation] received heartbeat tick', message.payload.tick);
+        // Don't log heartbeats
         this.lastHeartbeatAt = Date.now();
         break;
       }
@@ -263,11 +248,12 @@ export class SimulationClient {
         break;
       }
       case 'llm-trace': {
-        console.debug('[simulation] received LLM trace', { 
+        // LLM trace received - no need to log, it's displayed in UI
+        /* console.debug('[simulation] received LLM trace', { 
           agentName: message.payload.agentName, 
           requestType: message.payload.requestType,
           goalType: message.payload.parsedDecision?.goalType
-        });
+        }); */
         for (const listener of this.llmTraceListeners) {
           listener(message.payload);
         }
@@ -279,12 +265,7 @@ export class SimulationClient {
   }
 
   private applyDelta(delta: WorldDelta): void {
-    console.debug('[simulation] applying delta', {
-      tick: delta.tick,
-      removed: delta.removedAgents.length,
-      updated: delta.agents.length,
-      hasWorld: Boolean(this.world)
-    });
+    // High-frequency - don't log every delta
     if (!this.world) {
       websocketLogger.warn('Received delta before initial snapshot');
       return;
@@ -297,7 +278,6 @@ export class SimulationClient {
 
     for (const agent of this.world.agents) {
       if (removed.has(agent.id)) {
-        console.debug('[simulation] delta removing agent', agent.id);
         continue;
       }
 
@@ -310,7 +290,6 @@ export class SimulationClient {
       const cloned = this.cloneAgent(agent);
 
       if (deltaEntry.summaryChanged && deltaEntry.summary) {
-        console.debug('[simulation] delta summary update', agent.id, deltaEntry.summary);
         cloned.activityState = deltaEntry.summary.activityState;
         cloned.locationState = deltaEntry.summary.locationState;
         cloned.currentZone = deltaEntry.summary.currentZone;
@@ -318,11 +297,6 @@ export class SimulationClient {
       }
 
       if (deltaEntry.movementChanged && deltaEntry.movement) {
-        console.debug('[simulation] delta movement update', agent.id, {
-          position: deltaEntry.movement.position,
-          velocity: deltaEntry.movement.velocity,
-          pathPoints: deltaEntry.movement.path.length
-        });
         cloned.movement = {
           ...deltaEntry.movement,
           position: { ...deltaEntry.movement.position },
@@ -332,14 +306,6 @@ export class SimulationClient {
       }
 
       if (deltaEntry.aiStateChanged && deltaEntry.aiState) {
-        console.debug('[simulation] delta AI state update', agent.id, {
-          isThinking: deltaEntry.aiState.isThinking,
-          currentThought: deltaEntry.aiState.currentThought?.substring(0, 30),
-          recentSpeech: deltaEntry.aiState.recentSpeech?.substring(0, 30),
-          visibleAgents: deltaEntry.aiState.visibleAgentIds?.length ?? 0,
-          tasks: deltaEntry.aiState.assignedTasks?.length ?? 0,
-          playerState: deltaEntry.aiState.playerState
-        });
         cloned.isThinking = deltaEntry.aiState.isThinking;
         cloned.currentThought = deltaEntry.aiState.currentThought;
         cloned.recentSpeech = deltaEntry.aiState.recentSpeech;
@@ -372,20 +338,19 @@ export class SimulationClient {
       agents: updatedAgents,
       // Preserve world-level state from delta or previous
       taskProgress: delta.taskProgress ?? this.world?.taskProgress ?? 0,
-      gamePhase: delta.gamePhase ?? this.world?.gamePhase ?? 'PLAYING',
+      gamePhase: delta.gamePhase ?? this.world?.gamePhase ?? 'WORKING',
+      gameTimer: delta.gameTimer ?? this.world?.gameTimer,
+      gameEndState: delta.gameEndState ?? this.world?.gameEndState,
       recentThoughts: delta.recentThoughts ?? this.world?.recentThoughts ?? [],
       recentSpeech: delta.recentSpeech ?? this.world?.recentSpeech ?? [],
       bodies: delta.bodies ?? this.world?.bodies ?? [],
       llmQueueStats: delta.llmQueueStats ?? this.world?.llmQueueStats,
     };
-    console.debug('[simulation] world updated to tick', delta.tick, 'agent count', updatedAgents.length, 'taskProgress', this.world.taskProgress);
-
     this.emitWorldUpdate();
   }
 
   private emitWorldUpdate(): void {
     if (!this.world) return;
-    console.debug('[simulation] emitting world update to listeners', { tick: this.world.tick, listeners: this.listeners.size });
     for (const listener of this.listeners) {
       listener(this.world);
     }
@@ -402,7 +367,6 @@ export class SimulationClient {
   private startHeartbeatMonitor(): void {
     if (this.heartbeatMonitorId !== null) return;
 
-    console.debug('[simulation] starting heartbeat monitor', { timeout: this.heartbeatTimeoutMs });
     this.heartbeatMonitorId = window.setInterval(() => {
       const elapsed = Date.now() - this.lastHeartbeatAt;
       if (elapsed > this.heartbeatTimeoutMs) {
@@ -416,23 +380,19 @@ export class SimulationClient {
 
   private stopHeartbeatMonitor(): void {
     if (this.heartbeatMonitorId !== null) {
-      console.debug('[simulation] stopping heartbeat monitor');
       window.clearInterval(this.heartbeatMonitorId);
       this.heartbeatMonitorId = null;
     }
   }
 
   private cloneWorld(snapshot: WorldSnapshot): WorldSnapshot {
-    console.debug('[simulation] cloning world snapshot', { tick: snapshot.tick, agents: snapshot.agents.length });
     return {
-      tick: snapshot.tick,
-      timestamp: snapshot.timestamp,
+      ...snapshot,
       agents: snapshot.agents.map(agent => this.cloneAgent(agent))
     };
   }
 
   private cloneAgent(agent: AgentSnapshot): AgentSnapshot {
-    console.debug('[simulation] cloning agent snapshot', agent.id);
     return {
       ...agent,
       movement: {

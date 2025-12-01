@@ -293,13 +293,18 @@ canvas {
   color: #ffcccc;
 }
 
-/* ========== Game Timer ========== */
-.game-timer {
+/* ========== Game Status Bar ========== */
+.game-status-bar {
   position: absolute;
-  top: 12px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 100;
+  top: 70px;
+  left: 12px;
+  z-index: 101;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.game-timer {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -350,3 +355,195 @@ canvas {
   }
 }
 
+/* Player Count */
+.player-count {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 12px;
+  background: rgba(20, 28, 45, 0.95);
+  box-shadow: 0 2px 16px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  font-family: 'Consolas', 'Monaco', monospace;
+}
+
+.player-count .player-icon {
+  font-size: 16px;
+}
+
+.player-count .player-value {
+  font-size: 18px;
+  font-weight: bold;
+  color: #64b5f6;
+  letter-spacing: 1px;
+}
+
+
+/* ========== Game Over Overlay ========== */
+.game-over-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1100;
+  animation: game-over-fade-in 0.5s ease-out;
+}
+
+.game-over-overlay.crew-win {
+  background: linear-gradient(135deg, rgba(0, 100, 0, 0.92) 0%, rgba(0, 60, 0, 0.95) 100%);
+}
+
+.game-over-overlay.imp-win {
+  background: linear-gradient(135deg, rgba(139, 0, 0, 0.92) 0%, rgba(80, 0, 0, 0.95) 100%);
+}
+
+.game-over-overlay.draw {
+  background: linear-gradient(135deg, rgba(60, 60, 60, 0.92) 0%, rgba(30, 30, 30, 0.95) 100%);
+}
+
+@keyframes game-over-fade-in {
+  0% {
+    opacity: 0;
+    transform: scale(1.1);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.game-over-content {
+  text-align: center;
+  color: white;
+  padding: 40px;
+  animation: game-over-slide-in 0.6s ease-out;
+  max-width: 500px;
+}
+
+@keyframes game-over-slide-in {
+  0% {
+    transform: translateY(-40px);
+    opacity: 0;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.game-over-title {
+  font-size: 42px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 3px;
+  text-shadow:
+    3px 3px 0 #000,
+    -2px -2px 0 #000,
+    2px -2px 0 #000,
+    -2px 2px 0 #000;
+  margin-bottom: 16px;
+  animation: game-over-pulse 1s ease-in-out infinite alternate;
+}
+
+@keyframes game-over-pulse {
+  0% { transform: scale(1); }
+  100% { transform: scale(1.03); }
+}
+
+.game-over-reason {
+  font-size: 20px;
+  font-weight: 600;
+  opacity: 0.9;
+  margin-bottom: 24px;
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+.game-over-stats {
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 12px;
+  padding: 16px 24px;
+  margin-bottom: 20px;
+}
+
+.game-over-stats .stat-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 0;
+  font-size: 16px;
+}
+
+.game-over-stats .stat-label {
+  opacity: 0.8;
+}
+
+.game-over-stats .stat-value {
+  font-weight: 700;
+}
+
+.game-over-reveal {
+  margin: 20px 0;
+}
+
+.game-over-reveal .reveal-title {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 10px;
+  opacity: 0.9;
+}
+
+.game-over-reveal .reveal-names {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.game-over-reveal .impostor-name {
+  background: rgba(139, 0, 0, 0.8);
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 18px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+}
+
+.game-over-survivors {
+  margin: 20px 0;
+  font-size: 14px;
+}
+
+.game-over-survivors .survivor-group {
+  margin: 8px 0;
+}
+
+.game-over-survivors .survivor-label {
+  font-weight: 600;
+  margin-right: 8px;
+}
+
+.game-over-survivors .survivor-group.crew .survivor-label {
+  color: #7fff7f;
+}
+
+.game-over-survivors .survivor-group.imp .survivor-label {
+  color: #ff7f7f;
+}
+
+.game-over-countdown {
+  margin-top: 24px;
+  font-size: 22px;
+  font-weight: 700;
+  opacity: 0.9;
+  animation: countdown-pulse 1s ease-in-out infinite;
+}
+
+@keyframes countdown-pulse {
+  0%, 100% { opacity: 0.9; }
+  50% { opacity: 0.6; }
+}

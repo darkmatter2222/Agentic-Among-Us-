@@ -77,6 +77,20 @@
   color: #e6edf3;
 }
 
+.llm-timeline-panel .clear-btn {
+  background: transparent;
+  border: none;
+  color: #8b949e;
+  cursor: pointer;
+  padding: 4px;
+  font-size: 12px;
+  transition: all 0.15s;
+}
+
+.llm-timeline-panel .clear-btn:hover {
+  color: #f85149;
+}
+
 .llm-timeline-panel .filter-bar {
   padding: 8px 12px;
   display: flex;

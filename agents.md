@@ -667,6 +667,13 @@ window.setLogLevel('WARN');   // Only warnings and errors
 | **Vent System AI Integration** | Full vent mechanics: entry/exit animations, vent-to-vent travel, cooldowns, witness detection. AI agents can ENTER_VENT, EXIT_VENT, VENT_TRAVEL as goal types. Vent context provided to LLM with current state, connected vents, and nearby witnesses. Sound effects on vent use. |
 | **Sabotage System** | Full sabotage mechanics via SabotageSystem.ts: LIGHTS, REACTOR, O2, COMMS sabotage types. Impostor AI can trigger sabotages via SABOTAGE goal type. Crewmate AI can FIX_SABOTAGE. Cooldowns between sabotages. State broadcast to clients via WorldSnapshot/WorldDelta. Lights affect vision (crewmate vision reduced to 0.25x). |
 | **Ghost Mode** | GhostSystem.ts manages ghost transitions. Dead players (DEAD state) transition to GHOST state when body is reported or after 30s timeout. Ghosts: (1) Can pass through walls (collision disabled), (2) Get unlimited vision (10x multiplier), (3) Can continue completing tasks, (4) Can only communicate with other ghosts. Ghosts rendered as semi-transparent floating sprites. |
+| **Game Timer Display** | Real-time countdown timer (10 minutes) shown in top-left corner. Color-coded: green (normal), yellow (<5 min), red pulsing (<2 min). Timer updates via WorldDelta for smooth real-time display. |
+| **Player Count Display** | Shows "👥 X/8 alive" next to timer. Updates in real-time as agents die. |
+| **Clear LLM Timeline** | 🗑️ button in LLM Timeline panel header clears all logged events. Useful for decluttering during observation. |
+| **Export LLM Timeline** | 📋 button exports filtered events as JSON to clipboard. |
+| **Game Over Sound** | Audio plays when game ends (victory/defeat). Uses preloaded game-over.mp3. |
+| **Pause/Resume** | ⏸️/▶️ button in controls panel pauses/resumes simulation. Server-side pause stops tick processing while maintaining connections. |
+| **Kill Cooldown Indicator** | Impostor info panel shows kill cooldown timer (🔪 Xs) when on cooldown, or ready indicator when can kill. |
 
 ### God Mode System (Active)
 
@@ -771,8 +778,9 @@ alone_with_vent        - IMPOSTOR ONLY: Alone in a room with a vent
 
 | System | Status | Notes |
 |--------|--------|-------|
-| **Kill Mechanics** | Partial | KillSystem class exists with cooldowns, range checks, witnesses; kills can be attempted but game state doesn't update victims to DEAD |
-| **Body Discovery** | Implemented | witnessed_body trigger, REPORT_BODY goal, body report callback chain, phase transition, memory broadcast, UI overlay with audio |
+| **Kill Mechanics** | ✅ Implemented | Full kill flow: cooldowns, range checks, witnesses, victim state set to DEAD, ghost system notified, body created, killer/witness notifications. Agents can now actually die! |
+| **Body Discovery** | ✅ Implemented | witnessed_body trigger, REPORT_BODY goal, body report callback chain, phase transition, memory broadcast, UI overlay with audio |
+| **Vent Witness System** | ✅ Implemented | Witnesses who see impostor vent get suspicion set to 100% immediately (conclusive proof). Uses witnessVent() method with proper memory recording. |
 | **Emergency Meetings** | No | Button location exists but non-functional |
 | **Discussion Phase** | No | No meeting chat or accusations |
 | **Voting System** | No | No vote casting or counting |
@@ -783,7 +791,7 @@ alone_with_vent        - IMPOSTOR ONLY: Alone in a room with a vent
 | **Sabotage (Comms)** | Partial | SabotageSystem supports COMMS type, task hiding not yet implemented |
 | **Door System** | No | Doors don't close or block movement |
 | **Vent System** | ✅ Implemented | Full AI integration: ENTER_VENT, EXIT_VENT, VENT_TRAVEL goals, cooldowns, witness detection, vent context in prompts |
-| **Win Conditions** | No | Game runs indefinitely |
+| **Win Conditions** | Yes | Task completion (100%), impostor parity, time limit (10 min). Game Over overlay with winner, countdown, auto-restart. |
 | **Ghost Mode** | ✅ Implemented | GhostSystem manages DEAD→GHOST transitions, wall-passing, unlimited vision, ghost-only communication |
 | **Security Cameras** | No | No camera monitoring |
 | **Admin Table** | No | No player location display |
@@ -850,10 +858,12 @@ The simulation has full Skeld map data including:
 - Spread false information
 - Manipulate suspicion through social actions
 
-**Impostors cannot (yet):**
-- Kill crewmates
-- Use vents for travel
-- Trigger sabotages
+**Impostors CAN now:**
+- Kill crewmates (range check, cooldowns, witnesses)
+- Use vents for travel (ENTER_VENT, EXIT_VENT, VENT_TRAVEL)
+- Trigger sabotages (LIGHTS, REACTOR, O2, COMMS)
+
+**Not yet implemented:**
 - Close doors
 
 ### Agent Personality System (NEW)

@@ -299,6 +299,39 @@ export interface GameTimerSnapshot {
 export type GamePhase = 'WORKING' | 'ALERT' | 'MEETING' | 'GAME_OVER';
 
 /**
+ * Reason the game ended - used for victory/defeat screens
+ */
+export type GameEndReason =
+  | 'ONGOING'              // Game still in progress
+  | 'CREW_WIN_TASKS'       // Crewmates completed all tasks
+  | 'CREW_WIN_VOTE'        // Crewmates voted out all impostors (future)
+  | 'IMP_WIN_PARITY'       // Impostors reached numerical parity
+  | 'IMP_WIN_SABOTAGE'     // Crewmates failed to fix critical sabotage
+  | 'TIME_UP';             // Game timer expired with no winner
+
+/**
+ * Game end state snapshot for UI
+ */
+export interface GameEndState {
+  reason: GameEndReason;
+  winner: 'CREWMATES' | 'IMPOSTORS' | 'NONE';
+  /** Names of surviving crewmates */
+  survivingCrewmates: string[];
+  /** Names of surviving impostors */
+  survivingImpostors: string[];
+  /** Names of all impostors (revealed at end) */
+  impostorReveal: string[];
+  /** Final task progress percentage */
+  taskProgress: number;
+  /** Total kills this match */
+  totalKills: number;
+  /** Match duration in ms */
+  matchDuration: number;
+  /** Countdown to next match (ms) */
+  nextMatchCountdown: number;
+}
+
+/**
  * Event emitted when a body is reported
  */
 export interface BodyReportEvent {
@@ -321,6 +354,8 @@ export interface WorldSnapshot {
   timestamp: number;
   gamePhase?: GamePhase;
   gameTimer?: GameTimerSnapshot; // Game timer info for UI and agents
+  /** Game end state - present when game is over */
+  gameEndState?: GameEndState;
   /** True if at least one body has been discovered this game */
   firstBodyDiscovered?: boolean;
   /** Most recent body report event (for UI animation) */

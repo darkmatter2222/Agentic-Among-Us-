@@ -854,17 +854,17 @@ export class AIAgentManager {
       // Update agent state to be in vent
       impostor.setInVent(true, ventId);
 
-      // Record memories for witnesses
+      // Notify witnesses - this is conclusive evidence of impostor!
       for (const witness of ventEvent.witnesses || []) {
         const witnessAgent = this.agents.find(a => a.getId() === witness.id);
-        if (witnessAgent) {
-          witnessAgent.getMemory().addObservation({
-            type: 'VENT_SEEN',
-            agentId: impostorId,
+        if (witnessAgent && witness.hasLineOfSight) {
+          witnessAgent.witnessVent(
+            impostorId,
+            impostor.getName(),
             ventId,
-            action: 'enter',
-            location: impostor.getCurrentZone(),
-          });
+            ventEvent.ventRoom,
+            'enter'
+          );
         }
       }
 
@@ -922,17 +922,17 @@ export class AIAgentManager {
       impostor.setInVent(false, undefined);
       impostor.setPosition(vent.position);
 
-      // Record memories for witnesses
+      // Notify witnesses - this is conclusive evidence of impostor!
       for (const witness of ventEvent.witnesses || []) {
         const witnessAgent = this.agents.find(a => a.getId() === witness.id);
-        if (witnessAgent) {
-          witnessAgent.getMemory().addObservation({
-            type: 'VENT_SEEN',
-            agentId: impostorId,
-            ventId: ventState.currentVentId,
-            action: 'exit',
-            location: vent.room,
-          });
+        if (witnessAgent && witness.hasLineOfSight) {
+          witnessAgent.witnessVent(
+            impostorId,
+            impostor.getName(),
+            ventState.currentVentId,
+            vent.room ?? 'unknown',
+            'exit'
+          );
         }
       }
 

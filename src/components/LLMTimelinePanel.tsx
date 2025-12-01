@@ -85,6 +85,7 @@ function findRelatedConversationEvents(
 interface LLMTimelinePanelProps {
   width?: number;
   events: LLMTraceEvent[];
+  onClear?: () => void;
 }
 
 function hexColor(num: number): string {
@@ -866,7 +867,7 @@ function TimelineEntry({
   );
 }
 
-export function LLMTimelinePanel({ width = 320, events }: LLMTimelinePanelProps) {
+export function LLMTimelinePanel({ width = 320, events, onClear }: LLMTimelinePanelProps) {
   const [selectedEvent, setSelectedEvent] = useState<LLMTraceEvent | null>(null);
   const [conversationThread, setConversationThread] = useState<LLMTraceEvent[] | null>(null);
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -1034,17 +1035,24 @@ export function LLMTimelinePanel({ width = 320, events }: LLMTimelinePanelProps)
         <h3>🧠 LLM Timeline</h3>
         <div className="header-actions">
           <span className="event-count">{events.length} events</span>
-          <button 
-            className="collapse-btn" 
+          {onClear && events.length > 0 && (
+            <button
+              className="clear-btn"
+              onClick={onClear}
+              title="Clear all events"
+            >
+              🗑️
+            </button>
+          )}
+          <button
+            className="collapse-btn"
             onClick={() => setIsCollapsed(true)}
             title="Collapse"
           >
             ▶
           </button>
         </div>
-      </div>
-      
-      <div className="filter-bar">
+      </div>      <div className="filter-bar">
         <button 
           className={`filter-btn ${filter === 'all' ? 'active' : ''}`}
           onClick={() => setFilter('all')}

@@ -197,6 +197,8 @@ export function diffWorldSnapshots(previous: WorldSnapshot | null, current: Worl
     removedAgents,
     taskProgress: current.taskProgress,
     gamePhase: current.gamePhase,
+    gameTimer: current.gameTimer,
+    gameEndState: current.gameEndState,
     recentThoughts: current.recentThoughts,
     recentSpeech: current.recentSpeech,
     bodies: current.bodies,

@@ -1497,7 +1497,51 @@ export class AIAgent {
     this.behaviorState.nextDecisionTime = Date.now();
     this.behaviorState.isThinking = false;
   }
-  
+
+  /**
+   * Record witnessing someone use a vent - this is conclusive evidence they're an impostor!
+   */
+  witnessVent(
+    suspectId: string,
+    suspectName: string,
+    ventId: string,
+    ventRoom: string,
+    eventType: 'enter' | 'exit'
+  ): void {
+    // Record observation
+    this.memory.recordObservation({
+      type: 'vent_usage',
+      subjectId: suspectId,
+      subjectName: suspectName,
+      zone: ventRoom,
+      description: `SAW ${suspectName} ${eventType} a vent in ${ventRoom}! THEY ARE AN IMPOSTOR!`,
+      suspicionDelta: 50, // Max suspicion increase - this will be capped at 100
+    });
+
+    // Set suspicion to maximum - venting is conclusive proof
+    this.memory.adjustSuspicion(
+      suspectId,
+      suspectName,
+      50, // This plus the observation delta will push to max
+      `SAW THEM ${eventType.toUpperCase()} A VENT - CONFIRMED IMPOSTOR`,
+      'vent'
+    );
+
+    // Add to recent events
+    this.addRecentEvent(`🚨 SAW ${suspectName} ${eventType} a vent! IMPOSTOR CONFIRMED!`);
+
+    // Force immediate decision - need to react to this!
+    this.behaviorState.nextDecisionTime = Date.now();
+    this.behaviorState.isThinking = false;
+    
+    ventLog.get().info('Witnessed vent activity', { 
+      witnessName: this.config.name, 
+      suspectName, 
+      ventId, 
+      eventType 
+    });
+  }
+
   /**
    * Update visible bodies list
    */

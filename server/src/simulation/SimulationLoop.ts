@@ -22,6 +22,7 @@ export class SimulationLoop {
   private readonly tickIntervalMs: number;
   private timer: NodeJS.Timeout | null = null;
   private running = false;
+  private paused = false;
   private nextTickTarget = 0;
   private lastSnapshot: WorldSnapshot | null = null;
   private listeners = new Set<SnapshotListener>();
@@ -36,6 +37,7 @@ export class SimulationLoop {
   start(): void {
     if (this.running) return;
     this.running = true;
+    this.paused = false;
     this.nextTickTarget = performance.now();
     this.scheduleNext();
   }
@@ -43,10 +45,32 @@ export class SimulationLoop {
   stop(): void {
     if (!this.running) return;
     this.running = false;
+    this.paused = false;
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = null;
     }
+  }
+
+  pause(): void {
+    if (!this.running || this.paused) return;
+    this.paused = true;
+    simulationLogger.info('Simulation paused');
+  }
+
+  resume(): void {
+    if (!this.running || !this.paused) return;
+    this.paused = false;
+    this.nextTickTarget = performance.now();
+    simulationLogger.info('Simulation resumed');
+  }
+
+  isPaused(): boolean {
+    return this.paused;
+  }
+
+  isRunning(): boolean {
+    return this.running;
   }
 
   onSnapshot(listener: SnapshotListener): () => void {
@@ -79,12 +103,16 @@ export class SimulationLoop {
       this.nextTickTarget = now;
     }
 
-    if (now >= this.nextTickTarget) {
+    // Only advance simulation if not paused
+    if (!this.paused && now >= this.nextTickTarget) {
       this.runTick();
       this.nextTickTarget += this.tickIntervalMs;
       if (now - this.nextTickTarget > this.tickIntervalMs) {
         this.nextTickTarget = now + this.tickIntervalMs;
       }
+    } else if (this.paused) {
+      // Keep target time moving forward while paused
+      this.nextTickTarget = now + this.tickIntervalMs;
     }
 
     const delay = Math.max(0, this.nextTickTarget - performance.now());

@@ -181,6 +181,8 @@ export interface WorldDelta {
   // World-level state that changes
   taskProgress?: number;
   gamePhase?: import('./simulation.types.ts').GamePhase;
+  gameTimer?: import('./simulation.types.ts').GameTimerSnapshot;
+  gameEndState?: import('./simulation.types.ts').GameEndState;
   recentThoughts?: import('./simulation.types.ts').ThoughtEvent[];
   recentSpeech?: import('./simulation.types.ts').SpeechEvent[];
   // Dead bodies on the map for kill detection
