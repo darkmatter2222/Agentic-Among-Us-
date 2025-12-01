@@ -294,6 +294,17 @@ export class SpeechBubbleRenderer {
     this.removeBubble(agentId);
   }
 
+  /**
+   * Clear ALL bubbles for ALL agents (for memory cleanup on match restart)
+   */
+  clearAllBubbles(): void {
+    for (const [_, bubble] of this.activeBubbles) {
+      this.container.removeChild(bubble.container);
+      bubble.container.destroy({ children: true });
+    }
+    this.activeBubbles.clear();
+  }
+
   getContainer(): PIXI.Container {
     return this.container;
   }

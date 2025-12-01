@@ -13,7 +13,12 @@ import { LLMTimelinePanel } from './components/LLMTimelinePanel';
 import { audioLogger, systemLogger, renderLogger } from './logging/index.ts';
 
 // Maximum number of LLM trace events to keep in the timeline
-const MAX_TRACE_EVENTS = 200;
+// Reduced from 200 to 100 to help prevent memory leaks in long-running sessions
+const MAX_TRACE_EVENTS = 100;
+
+// Maximum items in tracking Sets to prevent unbounded growth
+const MAX_VENT_EVENT_IDS = 50;
+const MAX_BODY_IDS = 20;
 
 // Vision distance in pixels (matches agent visionRadius config)
 const AGENT_VISION_DISTANCE = 150;
@@ -83,6 +88,12 @@ function App() {
   // Game over audio
   const gameOverAudioRef = useRef<HTMLAudioElement | null>(null);
   const lastGameEndReasonRef = useRef<string | null>(null);
+
+  // Timeout refs for cleanup
+  const bodyReportOverlayTimeoutRef = useRef<number | null>(null);
+  
+  // Track last match ID to detect game restarts
+  const lastMatchTickRef = useRef<number>(0);
 
   // Preload kill sound on mount
   useEffect(() => {
@@ -434,9 +445,15 @@ function App() {
           });
           setShowBodyReportOverlay(true);
           
+          // Clear any existing timeout to prevent memory buildup
+          if (bodyReportOverlayTimeoutRef.current) {
+            clearTimeout(bodyReportOverlayTimeoutRef.current);
+          }
+          
           // Auto-hide overlay after 3 seconds
-          setTimeout(() => {
+          bodyReportOverlayTimeoutRef.current = window.setTimeout(() => {
             setShowBodyReportOverlay(false);
+            bodyReportOverlayTimeoutRef.current = null;
           }, 3000);
         }
       }
@@ -470,11 +487,17 @@ function App() {
           }
         }
 
-        // Cleanup old seen vent event IDs to prevent memory leak (keep last 100)
-        if (seenVentEventIdsRef.current.size > 100) {
+        // Cleanup old seen vent event IDs to prevent memory leak
+        if (seenVentEventIdsRef.current.size > MAX_VENT_EVENT_IDS) {
           const idsArray = Array.from(seenVentEventIdsRef.current);
-          seenVentEventIdsRef.current = new Set(idsArray.slice(-50));
+          seenVentEventIdsRef.current = new Set(idsArray.slice(-Math.floor(MAX_VENT_EVENT_IDS / 2)));
         }
+      }
+      
+      // Cleanup body tracking set periodically
+      if (lastKnownBodiesRef.current.size > MAX_BODY_IDS) {
+        // If we have more bodies than the max, something's wrong - clear it
+        lastKnownBodiesRef.current.clear();
       }
 
       const now = performance.now();
@@ -547,10 +570,28 @@ function App() {
           }
         } else if (!snapshot.gameEndState || snapshot.gameEndState.reason === 'ONGOING') {
           // Detect new match starting (was in game over, now ongoing with low tick)
-          if (lastGameEndReasonRef.current !== null && snapshot.tick < 100) {
+          // Also detect if tick suddenly dropped (server restart)
+          if ((lastGameEndReasonRef.current !== null && snapshot.tick < 100) ||
+              (lastMatchTickRef.current > 1000 && snapshot.tick < 100)) {
+            systemLogger.info('New match detected - clearing memory caches', {
+              previousTick: lastMatchTickRef.current,
+              newTick: snapshot.tick
+            });
+            
+            // Clear all tracking refs to prevent memory leaks between matches
+            lastKnownBodiesRef.current.clear();
+            seenVentEventIdsRef.current.clear();
+            lastBodyReportIdRef.current = null;
+            
+            // Clear the agent visual renderer's processed events
+            agentVisualRendererRef.current?.clearProcessedEvents();
+            
             // Clear LLM trace events on new match to prevent memory buildup
             setLlmTraceEvents([]);
           }
+          // Update last match tick for restart detection
+          lastMatchTickRef.current = snapshot.tick;
+          
           // Reset the ref when game restarts
           lastGameEndReasonRef.current = null;
         }
@@ -596,6 +637,16 @@ function App() {
         cancelAnimationFrame(animationFrameIdRef.current);
         animationFrameIdRef.current = 0;
       }
+      
+      // Clear any pending timeouts
+      if (bodyReportOverlayTimeoutRef.current) {
+        clearTimeout(bodyReportOverlayTimeoutRef.current);
+        bodyReportOverlayTimeoutRef.current = null;
+      }
+      
+      // Clear tracking refs to free memory
+      lastKnownBodiesRef.current.clear();
+      seenVentEventIdsRef.current.clear();
 
       // DON'T destroy renderers during HMR - they will be reused
       // Only clean up if this is a true unmount (page unload)

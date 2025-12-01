@@ -796,6 +796,18 @@ export class AIAgentVisualRenderer {
     graphics.stroke({ width: lineWidth, color: 0xFFFFFF, alpha: 1 });
   }
 
+  /**
+   * Clear processed event tracking sets to free memory
+   * Called when a new match starts to prevent memory leaks
+   */
+  clearProcessedEvents(): void {
+    this.processedHeardEvents.clear();
+    // Also clear any stale bubbles
+    this.speechBubbleRenderer.clearAllBubbles();
+    this.thinkingBubbleRenderer.clearAllBubbles();
+    this.hearingIndicatorRenderer.clear();
+  }
+
   destroy(): void {
     for (const state of this.agentVisuals.values()) {
       state.visuals.spriteContainer.destroy({ children: true });

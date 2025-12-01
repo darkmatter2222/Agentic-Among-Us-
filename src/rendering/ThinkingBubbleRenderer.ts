@@ -167,6 +167,15 @@ export class ThinkingBubbleRenderer {
     return this.container;
   }
 
+  /**
+   * Clear ALL bubbles for ALL agents (for memory cleanup on match restart)
+   */
+  clearAllBubbles(): void {
+    for (const [agentId] of this.activeBubbles) {
+      this.hideThinking(agentId);
+    }
+  }
+
   destroy(): void {
     for (const [_, bubble] of this.activeBubbles) {
       bubble.container.destroy({ children: true });
