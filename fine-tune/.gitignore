@@ -1,0 +1,24 @@
+# Training data and datasets
+data/
+*.jsonl
+
+# Model outputs and checkpoints
+output/
+merged_model/
+gguf_model/
+*.gguf
+*.safetensors
+*.bin
+*.pt
+*.pth
+
+# Huggingface cache
+.cache/
+
+# Wandb logs
+wandb/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
