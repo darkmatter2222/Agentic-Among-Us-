@@ -27,6 +27,7 @@ from transformers import (
     BitsAndBytesConfig,
     TrainingArguments,
     DataCollatorForLanguageModeling,
+    EarlyStoppingCallback,
 )
 from peft import (
     LoraConfig,
@@ -61,13 +62,16 @@ def parse_args():
         help="Directory to save the fine-tuned model"
     )
     
-    # Training arguments
-    parser.add_argument("--epochs", type=int, default=3, help="Number of training epochs")
-    parser.add_argument("--batch_size", type=int, default=4, help="Batch size per device")
-    parser.add_argument("--gradient_accumulation", type=int, default=4, help="Gradient accumulation steps")
+    # Training arguments - optimized for RTX 5090 with 34GB VRAM
+    parser.add_argument("--epochs", type=int, default=1, help="Number of training epochs")
+    parser.add_argument("--batch_size", type=int, default=16, help="Batch size per device (16 with 4-bit quant)")
+    parser.add_argument("--gradient_accumulation", type=int, default=2, help="Gradient accumulation steps (effective batch = batch_size * grad_accum)")
     parser.add_argument("--learning_rate", type=float, default=2e-4, help="Learning rate")
-    parser.add_argument("--max_seq_length", type=int, default=2048, help="Maximum sequence length")
+    parser.add_argument("--max_seq_length", type=int, default=512, help="Maximum sequence length (shorter = faster)")
     parser.add_argument("--warmup_ratio", type=float, default=0.03, help="Warmup ratio")
+    parser.add_argument("--max_samples", type=int, default=None, help="Max training samples (None = use all). Try 20000-50000 for faster training.")
+    parser.add_argument("--early_stopping_patience", type=int, default=3, help="Early stopping patience (evaluations without improvement)")
+    parser.add_argument("--no_gradient_checkpointing", action="store_true", default=True, help="Disable gradient checkpointing (faster, uses more VRAM)")
     
     # LoRA arguments
     parser.add_argument("--lora_r", type=int, default=64, help="LoRA rank")
@@ -75,7 +79,7 @@ def parse_args():
     parser.add_argument("--lora_dropout", type=float, default=0.05, help="LoRA dropout")
     
     # Other arguments
-    parser.add_argument("--use_4bit", action="store_true", default=True, help="Use 4-bit quantization")
+    parser.add_argument("--use_4bit", action="store_true", default=True, help="Use 4-bit quantization (much less VRAM, required for larger batches)")
     parser.add_argument("--use_wandb", action="store_true", help="Use Weights & Biases for logging")
     parser.add_argument("--wandb_project", type=str, default="among-us-llama", help="W&B project name")
     
@@ -172,6 +176,16 @@ def main():
     # Load data
     print("\n--- Loading Data ---")
     train_dataset, val_dataset = load_and_prepare_data(data_dir)
+
+    # Optionally limit dataset size for faster training
+    if args.max_samples and len(train_dataset) > args.max_samples:
+        print(f"Limiting training samples from {len(train_dataset)} to {args.max_samples}")
+        train_dataset = train_dataset.shuffle(seed=42).select(range(args.max_samples))
+        # Also reduce validation proportionally
+        val_samples = min(len(val_dataset), args.max_samples // 10)
+        val_dataset = val_dataset.shuffle(seed=42).select(range(val_samples))
+        print(f"Training samples (after limit): {len(train_dataset)}")
+        print(f"Validation samples (after limit): {len(val_dataset)}")
     
     # Setup quantization for memory efficiency
     print("\n--- Setting up Model ---")
@@ -209,7 +223,7 @@ def main():
         device_map="auto",
         trust_remote_code=True,
         torch_dtype=torch.bfloat16,
-        attn_implementation="sdpa",  # Use PyTorch's built-in SDPA instead of flash_attn
+        attn_implementation="sdpa",  # PyTorch's SDPA (flash-attn not available on Windows)
     )
     
     # Prepare model for k-bit training
@@ -246,42 +260,68 @@ def main():
     
     # Training arguments
     print("\n--- Setting up Training ---")
+
+    # Calculate appropriate eval/save steps based on dataset size
+    effective_batch_size = args.batch_size * args.gradient_accumulation
+    steps_per_epoch = len(train_dataset) // effective_batch_size
+    # Evaluate ~10 times per epoch, save ~5 times per epoch
+    eval_steps = max(100, steps_per_epoch // 10)
+    save_steps = max(200, steps_per_epoch // 5)
     
+    print(f"Dataset size: {len(train_dataset)}")
+    print(f"Effective batch size: {effective_batch_size}")
+    print(f"Steps per epoch: ~{steps_per_epoch}")
+    print(f"Eval every {eval_steps} steps, Save every {save_steps} steps")
+
+    # Gradient checkpointing: saves VRAM but ~30% slower
+    use_grad_ckpt = not args.no_gradient_checkpointing
+    print(f"Gradient checkpointing: {'ON (slower, less VRAM)' if use_grad_ckpt else 'OFF (faster, more VRAM)'}")
+
     training_args = SFTConfig(
         output_dir=str(output_dir),
         num_train_epochs=args.epochs,
         per_device_train_batch_size=args.batch_size,
         per_device_eval_batch_size=args.batch_size,
         gradient_accumulation_steps=args.gradient_accumulation,
-        gradient_checkpointing=True,
-        gradient_checkpointing_kwargs={"use_reentrant": False},
+        gradient_checkpointing=use_grad_ckpt,
+        gradient_checkpointing_kwargs={"use_reentrant": False} if use_grad_ckpt else None,
         learning_rate=args.learning_rate,
         lr_scheduler_type="cosine",
         warmup_ratio=args.warmup_ratio,
         weight_decay=0.01,
-        optim="paged_adamw_8bit",
+        optim="adamw_torch_fused",  # Fused optimizer is faster than paged_adamw_8bit
         bf16=True,
         tf32=True,
         max_grad_norm=0.3,
-        logging_steps=10,
+        logging_steps=50,
         eval_strategy="steps",
-        eval_steps=100,
+        eval_steps=eval_steps,
         save_strategy="steps",
-        save_steps=200,
+        save_steps=save_steps,
         save_total_limit=3,
-        max_length=args.max_seq_length,  # Changed from max_seq_length for newer TRL
-        packing=False,
+        max_length=args.max_seq_length,
+        packing=False,  # Disabled - requires flash-attn for safe use
         dataset_text_field="text",
         report_to="wandb" if (args.use_wandb and WANDB_AVAILABLE) else "none",
-    )
+        load_best_model_at_end=True,
+        metric_for_best_model="eval_loss",
+        greater_is_better=False,
+        dataloader_num_workers=4,  # Parallel data loading
+        dataloader_pin_memory=True,
+    )    # Create trainer - TRL 0.25+ uses processing_class instead of tokenizer
+    # Add early stopping callback
+    callbacks = []
+    if args.early_stopping_patience > 0:
+        callbacks.append(EarlyStoppingCallback(early_stopping_patience=args.early_stopping_patience))
+        print(f"Early stopping enabled: patience={args.early_stopping_patience} evaluations")
 
-    # Create trainer - TRL 0.25+ uses processing_class instead of tokenizer
     trainer = SFTTrainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=val_dataset,
         processing_class=tokenizer,
+        callbacks=callbacks,
     )
 
     # Train!
