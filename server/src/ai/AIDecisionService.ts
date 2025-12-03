@@ -423,6 +423,14 @@ export class AIDecisionService {
   }
 
   /**
+   * Get a raw LLM decision response.
+   * This exposes the underlying AIModelClient for use by external systems (e.g., MeetingAIManager).
+   */
+  async getRawDecision(systemPrompt: string, userPrompt: string, options?: AIModelOptions): Promise<string> {
+    return this.aiClient.getDecision(systemPrompt, userPrompt, options);
+  }
+
+  /**
    * Get effective cooldowns based on current capacity
    * Higher thinking coefficient = shorter cooldowns = more thinking
    */

@@ -249,7 +249,7 @@ export class MeetingAIManager {
       const userPrompt = buildDiscussionUserPrompt(context);
 
       const aiService = getAIDecisionService();
-      const response = await aiService.getDecision(systemPrompt, userPrompt, {
+      const response = await aiService.getRawDecision(systemPrompt, userPrompt, {
         maxTokens: 200,
         temperature: 0.7,
       });
@@ -338,7 +338,7 @@ export class MeetingAIManager {
       const userPrompt = buildVotingUserPrompt(context);
 
       const aiService = getAIDecisionService();
-      const response = await aiService.getDecision(systemPrompt, userPrompt, {
+      const response = await aiService.getRawDecision(systemPrompt, userPrompt, {
         maxTokens: 150,
         temperature: 0.5,
       });
