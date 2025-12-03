@@ -49,6 +49,16 @@ export const MeetingType = {
 } as const;
 export type MeetingType = typeof MeetingType[keyof typeof MeetingType];
 
+// Meeting phase within a meeting
+export const MeetingPhase = {
+  PRE_MEETING: 'PRE_MEETING',     // Brief pause before discussion starts
+  DISCUSSION: 'DISCUSSION',       // Players discuss, no voting yet
+  VOTING: 'VOTING',               // Players can cast votes
+  VOTE_RESULTS: 'VOTE_RESULTS',   // Showing vote tally
+  EJECTION: 'EJECTION'            // Ejection animation playing
+} as const;
+export type MeetingPhase = typeof MeetingPhase[keyof typeof MeetingPhase];
+
 export const ActionType = {
   MOVE: 'MOVE',
   DO_TASK: 'DO_TASK',
@@ -274,28 +284,39 @@ export interface SabotageAction {
 export interface Meeting {
   id: string;
   type: MeetingType;
+  phase: MeetingPhase;
   calledBy: string; // Player ID
+  calledByName: string; // Player name for display
   calledAt: number;
-  bodyId?: string; // If body report
-  bodyLocation?: Position;
   
-  // Phases
+  // Body report info (if type === BODY_REPORT)
+  bodyId?: string;
+  bodyLocation?: Position;
+  bodyVictimId?: string;
+  bodyVictimName?: string;
+  bodyVictimColor?: number;
+  bodyZone?: string; // Room name where body was found
+
+  // Timing
   discussionDuration: number; // seconds
   votingDuration: number; // seconds
   discussionEndTime: number;
   votingEndTime: number;
+  phaseEndTime: number; // Current phase end time (ms timestamp)
+
+  // Participants (living players at meeting start)
+  participants: string[]; // Player IDs who can vote
   
   // Communication
   statements: Statement[];
   votes: VoteRecord[];
-  
-  // Results
+
+  // Results (populated after voting ends)
+  result?: EjectionResult;
   ejectedPlayer?: string;
   voteResults?: Map<string, number>; // player_id -> vote count
   wasImpostor?: boolean;
-}
-
-export interface Statement {
+}export interface Statement {
   id: string;
   playerId: string;
   content: string;
@@ -323,6 +344,114 @@ export interface VoteRecord {
   timestamp: number;
   reasoning: string;
   isPublic: boolean; // For anonymous voting
+}
+
+// Result of vote tallying
+export interface EjectionResult {
+  /** Player ID who was ejected, or null if no ejection */
+  ejectedPlayerId: string | null;
+  /** Name of ejected player for display */
+  ejectedPlayerName: string | null;
+  /** Why the ejection happened (or didn't) */
+  reason: 'MAJORITY' | 'PLURALITY' | 'TIE' | 'SKIP_MAJORITY' | 'NO_VOTES';
+  /** True if ejected player was an impostor */
+  wasImpostor: boolean;
+  /** Number of impostors remaining after ejection */
+  impostorsRemaining: number;
+  /** Vote counts per player/skip */
+  voteCounts: Map<string, number>;
+  /** Total votes cast */
+  totalVotes: number;
+}
+
+// ========== MEETING SNAPSHOT (for client sync) ==========
+
+/** Participant info for meeting UI */
+export interface MeetingParticipant {
+  id: string;
+  name: string;
+  color: number;
+  isAlive: boolean;
+  isGhost: boolean;
+  hasVoted: boolean;
+}
+
+/** Statement as sent to client */
+export interface StatementSnapshot {
+  id: string;
+  playerId: string;
+  playerName: string;
+  playerColor: number;
+  content: string;
+  timestamp: number;
+  accusesPlayer?: string;
+  defendsPlayer?: string;
+}
+
+/** Snapshot of meeting state for client rendering */
+export interface MeetingSnapshot {
+  id: string;
+  type: MeetingType;
+  phase: MeetingPhase;
+  
+  // Who called the meeting
+  calledById: string;
+  calledByName: string;
+  calledByColor: number;
+  
+  // Body report info (if applicable)
+  bodyReport?: {
+    victimId: string;
+    victimName: string;
+    victimColor: number;
+    location: string; // Zone name
+  };
+  
+  // Timing (ms timestamps)
+  discussionEndTime: number;
+  votingEndTime: number;
+  phaseEndTime: number;
+  timeRemaining: number; // Seconds remaining in current phase
+  
+  // Participants
+  participants: MeetingParticipant[];
+  votedPlayerIds: string[]; // IDs of players who have voted
+  
+  // Statements made during discussion
+  statements: StatementSnapshot[];
+  
+  // Vote results (only shown after voting ends, respects anonymous setting)
+  voteResults?: {
+    voteCounts: Record<string, number>; // targetId -> count (uses 'SKIP' key for skips)
+    anonymousVoting: boolean;
+    voterMap?: Record<string, string>; // voterId -> targetId (only if not anonymous)
+  };
+  
+  // Ejection info (only during EJECTION phase)
+  ejection?: {
+    ejectedId: string | null;
+    ejectedName: string | null;
+    ejectedColor: number | null;
+    wasImpostor: boolean;
+    impostorsRemaining: number;
+    message: string; // Display message like "X was An Impostor"
+  };
+}
+
+// ========== EMERGENCY BUTTON STATE ==========
+
+/** State tracking for the emergency button */
+export interface EmergencyButtonState {
+  /** Timestamp when global cooldown expires (game start cooldown) */
+  globalCooldownUntil: number;
+  /** Per-player cooldown timestamps (after they call a meeting) */
+  playerCooldowns: Map<string, number>;
+  /** Number of emergency meetings each player has used */
+  playerUsageCount: Map<string, number>;
+  /** Maximum meetings allowed per player per game */
+  meetingsPerPlayer: number;
+  /** Cooldown duration in seconds after calling a meeting */
+  cooldownDuration: number;
 }
 
 export interface DeadBody {
@@ -405,6 +534,7 @@ export interface GameSettings {
   votingTime: number; // 0-300 seconds
   anonymousVoting: boolean;
   confirmEjects: boolean;
+  voteLockTime: number; // Seconds before voting ends when votes lock (typically 5)
   
   // Game behavior
   visualTasksOn: boolean;

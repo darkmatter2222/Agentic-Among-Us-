@@ -1952,7 +1952,14 @@ export class AIAgent {
   }
   
   // ========== Context Building ==========
-  
+
+  /**
+   * Public wrapper to build AI context for external callers (e.g., meeting system)
+   */
+  buildContext(): AIContext {
+    return this.buildAIContext();
+  }
+
   /**
    * Build AI context for LLM calls
    */

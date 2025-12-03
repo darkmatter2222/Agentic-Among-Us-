@@ -114,6 +114,7 @@ export const moveLog = { get: () => getCategoryLogger('MOVEMENT') };
 export const taskLog = { get: () => getCategoryLogger('TASK') };
 export const killLog = { get: () => getCategoryLogger('KILL') };
 export const ventLog = { get: () => getCategoryLogger('VENT') };
+export const meetingLog = { get: () => getCategoryLogger('MEETING') };
 export const sabotageLog = { get: () => getCategoryLogger('SABOTAGE') };
 export const memLog = { get: () => getCategoryLogger('MEMORY') };
 export const speechLog = { get: () => getCategoryLogger('SPEECH') };

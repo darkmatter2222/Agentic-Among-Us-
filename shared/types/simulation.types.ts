@@ -1,6 +1,9 @@
 import type { Point } from '../data/poly3-map.ts';
 import type { PlayerActivityState, PlayerLocationState } from '../engine/PlayerStateMachine.ts';
-import type { PlayerRole, PlayerState } from './game.types.ts';
+import type { PlayerRole, PlayerState, MeetingSnapshot, MeetingPhase } from './game.types.ts';
+
+// Re-export meeting types for consumers
+export type { MeetingSnapshot, MeetingPhase };
 
 // ========== AI Thought & Speech Events ==========
 
@@ -293,7 +296,8 @@ export interface GameTimerSnapshot {
  *            No one knows there's danger. Mundane conversations about tasks and work.
  * - ALERT: Post-first-body-discovery phase. Crewmates now know there's a killer.
  *          Suspicion, alibis, accusations become relevant.
- * - MEETING: Emergency meeting or body report discussion (not yet implemented)
+ * - MEETING: Emergency meeting or body report discussion. Players are teleported
+ *            to cafeteria for discussion and voting. See MeetingPhase for sub-states.
  * - GAME_OVER: Game has ended
  */
 export type GamePhase = 'WORKING' | 'ALERT' | 'MEETING' | 'GAME_OVER';
@@ -372,6 +376,12 @@ export interface WorldSnapshot {
   llmQueueStats?: import('./protocol.types.ts').LLMQueueStats; // LLM queue monitoring
   // Sabotage state
   sabotageState?: SabotageSnapshot;
+  
+  // Meeting state (when gamePhase === 'MEETING')
+  /** Active meeting snapshot for UI rendering */
+  activeMeeting?: MeetingSnapshot;
+  /** Current phase within the meeting */
+  meetingPhase?: MeetingPhase;
 }
 
 // ========== Sabotage Snapshot ==========
@@ -397,7 +407,7 @@ export interface SabotageSnapshot {
 
 // ========== AI Decision Types ==========
 
-export type AIGoalType = 
+export type AIGoalType =
   | 'GO_TO_TASK'
   | 'WANDER'
   | 'FOLLOW_AGENT'
@@ -410,6 +420,8 @@ export type AIGoalType =
   | 'DEFEND_SELF'
   | 'REPORT_BODY'    // Report a dead body (triggers meeting)
   | 'FIX_SABOTAGE'   // Go to fix location to repair sabotage (crewmate)
+  // Meeting actions
+  | 'CALL_EMERGENCY_MEETING'  // Go to emergency button and call meeting
   // Impostor-only actions
   | 'KILL'
   | 'HUNT'           // Actively seek isolated targets

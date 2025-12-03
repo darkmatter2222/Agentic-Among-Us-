@@ -10,7 +10,7 @@ import type { Point } from '../data/poly3-map.ts';
 export interface ObservationEntry {
   id: string;
   timestamp: number;
-  type: 'location' | 'task_activity' | 'movement' | 'suspicious_behavior' | 'body_found' | 'vent_usage';
+  type: 'location' | 'task_activity' | 'movement' | 'suspicious_behavior' | 'body_found' | 'vent_usage' | 'meeting_started' | 'body_reported';
   subjectId: string; // Who was observed
   subjectName: string;
   zone: string | null;

@@ -674,6 +674,7 @@ window.setLogLevel('WARN');   // Only warnings and errors
 | **Game Over Sound** | Audio plays when game ends (victory/defeat). Uses preloaded game-over.mp3. |
 | **Pause/Resume** | ⏸️/▶️ button in controls panel pauses/resumes simulation. Server-side pause stops tick processing while maintaining connections. |
 | **Kill Cooldown Indicator** | Impostor info panel shows kill cooldown timer (🔪 Xs) when on cooldown, or ready indicator when can kill. |
+| **Meeting System** | Full meeting mechanics via MeetingSystem.ts and MeetingAIManager.ts. Phases: PRE_MEETING → DISCUSSION → VOTING → VOTE_RESULTS → EJECTION. AI-driven discussion with reporter-first speaking order, max 3 statements per agent. Voting with majority/tie/skip rules. Ejection marks player as DEAD. Triggers: body report and emergency button. Config: 60s discussion, 120s voting, 30s cooldown. |
 
 ### God Mode System (Active)
 
@@ -772,16 +773,70 @@ entered_vent           - IMPOSTOR ONLY: Just entered a vent
 exited_vent            - IMPOSTOR ONLY: Just exited a vent
 witnessed_vent_activity - Crewmate/Impostor: Saw someone enter/exit a vent
 alone_with_vent        - IMPOSTOR ONLY: Alone in a room with a vent
+meeting_started        - Emergency or body report meeting started
+meeting_discussion     - Agent needs to make a statement during discussion
+meeting_voting         - Agent needs to cast a vote
+```
+
+### Meeting System (NEW - Active)
+
+Full meeting mechanics are now implemented via `MeetingSystem.ts` and `MeetingAIManager.ts`:
+
+#### Meeting Triggers
+| Trigger | Implementation | Details |
+|---------|---------------|---------|
+| **Body Report** | `GameSimulation.reportBody()` | Triggers `BODY_REPORT` meeting when agent reports body |
+| **Emergency Button** | `GameSimulation.callEmergencyMeeting()` | Requires proximity (50 units) and respects cooldowns |
+
+#### Meeting Phases
+```
+PRE_MEETING (2s) → DISCUSSION (60s) → VOTING (120s) → VOTE_RESULTS (5s) → EJECTION (5s)
+```
+
+#### Discussion AI
+- `MeetingAIManager` orchestrates AI statements during discussion
+- Reporter speaks first, then round-robin through living players
+- Max 3 statements per agent per meeting
+- `MeetingPrompts.ts` provides role-specific prompts (crewmate vs impostor)
+- Includes witness info if agent saw kill
+- Statements can include accusations, defenses, alibi claims
+
+#### Voting AI
+- `MeetingAIManager.processVotingPhase()` collects votes from all agents
+- Parallel processing in batches of 3 for efficiency
+- Vote options: any living player ID or 'SKIP'
+- Fallback voting based on suspicion levels on LLM failure
+
+#### Vote Tallying
+- Majority required for ejection
+- Ties result in no ejection
+- Skip majority results in no ejection
+- `EjectionResult` tracks vote counts, reason, and ejected player
+
+#### Ejection
+- `handleEjection()` marks player as DEAD
+- `MeetingSnapshot.ejection` provides UI data
+- `confirmEjects: true` shows if ejected player was impostor
+
+#### Configuration (MeetingConfig)
+```typescript
+{
+  discussionTime: 60,      // seconds
+  votingTime: 120,         // seconds
+  voteResultsTime: 5,      // seconds
+  ejectionTime: 5,         // seconds
+  emergencyCooldown: 30,   // seconds after meeting
+  emergencyLimit: 1,       // per player per game
+  confirmEjects: true,     // show if impostor
+  anonymousVoting: false,  // show who voted for whom
+}
 ```
 
 ### Not Yet Implemented
 
 | System | Status | Notes |
 |--------|--------|-------|
-| **Emergency Meetings** | No | Button location exists but non-functional |
-| **Discussion Phase** | No | No meeting chat or accusations |
-| **Voting System** | No | No vote casting or counting |
-| **Ejection** | No | No player removal |
+| **Meeting UI** | Pending | Server-side complete, client UI components not yet created |
 | **Sabotage (Reactor)** | Partial | SabotageSystem supports REACTOR type with timers, but requires 2-player fix coordination (not fully tested) |
 | **Sabotage (O2)** | Partial | SabotageSystem supports O2 type with timers, but requires 2-location code entry (not fully tested) |
 | **Sabotage (Comms)** | Partial | SabotageSystem supports COMMS type, task hiding not yet implemented |

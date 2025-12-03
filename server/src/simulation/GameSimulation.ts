@@ -1,7 +1,10 @@
 import { AIAgentManager } from '@shared/engine/AIAgentManager.ts';
+import { MeetingSystem, type MeetingStartedEvent, type MeetingEndedEvent, type MeetingPhaseChangedEvent } from '@shared/engine/MeetingSystem.ts';
+import { MeetingAIManager } from '../ai/MeetingAIManager.js';
 import { serializeWorld, type SerializeWorldOptions } from '@shared/engine/serialization.ts';
-import { WALKABLE_ZONES, LABELED_ZONES, TASKS, VENTS } from '@shared/data/poly3-map.ts';
-import type { WorldSnapshot, ThoughtEvent, SpeechEvent, HeardSpeechEvent, AIContext, GameTimerSnapshot, GamePhase, BodyReportEvent, GameEndReason, GameEndState } from '@shared/types/simulation.types.ts';
+import { WALKABLE_ZONES, LABELED_ZONES, TASKS, VENTS, EMERGENCY_BUTTON } from '@shared/data/poly3-map.ts';
+import type { WorldSnapshot, ThoughtEvent, SpeechEvent, HeardSpeechEvent, AIContext, GameTimerSnapshot, GamePhase, BodyReportEvent, GameEndReason, GameEndState, MeetingSnapshot } from '@shared/types/simulation.types.ts';
+import type { MeetingPhase } from '@shared/types/game.types.ts';
 import { AIDecisionService } from '../ai/AIDecisionService.js';
 import type { KillEvent } from '@shared/engine/KillSystem.ts';
 import type { VentEvent } from '@shared/engine/VentSystem.ts';
@@ -28,6 +31,7 @@ const DEFAULT_OPTIONS: Required<SimulationOptions> = {
 export class GameSimulation {
   private manager: AIAgentManager;
   private aiService: AIDecisionService | null;
+  private meetingSystem: MeetingSystem;
   private lastTimestamp: number;
   private tick: number;
   private gamePhase: GamePhase;
@@ -36,11 +40,16 @@ export class GameSimulation {
   private recentHeard: HeardSpeechEvent[];
   private recentKills: KillEvent[];
   private recentVentEvents: VentEvent[];
-  
+
   // Body discovery tracking
   private firstBodyDiscovered: boolean;
   private recentBodyReport: BodyReportEvent | null;
-  
+
+  // Meeting tracking
+  private activeMeetingSnapshot: MeetingSnapshot | null;
+  private meetingPhase: MeetingPhase | null;
+  private meetingAIManager: MeetingAIManager | null;
+
   // Game timer
   private readonly gameDurationMs: number;
   private gameStartTime: number;
@@ -86,10 +95,32 @@ export class GameSimulation {
     this.recentHeard = [];
     this.recentKills = [];
     this.recentVentEvents = [];
+    
+    // Initialize meeting system
+    this.meetingSystem = new MeetingSystem({
+      discussionTime: 60,
+      votingTime: 120,
+      preMeetingTime: 3,
+      voteResultsTime: 5,
+      ejectionTime: 5,
+      anonymousVoting: false,
+      confirmEjects: true,
+      voteLockTime: 5,
+      emergencyCooldown: 30,
+      emergencyMeetingsPerPlayer: 1,
+      gameStartCooldown: 15,
+    });
+    this.setupMeetingCallbacks();
+    this.activeMeetingSnapshot = null;
+    this.meetingPhase = null;
+    this.meetingAIManager = null; // Initialized when meeting starts
 
     // Initialize game timer
     this.gameDurationMs = this.options.gameDurationMs;
     this.gameStartTime = Date.now();
+
+    // Start meeting system game timer (for emergency button cooldown)
+    this.meetingSystem.onGameStart(this.gameStartTime);
 
     // Initialize game end state
     this.gameEndReason = 'ONGOING';
@@ -158,7 +189,7 @@ export class GameSimulation {
         return {
           thought: result.thought ? {
             thought: result.thought.thought,
-            trigger: result.thought.trigger 
+            trigger: result.thought.trigger
           } : undefined,
           speech: result.speech ? {
             message: result.speech.message
@@ -168,7 +199,278 @@ export class GameSimulation {
       }
     );
   }
-  
+
+  /**
+   * Set up meeting system callbacks
+   */
+  private setupMeetingCallbacks(): void {
+    // Provide player info to meeting system
+    this.meetingSystem.setGetPlayersCallback(() => {
+      return this.manager.getAgents().map(agent => ({
+        id: agent.getId(),
+        name: agent.getName(),
+        color: agent.getColor(),
+        isAlive: agent.getPlayerState() === 'ALIVE',
+        isGhost: agent.getPlayerState() === 'GHOST',
+        isImpostor: agent.getRole() === 'IMPOSTOR',
+        position: agent.getPosition(),
+      }));
+    });
+
+    // Provide impostor count callback
+    this.meetingSystem.setGetImpostorCountCallback(() => {
+      return this.manager.getAgents().filter(
+        a => a.getRole() === 'IMPOSTOR' && a.getPlayerState() === 'ALIVE'
+      ).length;
+    });
+
+    // Handle meeting started
+    this.meetingSystem.setMeetingStartedCallback((event: MeetingStartedEvent) => {
+      simulationLogger.info('Meeting started', {
+        type: event.meeting.type,
+        calledBy: event.meeting.calledByName,
+        participants: event.meeting.participants.length,
+      });
+
+      // Transition game phase to MEETING
+      this.gamePhase = 'MEETING';
+      this.meetingPhase = event.meeting.phase;
+
+      // Initialize meeting AI manager
+      const agentMap = new Map<string, import('@shared/engine/AIAgent.ts').AIAgent>();
+      for (const agent of this.manager.getAgents()) {
+        agentMap.set(agent.getId(), agent);
+      }
+      this.meetingAIManager = new MeetingAIManager(this.meetingSystem, agentMap);
+      this.meetingAIManager.initializeMeeting(event.meeting);
+
+      // Teleport all living players to meeting positions
+      this.teleportPlayersToMeeting();
+
+      // Notify all agents about the meeting
+      this.broadcastMeetingStart(event);
+    });
+
+    // Handle phase changes
+    this.meetingSystem.setPhaseChangedCallback((event: MeetingPhaseChangedEvent) => {
+      simulationLogger.info('Meeting phase changed', {
+        meetingId: event.meetingId,
+        phase: event.phase,
+      });
+      this.meetingPhase = event.phase;
+    });
+
+    // Handle meeting ended
+    this.meetingSystem.setMeetingEndedCallback((event: MeetingEndedEvent) => {
+      simulationLogger.info('Meeting ended', {
+        meetingId: event.meetingId,
+        ejected: event.result.ejectedPlayerName,
+        reason: event.result.reason,
+      });
+
+      // Handle ejection if someone was voted out
+      if (event.result.ejectedPlayerId) {
+        this.handleEjection(event.result.ejectedPlayerId);
+      }
+
+      // Transition game phase back
+      this.gamePhase = this.firstBodyDiscovered ? 'ALERT' : 'WORKING';
+      this.meetingPhase = null;
+      this.activeMeetingSnapshot = null;
+      this.meetingAIManager = null; // Clean up meeting AI manager
+
+      // Teleport players back to their pre-meeting positions or spawn
+      this.teleportPlayersFromMeeting();
+
+      // Check win conditions after ejection
+      // (Will be checked on next step() call)
+    });
+  }
+
+  /**
+   * Teleport all living players to circular meeting positions around cafeteria table
+   */
+  private teleportPlayersToMeeting(): void {
+    const livingAgents = this.manager.getAgents().filter(
+      a => a.getPlayerState() === 'ALIVE'
+    );
+
+    // Cafeteria table center (based on emergency button position)
+    const centerX = EMERGENCY_BUTTON?.position.x ?? 1584;
+    const centerY = EMERGENCY_BUTTON?.position.y ?? 506;
+    const radius = 80; // Distance from center for seating
+
+    // Distribute players evenly around the circle
+    livingAgents.forEach((agent, index) => {
+      const angle = (2 * Math.PI * index) / livingAgents.length;
+      const x = centerX + radius * Math.cos(angle);
+      const y = centerY + radius * Math.sin(angle);
+      
+      // Teleport to meeting position using existing setPosition method
+      agent.setPosition({ x, y });
+    });
+
+    simulationLogger.debug('Players teleported to meeting', {
+      playerCount: livingAgents.length,
+      centerX,
+      centerY,
+    });
+  }
+
+  /**
+   * Teleport players back after meeting ends
+   */
+  private teleportPlayersFromMeeting(): void {
+    // For now, players stay where they are (at meeting positions)
+    // In a full implementation, we might teleport them to spawn or restore positions
+    simulationLogger.debug('Meeting ended, players remain at meeting positions');
+  }
+
+  /**
+   * Process AI decisions during a meeting (discussion statements and voting)
+   */
+  private async processMeetingAI(meeting: import('@shared/types/game.types.ts').Meeting, timestamp: number): Promise<void> {
+    if (!this.meetingAIManager || !this.aiService) return;
+
+    // Create a context getter function that builds context for each agent
+    const getAgentContext = (agentId: string): AIContext | null => {
+      const agent = this.manager.getAgent(agentId);
+      if (!agent) return null;
+
+      // Get the base context from the agent
+      const baseContext = agent.buildContext();
+      
+      // Enrich with game timer and phase info
+      const timerContext = this.getTimerContextForAgent();
+      return {
+        ...baseContext,
+        gameTimer: timerContext,
+        gamePhase: this.gamePhase,
+        firstBodyDiscovered: this.firstBodyDiscovered,
+      };
+    };
+
+    // Get decisions from meeting AI manager
+    const results = await this.meetingAIManager.update(meeting, timestamp, getAgentContext);
+
+    // Process discussion statements
+    for (const { agentId, decision } of results.statements) {
+      const agent = this.manager.getAgent(agentId);
+      if (!agent) continue;
+
+      // Add statement to meeting
+      this.meetingSystem.addStatement(
+        agentId,
+        agent.getName(),
+        decision.statement,
+        timestamp,
+        {
+          accusesPlayer: decision.accusesPlayer,
+          defendsPlayer: decision.defendsPlayer,
+          claimsLocation: decision.claimsLocation,
+          claimsTask: decision.claimsTask,
+        }
+      );
+
+      // Create a speech event for the statement (shows in UI)
+      // During meetings, use agent's current position (at meeting table)
+      const speechEvent: SpeechEvent = {
+        id: `meeting_speech_${agentId}_${timestamp}`,
+        speakerId: agentId,
+        timestamp,
+        message: decision.statement,
+        targetAgentId: decision.accusesPlayer,
+        position: agent.getPosition(),
+        hearingRadius: 1000, // Meeting speech heard by everyone
+      };
+      this.recentSpeech.push(speechEvent);
+
+      simulationLogger.debug('Agent made discussion statement', {
+        agent: agent.getName(),
+        statement: decision.statement.substring(0, 50),
+        accuses: decision.accusesPlayer,
+        defends: decision.defendsPlayer,
+      });
+    }
+
+    // Process votes
+    for (const { agentId, decision } of results.votes) {
+      const agent = this.manager.getAgent(agentId);
+      if (!agent) continue;
+
+      // Cast vote in meeting system
+      this.meetingSystem.castVote(
+        agentId,
+        agent.getName(),
+        decision.vote,
+        decision.reasoning,
+        timestamp
+      );
+
+      // If agent made a statement with their vote, add it as speech
+      if (decision.statement) {
+        const speechEvent: SpeechEvent = {
+          id: `vote_speech_${agentId}_${timestamp}`,
+          speakerId: agentId,
+          timestamp,
+          message: decision.statement,
+          targetAgentId: decision.vote !== 'SKIP' ? decision.vote : undefined,
+          position: agent.getPosition(),
+          hearingRadius: 1000, // Vote speech heard by everyone
+        };
+        this.recentSpeech.push(speechEvent);
+      }
+
+      simulationLogger.debug('Agent cast vote', {
+        agent: agent.getName(),
+        vote: decision.vote,
+        reasoning: decision.reasoning.substring(0, 50),
+      });
+    }
+  }
+
+  /**
+   * Broadcast meeting start to all agents
+   */
+  private broadcastMeetingStart(event: MeetingStartedEvent): void {
+    const meeting = event.meeting;
+    let description: string;
+
+    if (meeting.type === 'EMERGENCY') {
+      description = `EMERGENCY MEETING! ${meeting.calledByName} pressed the emergency button!`;
+    } else {
+      const bodyNames = meeting.bodyVictimName || 'someone';
+      description = `BODY REPORTED! ${meeting.calledByName} found ${bodyNames} dead in ${meeting.bodyZone || 'unknown location'}!`;
+    }
+
+    for (const agent of this.manager.getAgents()) {
+      agent.getMemory().recordObservation({
+        type: 'meeting_started',
+        subjectId: meeting.calledBy,
+        subjectName: meeting.calledByName,
+        zone: 'Cafeteria',
+        description,
+      });
+    }
+  }
+
+  /**
+   * Handle ejection of a player
+   */
+  private handleEjection(playerId: string): void {
+    const agent = this.manager.getAgent(playerId);
+    if (agent) {
+      // Mark player as ejected (dead)
+      agent.setPlayerState('DEAD');
+      
+      simulationLogger.info('Player ejected', {
+        playerId,
+        playerName: agent.getName(),
+        wasImpostor: agent.getRole() === 'IMPOSTOR',
+      });
+    }
+  }
+
   /**
    * Get timer context for agents
    */
@@ -244,6 +546,12 @@ export class GameSimulation {
     this.recentHeard = [];
     this.recentKills = [];
     this.recentVentEvents = [];
+
+    // Reset meeting system
+    this.meetingSystem.reset();
+    this.meetingSystem.onGameStart(Date.now());
+    this.activeMeetingSnapshot = null;
+    this.meetingPhase = null;
 
     // Reset timer
     this.gameStartTime = Date.now();
@@ -402,12 +710,33 @@ export class GameSimulation {
 
     // Only update simulation if game is still running
     if (this.gameEndReason === 'ONGOING' && deltaSeconds > 0) {
-      this.manager.update(deltaSeconds);
+      // Update meeting system first (handles phase transitions)
+      if (this.meetingSystem.isMeetingActive()) {
+        this.meetingSystem.update(timestamp);
 
-      // Update sabotage system (timers, fix progress, etc.)
-      this.manager.updateSabotage(deltaSeconds);
+        // Update meeting snapshot for client sync
+        this.activeMeetingSnapshot = this.meetingSystem.createMeetingSnapshot(timestamp);
+        this.meetingPhase = this.meetingSystem.getCurrentPhase();
 
-      // Update AI service with current agent positions for trace capture
+        // Process meeting AI (discussion statements, voting)
+        if (this.meetingAIManager && this.aiService) {
+          const meeting = this.meetingSystem.getActiveMeeting();
+          if (meeting && (meeting.phase === 'DISCUSSION' || meeting.phase === 'VOTING')) {
+            // Process AI decisions asynchronously
+            this.processMeetingAI(meeting, timestamp).catch(err => {
+              simulationLogger.error('Error in meeting AI processing', { error: err });
+            });
+          }
+        }
+      }
+
+      // Only update agent movement/AI if NOT in a meeting
+      if (!this.meetingSystem.isMeetingActive()) {
+        this.manager.update(deltaSeconds);
+
+        // Update sabotage system (timers, fix progress, etc.)
+        this.manager.updateSabotage(deltaSeconds);
+      }      // Update AI service with current agent positions for trace capture
       if (this.aiService) {
         const agents = this.manager.getAgents();
         const positions = agents.map(a => ({
@@ -472,6 +801,8 @@ export class GameSimulation {
 
     const options: SerializeWorldOptions = {
       gamePhase: this.gamePhase,
+      meetingPhase: this.meetingPhase ?? undefined,
+      activeMeeting: this.activeMeetingSnapshot ?? undefined,
       firstBodyDiscovered: this.firstBodyDiscovered,
       recentBodyReport: this.recentBodyReport ?? undefined,
       taskProgress: this.manager.getTaskProgress(),
@@ -521,11 +852,7 @@ export class GameSimulation {
   getAIService(): AIDecisionService | null {
     return this.aiService;
   }
-  
-  getGamePhase(): string {
-    return this.gamePhase;
-  }
-  
+
   getTaskProgress(): number {
     return this.manager.getTaskProgress();
   }
@@ -582,23 +909,49 @@ export class GameSimulation {
       isFirstDiscovery,
     };
 
-    // Transition to ALERT phase if this is the first body discovered
+    // Mark first body discovered
     if (isFirstDiscovery) {
       this.firstBodyDiscovered = true;
-      this.gamePhase = 'ALERT';
-      simulationLogger.info('FIRST BODY DISCOVERED - GAME PHASE TRANSITION', {
-        reporter: reporter.getName(),
-        phase: 'WORKING -> ALERT',
-        bodiesFound: bodies.length,
-      });
-    } else {
-      simulationLogger.info('Body reported', {
-        reporter: reporter.getName(),
-        bodiesFound: bodies.length,
-      });
     }
 
-    // Broadcast the report to all agents' memories
+    // Get first body info for meeting
+    const firstBody = bodies[0];
+
+    // Start body report meeting
+    const meeting = this.meetingSystem.startBodyReportMeeting(
+      reporter.getId(),
+      reporter.getName(),
+      reportEvent.timestamp,
+      {
+        bodyId: firstBody.id,
+        victimId: firstBody.victimId,
+        victimName: firstBody.victimName,
+        victimColor: firstBody.victimColor,
+        location: firstBody.position,
+        zone: firstBody.zone || 'Unknown',
+      }
+    );
+
+    if (meeting) {
+      simulationLogger.info('BODY REPORT MEETING STARTED', {
+        reporter: reporter.getName(),
+        victim: firstBody.victimName,
+        bodiesFound: bodies.length,
+        meetingId: meeting.id,
+      });
+    } else {
+      // Fallback to ALERT phase if meeting couldn't start
+      if (isFirstDiscovery) {
+        this.gamePhase = 'ALERT';
+        simulationLogger.info('FIRST BODY DISCOVERED - GAME PHASE TRANSITION (no meeting)', {
+          reporter: reporter.getName(),
+          phase: 'WORKING -> ALERT',
+          bodiesFound: bodies.length,
+        });
+      }
+    }
+
+    // Broadcast the report to all agents' memories  
     this.broadcastBodyReport(reportEvent);
 
     // Remove all bodies from the map
@@ -626,7 +979,8 @@ export class GameSimulation {
    */
   private broadcastBodyReport(event: BodyReportEvent): void {
     const bodyNames = event.bodies.map(b => b.victimName).join(', ');
-    const message = event.isFirstDiscovery
+    const bodyZone = event.bodies.length > 0 ? event.bodies[0].location : null;
+    const description = event.isFirstDiscovery
       ? `EMERGENCY! ${event.reporterName} found dead: ${bodyNames}. There is a killer among us!`
       : `${event.reporterName} reported: ${bodyNames} found dead.`;
 
@@ -634,19 +988,18 @@ export class GameSimulation {
       // Record in agent's memory
       agent.getMemory().recordObservation({
         type: 'body_reported',
-        details: message,
-        timestamp: event.timestamp,
-        importance: event.isFirstDiscovery ? 100 : 80, // Very important memory
+        subjectId: event.reporterId,
+        subjectName: event.reporterName,
+        zone: bodyZone,
+        description,
       });
     }
 
-    simulationLogger.debug('Body report broadcast to all agents', { 
+    simulationLogger.debug('Body report broadcast to all agents', {
       agentCount: this.manager.getAgents().length,
-      message 
+      description 
     });
-  }
-
-  /**
+  }  /**
    * Get current game phase
    */
   getGamePhase(): GamePhase {
@@ -679,6 +1032,113 @@ export class GameSimulation {
    */
   getKillCooldown(impostorId: string): number {
     return this.manager.getKillCooldown(impostorId);
+  }
+
+  // ==================== MEETING SYSTEM METHODS ====================
+
+  /**
+   * Attempt to call an emergency meeting
+   * @returns true if meeting was started, false otherwise
+   */
+  callEmergencyMeeting(playerId: string): boolean {
+    const player = this.manager.getAgent(playerId);
+    if (!player) {
+      simulationLogger.warn('Emergency meeting failed: Invalid player', { playerId });
+      return false;
+    }
+
+    // Check if player is alive
+    if (player.getPlayerState() !== 'ALIVE') {
+      simulationLogger.warn('Emergency meeting failed: Player not alive', { playerId });
+      return false;
+    }
+
+    // Check if player is near the emergency button
+    const buttonPos = EMERGENCY_BUTTON?.position;
+    if (buttonPos) {
+      const playerPos = player.getPosition();
+      const distance = Math.sqrt(
+        Math.pow(playerPos.x - buttonPos.x, 2) +
+        Math.pow(playerPos.y - buttonPos.y, 2)
+      );
+      const BUTTON_RANGE = 50; // Distance required to press button
+      if (distance > BUTTON_RANGE) {
+        simulationLogger.warn('Emergency meeting failed: Too far from button', {
+          playerId,
+          distance,
+          required: BUTTON_RANGE,
+        });
+        return false;
+      }
+    }
+
+    const timestamp = Date.now();
+    const meeting = this.meetingSystem.startEmergencyMeeting(
+      player.getId(),
+      player.getName(),
+      timestamp
+    );
+
+    if (meeting) {
+      simulationLogger.info('EMERGENCY MEETING STARTED', {
+        caller: player.getName(),
+        meetingId: meeting.id,
+      });
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Check if a player can call an emergency meeting
+   */
+  canCallEmergencyMeeting(playerId: string): { canCall: boolean; reason?: string } {
+    const player = this.manager.getAgent(playerId);
+    if (!player) {
+      return { canCall: false, reason: 'Invalid player' };
+    }
+
+    if (player.getPlayerState() !== 'ALIVE') {
+      return { canCall: false, reason: 'Player not alive' };
+    }
+
+    // Check distance to button
+    const buttonPos = EMERGENCY_BUTTON?.position;
+    if (buttonPos) {
+      const playerPos = player.getPosition();
+      const distance = Math.sqrt(
+        Math.pow(playerPos.x - buttonPos.x, 2) +
+        Math.pow(playerPos.y - buttonPos.y, 2)
+      );
+      const BUTTON_RANGE = 50;
+      if (distance > BUTTON_RANGE) {
+        return { canCall: false, reason: `Too far from button (${Math.floor(distance)} units)` };
+      }
+    }
+
+    return this.meetingSystem.canCallEmergencyMeeting(playerId, Date.now());
+  }
+
+  /**
+   * Get remaining emergency meetings for a player
+   */
+  getRemainingEmergencyMeetings(playerId: string): number {
+    return this.meetingSystem.getRemainingMeetings(playerId);
+  }
+
+  /**
+   * Get the meeting system (for advanced operations)
+   */
+  getMeetingSystem(): MeetingSystem {
+    return this.meetingSystem;
+  }
+
+  /**
+   * Check if a meeting is currently active
+   */
+  isMeetingActive(): boolean {
+    return this.meetingSystem.isMeetingActive();
   }
 
   // ==================== VENT SYSTEM METHODS ====================

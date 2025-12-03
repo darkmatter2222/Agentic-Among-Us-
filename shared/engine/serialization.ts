@@ -174,6 +174,10 @@ export interface KillStatusInfo {
 
 export interface SerializeWorldOptions {
   gamePhase?: GamePhase;
+  /** Current meeting phase if in a meeting */
+  meetingPhase?: import('../types/game.types.ts').MeetingPhase;
+  /** Active meeting snapshot for UI */
+  activeMeeting?: import('../types/game.types.ts').MeetingSnapshot;
   /** True if at least one body has been discovered */
   firstBodyDiscovered?: boolean;
   /** Most recent body report event for UI animation */
@@ -241,6 +245,8 @@ export function serializeWorld(
     tick,
     timestamp,
     gamePhase: options.gamePhase ?? 'WORKING',
+    meetingPhase: options.meetingPhase,
+    activeMeeting: options.activeMeeting,
     gameTimer: options.gameTimer,
     gameEndState: options.gameEndState,
     firstBodyDiscovered: options.firstBodyDiscovered ?? false,
