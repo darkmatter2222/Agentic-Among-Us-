@@ -22,6 +22,7 @@ export interface AgentVisuals {
   rightLeg: PIXI.Graphics;         // Right leg (redrawn each frame for animation)
   shadow: PIXI.Graphics;           // Shadow under character
   deadBodyGraphics: PIXI.Graphics; // Dead body when killed
+  ghostGraphics: PIXI.Graphics;    // Ghost sprite (floating, translucent)
   bloodPool: PIXI.Graphics;        // Blood pool under dead body
   darknessOverlay: PIXI.Graphics;  // Darkness overlay for lights-off effect
   impostorIndicator: PIXI.Graphics; // Red outline + glow for impostors (admin view only)
@@ -45,7 +46,9 @@ interface AgentVisualState {
   lastSpeechTime: number; // Track when we last showed a speech bubble
   lastThoughtTime: number; // Track when we last showed a thought bubble
   isThinking: boolean; // Track if agent is waiting for LLM response
-  isDead: boolean; // Track if agent is dead
+  isDead: boolean; // Track if agent is dead (body on ground)
+  isGhost: boolean; // Track if agent is a ghost (floating spirit)
+  ghostAnimTime: number; // Animation time for ghost floating effect
   isImpostor: boolean; // Track if agent is an impostor (for admin indicator)
   // Animation state
   walkTime: number;
@@ -140,19 +143,27 @@ export class AIAgentVisualRenderer {
       state.targetPath = snapshot.movement.path.map(point => ({ ...point }));
       state.pathDirty = true;
       state.isThinking = snapshot.isThinking ?? false;
-      
-      // Track dead state
+
+      // Track dead and ghost states
       const wasDead = state.isDead;
+      const wasGhost = state.isGhost;
       state.isDead = snapshot.playerState === 'DEAD';
+      state.isGhost = snapshot.playerState === 'GHOST';
 
       // If just died, switch to dead body graphics
-      if (state.isDead && !wasDead) {
+      if (state.isDead && !wasDead && !wasGhost) {
         renderLogger.info('Agent just died - showing dead body', { agentId: snapshot.id });
         this.showDeadBody(state);
       }
-      
+
+      // If just became ghost (from dead), switch to ghost graphics
+      if (state.isGhost && !wasGhost) {
+        renderLogger.info('Agent became ghost - showing ghost sprite', { agentId: snapshot.id });
+        this.showGhostBody(state);
+      }
+
       // If resurrected (server restart), restore live body graphics
-      if (!state.isDead && wasDead) {
+      if (!state.isDead && !state.isGhost && (wasDead || wasGhost)) {
         renderLogger.info('Agent resurrected - showing live body', { agentId: snapshot.id });
         this.showLiveBody(state);
       }
@@ -280,13 +291,34 @@ export class AIAgentVisualRenderer {
 
     for (const [agentId, state] of this.agentVisuals) {
       const { visuals, targetPosition, targetFacing } = state;
-      
+
       // Skip animation for dead agents - they don't move
       if (state.isDead) {
         // Just update position (no animation)
         visuals.spriteContainer.x = targetPosition.x;
         visuals.spriteContainer.y = targetPosition.y;
         agentPositions.set(agentId, { x: visuals.spriteContainer.x, y: visuals.spriteContainer.y });
+        continue;
+      }
+
+      // Handle ghost animation - floating effect
+      if (state.isGhost) {
+        // Update ghost animation time
+        state.ghostAnimTime += deltaTime;
+        
+        // Smoothly move to target position
+        visuals.spriteContainer.x += (targetPosition.x - visuals.spriteContainer.x) * lerpFactor;
+        visuals.spriteContainer.y += (targetPosition.y - visuals.spriteContainer.y) * lerpFactor;
+        
+        // Apply floating bob effect (sine wave)
+        const floatOffset = Math.sin(state.ghostAnimTime * 2) * 4; // Gentle float
+        visuals.ghostGraphics.y = floatOffset - 5; // Offset up slightly from ground
+        
+        // Pulse alpha slightly for ethereal effect
+        visuals.ghostGraphics.alpha = 0.45 + Math.sin(state.ghostAnimTime * 1.5) * 0.1;
+        
+        agentPositions.set(agentId, { x: visuals.spriteContainer.x, y: visuals.spriteContainer.y });
+        state.previousPosition = { ...targetPosition };
         continue;
       }
 
@@ -1015,13 +1047,20 @@ export class AIAgentVisualRenderer {
     deadBodyGraphics.visible = false;
     spriteContainer.addChild(deadBodyGraphics);
 
+    // Ghost graphics (hidden until player becomes ghost)
+    const ghostGraphics = new PIXI.Graphics();
+    ghostGraphics.zIndex = 10; // Same level as body
+    ghostGraphics.visible = false;
+    ghostGraphics.alpha = 0.6; // Semi-transparent ghost
+    spriteContainer.addChild(ghostGraphics);
+
     this.container.addChild(visionBox.getContainer());
     this.container.addChild(pathLine.getContainer());
     this.container.addChild(actionRadius.getContainer());
     this.container.addChild(spriteContainer);
 
     const state: AgentVisualState = {
-      visuals: { spriteContainer, bodyGraphics, leftLeg, rightLeg, shadow, deadBodyGraphics, bloodPool, darknessOverlay, impostorIndicator, bodyColor, visionBox, actionRadius, pathLine, taskProgressBar, taskProgressBackground, taskCheckmark },
+      visuals: { spriteContainer, bodyGraphics, leftLeg, rightLeg, shadow, deadBodyGraphics, ghostGraphics, bloodPool, darknessOverlay, impostorIndicator, bodyColor, visionBox, actionRadius, pathLine, taskProgressBar, taskProgressBackground, taskCheckmark },
       targetPosition: { ...snapshot.movement.position },
       previousPosition: { ...snapshot.movement.position },
       targetFacing: snapshot.movement.facing,
@@ -1031,6 +1070,8 @@ export class AIAgentVisualRenderer {
       lastThoughtTime: 0,
       isThinking: snapshot.isThinking ?? false,
       isDead: snapshot.playerState === 'DEAD',
+      isGhost: snapshot.playerState === 'GHOST',
+      ghostAnimTime: 0,
       isImpostor: snapshot.role === 'IMPOSTOR',
       walkTime: 0,
       isWalking: false,
@@ -1051,6 +1092,12 @@ export class AIAgentVisualRenderer {
     if (state.isDead) {
       renderLogger.debug('Agent created as already dead - showing dead body immediately', { agentId: snapshot.id });
       this.showDeadBody(state);
+    }
+
+    // If agent is already a ghost when we create their visual, show ghost immediately
+    if (state.isGhost) {
+      renderLogger.debug('Agent created as ghost - showing ghost sprite immediately', { agentId: snapshot.id });
+      this.showGhostBody(state);
     }    return state;
   }
   
@@ -1214,12 +1261,124 @@ export class AIAgentVisualRenderer {
     // Hide dead body graphics
     visuals.deadBodyGraphics.visible = false;
     visuals.bloodPool.visible = false;
+    
+    // Hide ghost graphics
+    visuals.ghostGraphics.visible = false;
 
-    renderLogger.debug('showLiveBody complete', { 
-      bodyGraphicsVisible: visuals.bodyGraphics.visible, 
-      deadBodyGraphicsVisible: visuals.deadBodyGraphics.visible 
+    renderLogger.debug('showLiveBody complete', {
+      bodyGraphicsVisible: visuals.bodyGraphics.visible,
+      deadBodyGraphicsVisible: visuals.deadBodyGraphics.visible
     });
-  }/**
+  }
+
+  /**
+   * Show ghost graphics - floating translucent spirit with a wavy tail
+   * Based on Among Us ghost design: cute bean shape floating with a ghostly tail
+   */
+  private showGhostBody(state: AgentVisualState): void {
+    renderLogger.debug('showGhostBody() called - showing ghost sprite');
+    const visuals = state.visuals;
+    const color = visuals.bodyColor;
+    const sizeMultiplier = AIAgentVisualRenderer.SIZE_MULTIPLIER;
+    const size = 14 * sizeMultiplier;
+
+    // Hide all live body parts
+    visuals.bodyGraphics.visible = false;
+    visuals.leftLeg.visible = false;
+    visuals.rightLeg.visible = false;
+    visuals.shadow.visible = false; // Ghosts don't cast shadows
+    visuals.taskProgressBar.visible = false;
+    visuals.taskProgressBackground.visible = false;
+    visuals.taskCheckmark.visible = false;
+    visuals.impostorIndicator.visible = false;
+    
+    // Hide dead body graphics (ghost replaces dead body)
+    visuals.deadBodyGraphics.visible = false;
+    visuals.bloodPool.visible = false;
+
+    // Show ghost graphics
+    visuals.ghostGraphics.visible = true;
+    visuals.ghostGraphics.alpha = 0.55; // Semi-transparent ghost
+
+    // Draw the ghost
+    this.drawGhostSprite(visuals.ghostGraphics, color, size);
+
+    renderLogger.debug('showGhostBody complete', { ghostGraphicsVisible: visuals.ghostGraphics.visible });
+  }
+
+  /**
+   * Draw the ghost sprite - cute Among Us style floating ghost with wavy tail
+   */
+  private drawGhostSprite(graphics: PIXI.Graphics, color: number, size: number): void {
+    graphics.clear();
+    
+    const visorColor = 0x84D2F6; // Light blue visor
+    const lighterColor = this.lightenColor(color, 0.3); // Lighter shade for highlights
+    
+    // Main ghost body (rounded top, wavy bottom)
+    // The body is a bean shape that fades into a wavy ghostly tail
+
+    // Main body ellipse (upper body shape)
+    graphics.beginFill(color);
+    graphics.drawEllipse(0, -size * 0.2, size * 0.65, size * 0.55);
+    graphics.endFill();
+
+    // Wavy tail/bottom part (three wave bumps)
+    const tailY = size * 0.25;
+    const waveWidth = size * 0.43;
+    const waveHeight = size * 0.35;
+
+    graphics.beginFill(color);
+    // Left wave
+    graphics.drawEllipse(-waveWidth, tailY, size * 0.25, waveHeight);
+    // Center wave
+    graphics.drawEllipse(0, tailY + size * 0.1, size * 0.28, waveHeight * 1.1);
+    // Right wave
+    graphics.drawEllipse(waveWidth, tailY, size * 0.25, waveHeight);
+    graphics.endFill();
+
+    // Fill the gap between body and tail
+    graphics.beginFill(color);
+    graphics.drawRect(-size * 0.65, -size * 0.1, size * 1.3, size * 0.45);
+    graphics.endFill();
+
+    // Backpack (small hump on back/side of ghost)
+    const darkerColor = this.darkenColor(color, 0.15);
+    graphics.beginFill(darkerColor);
+    graphics.drawEllipse(-size * 0.55, -size * 0.15, size * 0.25, size * 0.35);
+    graphics.endFill();
+
+    // Visor (the iconic Among Us visor - slightly larger and centered)
+    graphics.beginFill(visorColor);
+    graphics.drawEllipse(size * 0.1, -size * 0.25, size * 0.35, size * 0.22);
+    graphics.endFill();
+
+    // Visor shine/highlight
+    graphics.beginFill(0xFFFFFF, 0.5);
+    graphics.drawEllipse(size * 0.2, -size * 0.35, size * 0.1, size * 0.06);
+    graphics.endFill();
+
+    // Subtle highlight on body (ghostly glow effect)
+    graphics.beginFill(lighterColor, 0.3);
+    graphics.drawEllipse(size * 0.15, -size * 0.4, size * 0.2, size * 0.15);
+    graphics.endFill();
+
+    // Outline for definition
+    graphics.lineStyle(1.5, 0x000000, 0.25);
+    graphics.drawEllipse(0, -size * 0.2, size * 0.65, size * 0.55);
+    graphics.lineStyle(0);
+  }
+
+  /**
+   * Lighten a color by a factor (0-1)
+   */
+  private lightenColor(color: number, factor: number): number {
+    const r = Math.min(255, ((color >> 16) & 0xFF) + Math.floor(255 * factor));
+    const g = Math.min(255, ((color >> 8) & 0xFF) + Math.floor(255 * factor));
+    const b = Math.min(255, (color & 0xFF) + Math.floor(255 * factor));
+    return (r << 16) | (g << 8) | b;
+  }
+/**
    * Darken a color by a factor (0-1)
    */
   private drawImpostorIndicator(
