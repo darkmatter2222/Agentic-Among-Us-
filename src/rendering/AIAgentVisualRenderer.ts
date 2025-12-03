@@ -301,28 +301,31 @@ export class AIAgentVisualRenderer {
         continue;
       }
 
-      // Handle ghost animation - floating effect
+      // Handle ghost animation - floating effect with animated wispy tail
       if (state.isGhost) {
         // Update ghost animation time
         state.ghostAnimTime += deltaTime;
-        
+
         // Smoothly move to target position
         visuals.spriteContainer.x += (targetPosition.x - visuals.spriteContainer.x) * lerpFactor;
         visuals.spriteContainer.y += (targetPosition.y - visuals.spriteContainer.y) * lerpFactor;
-        
+
         // Apply floating bob effect (sine wave)
         const floatOffset = Math.sin(state.ghostAnimTime * 2) * 4; // Gentle float
         visuals.ghostGraphics.y = floatOffset - 5; // Offset up slightly from ground
-        
+
         // Pulse alpha slightly for ethereal effect
         visuals.ghostGraphics.alpha = 0.45 + Math.sin(state.ghostAnimTime * 1.5) * 0.1;
-        
+
+        // Redraw ghost with animated wispy tail
+        const sizeMultiplier = AIAgentVisualRenderer.SIZE_MULTIPLIER;
+        const size = 14 * sizeMultiplier;
+        this.drawGhostSprite(visuals.ghostGraphics, visuals.bodyColor, size, state.ghostAnimTime);
+
         agentPositions.set(agentId, { x: visuals.spriteContainer.x, y: visuals.spriteContainer.y });
         state.previousPosition = { ...targetPosition };
         continue;
-      }
-
-      // Calculate movement for flipping and walking detection
+      }      // Calculate movement for flipping and walking detection
       const dx = targetPosition.x - visuals.spriteContainer.x;
       const dy = targetPosition.y - visuals.spriteContainer.y;
       const distanceToTarget = Math.sqrt(dx * dx + dy * dy);
@@ -1300,85 +1303,158 @@ export class AIAgentVisualRenderer {
     visuals.ghostGraphics.visible = true;
     visuals.ghostGraphics.alpha = 0.55; // Semi-transparent ghost
 
-    // Draw the ghost
-    this.drawGhostSprite(visuals.ghostGraphics, color, size);
+    // Draw the ghost with initial animation time
+    this.drawGhostSprite(visuals.ghostGraphics, color, size, state.ghostAnimTime);
 
     renderLogger.debug('showGhostBody complete', { ghostGraphicsVisible: visuals.ghostGraphics.visible });
   }
 
   /**
-   * Draw the ghost sprite - cute Among Us style floating ghost with wavy tail
+   * Draw the ghost sprite - IDENTICAL to living player body but with wispy tail instead of legs
+   * Copies exact body, visor, backpack proportions from createAgentVisuals
+   * @param graphics - The PIXI graphics object to draw on
+   * @param color - The body color
+   * @param size - Base size (14 * SIZE_MULTIPLIER)
+   * @param animTime - Animation time for wispy tail movement
    */
-  private drawGhostSprite(graphics: PIXI.Graphics, color: number, size: number): void {
+  private drawGhostSprite(graphics: PIXI.Graphics, color: number, size: number, animTime: number = 0): void {
     graphics.clear();
-    
-    const visorColor = 0x84D2F6; // Light blue visor
-    const lighterColor = this.lightenColor(color, 0.3); // Lighter shade for highlights
-    
-    // Main ghost body (rounded top, wavy bottom)
-    // The body is a bean shape that fades into a wavy ghostly tail
 
-    // Main body ellipse (upper body shape)
+    const sizeMultiplier = size / 14; // Recover the multiplier from passed size
+    const visorColor = 0x84D2F6;
+    const outlineColor = 0x000000;
+
+    // ===== BODY DIMENSIONS - COPIED EXACTLY FROM createAgentVisuals =====
+    const bodyWidth = 16 * sizeMultiplier;
+    const bodyHeight = 24 * sizeMultiplier;
+    const bodyX = -8 * sizeMultiplier;
+    const bodyY = -14 * sizeMultiplier;
+    const bodyRadius = 8 * sizeMultiplier;
+
+    // ===== BACKPACK DIMENSIONS - COPIED EXACTLY FROM createAgentVisuals =====
+    const backpackWidth = 6 * sizeMultiplier;
+    const backpackHeight = 14 * sizeMultiplier;
+    const backpackX = 7 * sizeMultiplier;
+    const backpackY = -6 * sizeMultiplier;
+    const backpackRadius = 3 * sizeMultiplier;
+
+    // ===== VISOR DIMENSIONS - COPIED EXACTLY FROM createAgentVisuals =====
+    const visorX = -8 * sizeMultiplier;
+    const visorY = -10 * sizeMultiplier;
+    const visorWidth = 13 * sizeMultiplier;
+    const visorHeight = 9 * sizeMultiplier;
+    const visorRadius = 4 * sizeMultiplier;
+    const visorOutline = 1 * sizeMultiplier;
+
+    // ===== WISPY TAIL - Replaces legs =====
+    // Tail starts where legs would attach (LEG_Y_OFFSET = 4)
+    const tailStartY = AIAgentVisualRenderer.LEG_Y_OFFSET * sizeMultiplier;
+    const tendrilCount = 4;
+    const tendrilSpacing = bodyWidth / (tendrilCount + 1);
+    const tendrilLength = 12 * sizeMultiplier; // Similar to leg length
+    const tendrilWidth = 5 * sizeMultiplier;   // Slightly narrower than legs
+    const waveFrequency = 2.0;  // Matches walk cycle speed
+    const waveAmplitude = 3 * sizeMultiplier;
+
+    // Phase offsets for each tendril (creates flowing wave effect)
+    const tendrilPhases = [0, Math.PI / 2, Math.PI, Math.PI * 1.5];
+
+    // Draw tendrils FIRST (behind body)
+    for (let i = 0; i < tendrilCount; i++) {
+      const baseX = bodyX + tendrilSpacing * (i + 1);
+      const phase = tendrilPhases[i];
+
+      // Wave offset based on animation time
+      const waveOffset = Math.sin(animTime * waveFrequency + phase) * waveAmplitude;
+      const tipWaveOffset = Math.sin(animTime * waveFrequency * 1.3 + phase + Math.PI / 4) * waveAmplitude * 1.5;
+
+      // Center tendrils are slightly larger
+      const isCenter = i === 1 || i === 2;
+      const width = isCenter ? tendrilWidth * 1.1 : tendrilWidth * 0.9;
+      const length = isCenter ? tendrilLength * 1.1 : tendrilLength;
+      const tipWidth = width * 0.3;
+
+      // Draw tendril outline first
+      graphics.beginFill(outlineColor);
+      graphics.moveTo(baseX - width / 2 - 1, tailStartY);
+      graphics.quadraticCurveTo(
+        baseX + waveOffset - width / 2 - 1, tailStartY + length * 0.5,
+        baseX + tipWaveOffset, tailStartY + length + 2
+      );
+      graphics.quadraticCurveTo(
+        baseX + waveOffset + width / 2 + 1, tailStartY + length * 0.5,
+        baseX + width / 2 + 1, tailStartY
+      );
+      graphics.closePath();
+      graphics.endFill();
+
+      // Draw tendril fill
+      graphics.beginFill(color);
+      graphics.moveTo(baseX - width / 2, tailStartY);
+      graphics.quadraticCurveTo(
+        baseX + waveOffset - tipWidth / 2, tailStartY + length * 0.6,
+        baseX + tipWaveOffset, tailStartY + length
+      );
+      graphics.quadraticCurveTo(
+        baseX + waveOffset + tipWidth / 2, tailStartY + length * 0.6,
+        baseX + width / 2, tailStartY
+      );
+      graphics.closePath();
+      graphics.endFill();
+    }
+
+    // ===== BODY OUTLINE - COPIED EXACTLY FROM createAgentVisuals =====
+    // Black outline layer drawn first
+    graphics.beginFill(outlineColor);
+    graphics.drawRoundedRect(
+      backpackX - 1 * sizeMultiplier,
+      backpackY - 1 * sizeMultiplier,
+      backpackWidth + 2 * sizeMultiplier,
+      backpackHeight + 2 * sizeMultiplier,
+      backpackRadius + 1
+    );
+    graphics.drawRoundedRect(
+      bodyX - 1 * sizeMultiplier,
+      bodyY - 1 * sizeMultiplier,
+      bodyWidth + 2 * sizeMultiplier,
+      bodyHeight + 2 * sizeMultiplier,
+      bodyRadius + 1
+    );
+    graphics.endFill();
+
+    // ===== BACKPACK FILL - COPIED EXACTLY FROM createAgentVisuals =====
     graphics.beginFill(color);
-    graphics.drawEllipse(0, -size * 0.2, size * 0.65, size * 0.55);
+    graphics.drawRoundedRect(backpackX, backpackY, backpackWidth, backpackHeight, backpackRadius);
     graphics.endFill();
 
-    // Wavy tail/bottom part (three wave bumps)
-    const tailY = size * 0.25;
-    const waveWidth = size * 0.43;
-    const waveHeight = size * 0.35;
-
+    // ===== MAIN BODY FILL - COPIED EXACTLY FROM createAgentVisuals =====
     graphics.beginFill(color);
-    // Left wave
-    graphics.drawEllipse(-waveWidth, tailY, size * 0.25, waveHeight);
-    // Center wave
-    graphics.drawEllipse(0, tailY + size * 0.1, size * 0.28, waveHeight * 1.1);
-    // Right wave
-    graphics.drawEllipse(waveWidth, tailY, size * 0.25, waveHeight);
+    graphics.drawRoundedRect(bodyX, bodyY, bodyWidth, bodyHeight, bodyRadius);
     graphics.endFill();
 
-    // Fill the gap between body and tail
-    graphics.beginFill(color);
-    graphics.drawRect(-size * 0.65, -size * 0.1, size * 1.3, size * 0.45);
+    // ===== VISOR OUTLINE - COPIED EXACTLY FROM createAgentVisuals =====
+    graphics.beginFill(outlineColor);
+    graphics.drawRoundedRect(
+      visorX - visorOutline,
+      visorY - visorOutline,
+      visorWidth + visorOutline * 2,
+      visorHeight + visorOutline * 2,
+      visorRadius + visorOutline
+    );
     graphics.endFill();
 
-    // Backpack (small hump on back/side of ghost)
-    const darkerColor = this.darkenColor(color, 0.15);
-    graphics.beginFill(darkerColor);
-    graphics.drawEllipse(-size * 0.55, -size * 0.15, size * 0.25, size * 0.35);
+    // ===== VISOR FILL - COPIED EXACTLY FROM createAgentVisuals =====
+    graphics.beginFill(visorColor, 0.95);
+    graphics.drawRoundedRect(visorX, visorY, visorWidth, visorHeight, visorRadius);
     graphics.endFill();
 
-    // Visor (the iconic Among Us visor - slightly larger and centered)
-    graphics.beginFill(visorColor);
-    graphics.drawEllipse(size * 0.1, -size * 0.25, size * 0.35, size * 0.22);
+    // ===== VISOR SHINE - COPIED EXACTLY FROM createAgentVisuals =====
+    graphics.beginFill(0xFFFFFF, 0.6);
+    graphics.drawEllipse(-4 * sizeMultiplier, -8 * sizeMultiplier, 2.5 * sizeMultiplier, 1.5 * sizeMultiplier);
     graphics.endFill();
-
-    // Visor shine/highlight
-    graphics.beginFill(0xFFFFFF, 0.5);
-    graphics.drawEllipse(size * 0.2, -size * 0.35, size * 0.1, size * 0.06);
-    graphics.endFill();
-
-    // Subtle highlight on body (ghostly glow effect)
-    graphics.beginFill(lighterColor, 0.3);
-    graphics.drawEllipse(size * 0.15, -size * 0.4, size * 0.2, size * 0.15);
-    graphics.endFill();
-
-    // Outline for definition
-    graphics.lineStyle(1.5, 0x000000, 0.25);
-    graphics.drawEllipse(0, -size * 0.2, size * 0.65, size * 0.55);
-    graphics.lineStyle(0);
   }
 
   /**
-   * Lighten a color by a factor (0-1)
-   */
-  private lightenColor(color: number, factor: number): number {
-    const r = Math.min(255, ((color >> 16) & 0xFF) + Math.floor(255 * factor));
-    const g = Math.min(255, ((color >> 8) & 0xFF) + Math.floor(255 * factor));
-    const b = Math.min(255, (color & 0xFF) + Math.floor(255 * factor));
-    return (r << 16) | (g << 8) | b;
-  }
-/**
    * Darken a color by a factor (0-1)
    */
   private drawImpostorIndicator(
