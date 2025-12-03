@@ -1106,15 +1106,17 @@ export class AIAgentVisualRenderer {
   
   /**
    * Show dead body graphics and hide live body
-   * Clean Among Us style dead body - body laying down, cut in half with bone sticking out
-   * No blood pool - just the clean body graphic
+   * Among Us style dead body - cut in half with single bone sticking out
+   * Uses EXACT same dimensions as living player body (rounded rects, not ellipses)
+   * Upper half: head/torso with visor and backpack, laying on side
+   * Lower half: bottom portion separated, with bone connecting
    */
   private showDeadBody(state: AgentVisualState): void {
     renderLogger.debug('showDeadBody() called - hiding live body, showing dead body graphics');
     const visuals = state.visuals;
     const color = visuals.bodyColor;
     const sizeMultiplier = AIAgentVisualRenderer.SIZE_MULTIPLIER;
-    const size = 14 * sizeMultiplier;
+    const outlineColor = 0x000000;
 
     renderLogger.trace('showDeadBody - visibility state', { bodyGraphicsVisible: visuals.bodyGraphics.visible, deadBodyGraphicsVisible: visuals.deadBodyGraphics.visible });
 
@@ -1126,128 +1128,230 @@ export class AIAgentVisualRenderer {
     visuals.taskProgressBar.visible = false;
     visuals.taskProgressBackground.visible = false;
     visuals.taskCheckmark.visible = false;
-    visuals.impostorIndicator.visible = false; // Hide impostor indicator when dead
+    visuals.impostorIndicator.visible = false;
 
-    // Generate color variations (darker shades for depth/shadows)
-    const darkerColor = this.darkenColor(color, 0.22);   // Shadow/darker areas
-    const darkestColor = this.darkenColor(color, 0.40);  // Darkest shadows
-    const visorColor = 0x030405; // Dark visor like in SVG
+    // Color variations for depth
+    const darkerColor = this.darkenColor(color, 0.25);
+    const darkestColor = this.darkenColor(color, 0.45);
 
-    // NO BLOOD POOL - hide it completely
-    visuals.bloodPool.clear();
-    visuals.bloodPool.visible = false;
+    // ===== EXACT DIMENSIONS FROM LIVING PLAYER =====
+    // Body: 16×24 at (-8,-14), radius 8
+    // Backpack: 6×14 at (7,-6), radius 3  
+    // Visor: 13×9 at (-8,-10), radius 4, color 0x84D2F6
+    
+    // For dead body, we cut the body in half horizontally and rotate it to lay down
+    // Upper half = top 60% of body (head/torso with visor)
+    // Lower half = bottom 40% of body (waist/legs area, now just a stump)
+    
+    const bodyWidth = 16 * sizeMultiplier;
+    const bodyHeight = 24 * sizeMultiplier;
+    const bodyRadius = 8 * sizeMultiplier;
+    const backpackWidth = 6 * sizeMultiplier;
+    const backpackHeight = 14 * sizeMultiplier;
+    const backpackRadius = 3 * sizeMultiplier;
+    const visorWidth = 13 * sizeMultiplier;
+    const visorHeight = 9 * sizeMultiplier;
+    const visorRadius = 4 * sizeMultiplier;
+    const visorColor = 0x84D2F6;
 
-    // Draw dead body
+    // Cut point: 60% from top = upper body, 40% = lower stump
+    const cutPoint = bodyHeight * 0.6;
+    const upperHeight = cutPoint;
+    const lowerHeight = bodyHeight - cutPoint;
+
+    // Position offsets - body lays horizontally
+    // Upper half on left, lower half on right, bone in between
+    const upperX = -12 * sizeMultiplier;  // Upper half position
+    const lowerX = 14 * sizeMultiplier;   // Lower half position (separated)
+    const bodyY = 0;                       // Center vertically
+
+    // Clear and prepare
     visuals.deadBodyGraphics.clear();
     visuals.deadBodyGraphics.visible = true;
 
-    // ===== UPPER HALF (LEFT SIDE) - Main body torso with backpack and visor =====
-    // Body is laying down horizontally, viewed from above/behind
-    // Backpack is on top (back of body facing up), arm visible on right side
+    // ===== BLOOD POOL (underneath everything) =====
+    visuals.bloodPool.clear();
+    visuals.bloodPool.visible = true;
+    visuals.bloodPool.beginFill(0x8B0000, 0.7);  // Dark red
+    visuals.bloodPool.drawEllipse(0, 4 * sizeMultiplier, 22 * sizeMultiplier, 8 * sizeMultiplier);
+    visuals.bloodPool.endFill();
+    visuals.bloodPool.beginFill(0xA00000, 0.5);  // Lighter red outer
+    visuals.bloodPool.drawEllipse(0, 4 * sizeMultiplier, 28 * sizeMultiplier, 10 * sizeMultiplier);
+    visuals.bloodPool.endFill();
 
-    // Main upper body shape (large bean/pill shape - the torso)
-    visuals.deadBodyGraphics.beginFill(color);
-    visuals.deadBodyGraphics.drawEllipse(-size * 0.45, 0, size * 0.75, size * 0.55);
-    visuals.deadBodyGraphics.endFill();
+    // ===== UPPER HALF (Left side - head/torso laying on its side) =====
+    // The body is rotated 90° clockwise, so width becomes height and vice versa
+    // When laying down: the "height" of standing body becomes "width" when horizontal
 
-    // Backpack (darker rounded hump on top of body - back facing up)
-    visuals.deadBodyGraphics.beginFill(darkerColor);
-    visuals.deadBodyGraphics.drawEllipse(-size * 0.85, -size * 0.05, size * 0.35, size * 0.42);
-    visuals.deadBodyGraphics.endFill();
-
-    // Subtle shadow under backpack edge
-    visuals.deadBodyGraphics.beginFill(darkestColor);
-    visuals.deadBodyGraphics.drawEllipse(-size * 0.65, size * 0.15, size * 0.15, size * 0.25);
-    visuals.deadBodyGraphics.endFill();
-
-    // Visor (dark curved shape on front of head area)
-    visuals.deadBodyGraphics.beginFill(visorColor);
-    visuals.deadBodyGraphics.drawEllipse(-size * 0.25, -size * 0.25, size * 0.35, size * 0.2);
-    visuals.deadBodyGraphics.endFill();
-    
-    // Visor highlight/reflection
-    visuals.deadBodyGraphics.beginFill(0xFFFFFF, 0.25);
-    visuals.deadBodyGraphics.drawEllipse(-size * 0.15, -size * 0.32, size * 0.1, size * 0.05);
-    visuals.deadBodyGraphics.endFill();
-
-    // Cut/exposed interior on upper half (where it was sliced - darker ellipse on right edge)
-    visuals.deadBodyGraphics.beginFill(darkestColor);
-    visuals.deadBodyGraphics.drawEllipse(size * 0.2, size * 0.05, size * 0.15, size * 0.4);
-    visuals.deadBodyGraphics.endFill();
-
-    // Upper half body outline
-    visuals.deadBodyGraphics.lineStyle(1.5, 0x000000, 0.4);
-    visuals.deadBodyGraphics.drawEllipse(-size * 0.45, 0, size * 0.75, size * 0.55);
-    visuals.deadBodyGraphics.lineStyle(0);
-
-    // ===== LOWER HALF (RIGHT SIDE) - Bottom portion separated =====
-    // The lower body half that fell away
-
-    // Main lower body portion
-    visuals.deadBodyGraphics.beginFill(color);
-    visuals.deadBodyGraphics.drawEllipse(size * 0.85, size * 0.1, size * 0.45, size * 0.35);
-    visuals.deadBodyGraphics.endFill();
-
-    // Exposed interior on lower half (darker, where cut - left edge)
-    visuals.deadBodyGraphics.beginFill(darkestColor);
-    visuals.deadBodyGraphics.drawEllipse(size * 0.5, size * 0.08, size * 0.12, size * 0.28);
-    visuals.deadBodyGraphics.endFill();
-
-    // Lower half outline
-    visuals.deadBodyGraphics.lineStyle(1.5, 0x000000, 0.4);
-    visuals.deadBodyGraphics.drawEllipse(size * 0.85, size * 0.1, size * 0.45, size * 0.35);
-    visuals.deadBodyGraphics.lineStyle(0);
-
-    // ===== BONE (Single white bone sticking out between halves) =====
-    const boneWhite = 0xFCFBFC;    // Main bone color (off-white)
-    const boneGray = 0xC3C3C3;     // Shading color
-
-    // Bone positioned horizontally between the two body halves
-    // Simple cartoon bone with rounded ends
-    const boneStartX = size * 0.15;
-    const boneEndX = size * 0.55;
-    const boneY = size * 0.05;
-    const boneThickness = size * 0.1;
-
-    // Draw bone shaft (horizontal rectangle with rounded corners)
-    visuals.deadBodyGraphics.beginFill(boneWhite);
+    // Upper body outline (black shadow)
+    visuals.deadBodyGraphics.beginFill(outlineColor);
     visuals.deadBodyGraphics.drawRoundedRect(
-      boneStartX, 
-      boneY - boneThickness / 2, 
-      boneEndX - boneStartX, 
-      boneThickness, 
-      boneThickness * 0.3
+      upperX - 1 * sizeMultiplier,
+      bodyY - bodyWidth / 2 - 1 * sizeMultiplier,
+      upperHeight + 2 * sizeMultiplier,
+      bodyWidth + 2 * sizeMultiplier,
+      bodyRadius
     );
     visuals.deadBodyGraphics.endFill();
 
-    // Left bone knob (double-ball cartoon bone end) - partially hidden in body
-    visuals.deadBodyGraphics.beginFill(boneWhite);
-    visuals.deadBodyGraphics.drawCircle(boneStartX, boneY - boneThickness * 0.4, boneThickness * 0.55);
-    visuals.deadBodyGraphics.drawCircle(boneStartX, boneY + boneThickness * 0.4, boneThickness * 0.55);
+    // Backpack outline (on top/back of body when laying down)
+    visuals.deadBodyGraphics.beginFill(outlineColor);
+    visuals.deadBodyGraphics.drawRoundedRect(
+      upperX - 4 * sizeMultiplier - 1 * sizeMultiplier,
+      bodyY - backpackWidth / 2 - 1 * sizeMultiplier,
+      backpackHeight + 2 * sizeMultiplier,
+      backpackWidth + 2 * sizeMultiplier,
+      backpackRadius
+    );
     visuals.deadBodyGraphics.endFill();
 
-    // Right bone knob (double-ball cartoon bone end) - visible, sticking out
-    visuals.deadBodyGraphics.beginFill(boneWhite);
-    visuals.deadBodyGraphics.drawCircle(boneEndX, boneY - boneThickness * 0.45, boneThickness * 0.6);
-    visuals.deadBodyGraphics.drawCircle(boneEndX, boneY + boneThickness * 0.45, boneThickness * 0.6);
+    // Backpack fill (darker than body)
+    visuals.deadBodyGraphics.beginFill(darkerColor);
+    visuals.deadBodyGraphics.drawRoundedRect(
+      upperX - 4 * sizeMultiplier,
+      bodyY - backpackWidth / 2,
+      backpackHeight,
+      backpackWidth,
+      backpackRadius
+    );
     visuals.deadBodyGraphics.endFill();
 
-    // Subtle shading on bone knobs
+    // Upper body fill (main torso/head area)
+    visuals.deadBodyGraphics.beginFill(color);
+    visuals.deadBodyGraphics.drawRoundedRect(
+      upperX,
+      bodyY - bodyWidth / 2,
+      upperHeight,
+      bodyWidth,
+      bodyRadius
+    );
+    visuals.deadBodyGraphics.endFill();
+
+    // Cut edge on upper half (dark interior where body was sliced)
+    visuals.deadBodyGraphics.beginFill(darkestColor);
+    visuals.deadBodyGraphics.drawRoundedRect(
+      upperX + upperHeight - 3 * sizeMultiplier,
+      bodyY - bodyWidth / 2 + 2 * sizeMultiplier,
+      3 * sizeMultiplier,
+      bodyWidth - 4 * sizeMultiplier,
+      2 * sizeMultiplier
+    );
+    visuals.deadBodyGraphics.endFill();
+
+    // Visor outline
+    visuals.deadBodyGraphics.beginFill(outlineColor);
+    visuals.deadBodyGraphics.drawRoundedRect(
+      upperX + 2 * sizeMultiplier - 1 * sizeMultiplier,
+      bodyY - visorWidth / 2 - 1 * sizeMultiplier,
+      visorHeight + 2 * sizeMultiplier,
+      visorWidth + 2 * sizeMultiplier,
+      visorRadius
+    );
+    visuals.deadBodyGraphics.endFill();
+
+    // Visor fill (cyan blue, same as living player)
+    visuals.deadBodyGraphics.beginFill(visorColor, 0.95);
+    visuals.deadBodyGraphics.drawRoundedRect(
+      upperX + 2 * sizeMultiplier,
+      bodyY - visorWidth / 2,
+      visorHeight,
+      visorWidth,
+      visorRadius
+    );
+    visuals.deadBodyGraphics.endFill();
+
+    // Visor shine highlight
+    visuals.deadBodyGraphics.beginFill(0xFFFFFF, 0.5);
+    visuals.deadBodyGraphics.drawEllipse(
+      upperX + 4 * sizeMultiplier,
+      bodyY - 3 * sizeMultiplier,
+      2 * sizeMultiplier,
+      1.5 * sizeMultiplier
+    );
+    visuals.deadBodyGraphics.endFill();
+
+    // ===== LOWER HALF (Right side - bottom stump separated) =====
+    
+    // Lower body outline
+    visuals.deadBodyGraphics.beginFill(outlineColor);
+    visuals.deadBodyGraphics.drawRoundedRect(
+      lowerX - 1 * sizeMultiplier,
+      bodyY - bodyWidth / 2 - 1 * sizeMultiplier,
+      lowerHeight + 2 * sizeMultiplier,
+      bodyWidth + 2 * sizeMultiplier,
+      bodyRadius * 0.6
+    );
+    visuals.deadBodyGraphics.endFill();
+
+    // Lower body fill
+    visuals.deadBodyGraphics.beginFill(color);
+    visuals.deadBodyGraphics.drawRoundedRect(
+      lowerX,
+      bodyY - bodyWidth / 2,
+      lowerHeight,
+      bodyWidth,
+      bodyRadius * 0.6
+    );
+    visuals.deadBodyGraphics.endFill();
+
+    // Cut edge on lower half (dark interior)
+    visuals.deadBodyGraphics.beginFill(darkestColor);
+    visuals.deadBodyGraphics.drawRoundedRect(
+      lowerX,
+      bodyY - bodyWidth / 2 + 2 * sizeMultiplier,
+      3 * sizeMultiplier,
+      bodyWidth - 4 * sizeMultiplier,
+      2 * sizeMultiplier
+    );
+    visuals.deadBodyGraphics.endFill();
+
+    // ===== SINGLE BONE (The iconic Among Us bone sticking out) =====
+    const boneWhite = 0xFAF9F6;    // Bone white
+    const boneGray = 0xD0D0D0;     // Bone shading
+    
+    // Bone shaft between the two halves
+    const boneStartX = upperX + upperHeight - 2 * sizeMultiplier;
+    const boneEndX = lowerX + 2 * sizeMultiplier;
+    const boneY = bodyY;
+    const boneThickness = 3 * sizeMultiplier;
+
+    // Bone shaft (rounded rectangle)
+    visuals.deadBodyGraphics.beginFill(boneWhite);
+    visuals.deadBodyGraphics.drawRoundedRect(
+      boneStartX,
+      boneY - boneThickness / 2,
+      boneEndX - boneStartX,
+      boneThickness,
+      boneThickness * 0.4
+    );
+    visuals.deadBodyGraphics.endFill();
+
+    // Left bone knob (cartoon bone end - double ball)
+    visuals.deadBodyGraphics.beginFill(boneWhite);
+    visuals.deadBodyGraphics.drawCircle(boneStartX + 1 * sizeMultiplier, boneY - boneThickness * 0.6, boneThickness * 0.55);
+    visuals.deadBodyGraphics.drawCircle(boneStartX + 1 * sizeMultiplier, boneY + boneThickness * 0.6, boneThickness * 0.55);
+    visuals.deadBodyGraphics.endFill();
+
+    // Right bone knob (visible end sticking out)
+    visuals.deadBodyGraphics.beginFill(boneWhite);
+    visuals.deadBodyGraphics.drawCircle(boneEndX - 1 * sizeMultiplier, boneY - boneThickness * 0.6, boneThickness * 0.6);
+    visuals.deadBodyGraphics.drawCircle(boneEndX - 1 * sizeMultiplier, boneY + boneThickness * 0.6, boneThickness * 0.6);
+    visuals.deadBodyGraphics.endFill();
+
+    // Bone shading for depth
     visuals.deadBodyGraphics.beginFill(boneGray);
-    visuals.deadBodyGraphics.drawCircle(boneEndX + boneThickness * 0.15, boneY - boneThickness * 0.3, boneThickness * 0.25);
-    visuals.deadBodyGraphics.drawCircle(boneEndX + boneThickness * 0.15, boneY + boneThickness * 0.5, boneThickness * 0.25);
+    visuals.deadBodyGraphics.drawCircle(boneEndX - 0.5 * sizeMultiplier, boneY - boneThickness * 0.4, boneThickness * 0.25);
+    visuals.deadBodyGraphics.drawCircle(boneEndX - 0.5 * sizeMultiplier, boneY + boneThickness * 0.7, boneThickness * 0.25);
     visuals.deadBodyGraphics.endFill();
 
-    // Bone outline for definition
-    visuals.deadBodyGraphics.lineStyle(1, 0xC0C0C0, 0.5);
-    visuals.deadBodyGraphics.drawCircle(boneEndX, boneY - boneThickness * 0.45, boneThickness * 0.6);
-    visuals.deadBodyGraphics.drawCircle(boneEndX, boneY + boneThickness * 0.45, boneThickness * 0.6);
+    // Bone outline
+    visuals.deadBodyGraphics.lineStyle(1 * sizeMultiplier, 0xC0C0C0, 0.4);
+    visuals.deadBodyGraphics.drawCircle(boneEndX - 1 * sizeMultiplier, boneY - boneThickness * 0.6, boneThickness * 0.6);
+    visuals.deadBodyGraphics.drawCircle(boneEndX - 1 * sizeMultiplier, boneY + boneThickness * 0.6, boneThickness * 0.6);
     visuals.deadBodyGraphics.lineStyle(0);
 
     renderLogger.debug('showDeadBody complete', { bodyGraphicsVisible: visuals.bodyGraphics.visible, deadBodyGraphicsVisible: visuals.deadBodyGraphics.visible, bloodPoolVisible: visuals.bloodPool.visible });
-  }
-
-  /**
+  }  /**
    * Restore live body graphics (called when agent is resurrected, e.g., server restart)
    * Reverses the effects of showDeadBody()
    */
