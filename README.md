@@ -4,6 +4,14 @@
 
 An AI-powered simulation of **Among Us** where autonomous LLM-driven agents play as Crewmates and Impostors. Watch AI agents navigate The Skeld, complete tasks, form alliances, spread rumors, and eliminate each other—all powered by large language models.
 
+## Screenshots
+
+![Simulation Overview](images/img1.png)
+
+![Agent Interactions](images/img21.png)
+
+![Ghost Mode](images/img32.png)
+
 ## What Is This?
 
 This project creates a fully autonomous Among Us simulation where:
